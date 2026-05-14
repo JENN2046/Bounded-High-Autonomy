@@ -263,6 +263,20 @@
         "decision": "DENY",
         "spawned": false
       }
+    },
+    {
+      "id": "prepush_check_fail_closed_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "prepush-check",
+        "--internal-git-hook"
+      ],
+      "expect": {
+        "exit_code": 1,
+        "read_only": true,
+        "recorded": false
+      }
     }
   ]
 }

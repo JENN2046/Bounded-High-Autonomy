@@ -502,16 +502,25 @@ function commandExpectationPassed(result, expect) {
   if (Object.prototype.hasOwnProperty.call(expect, 'exit_code') && result.exit_code !== expect.exit_code) {
     problems.push(`exit_code expected ${expect.exit_code} got ${result.exit_code}`);
   }
-  if (Object.prototype.hasOwnProperty.call(expect, 'decision') || Object.prototype.hasOwnProperty.call(expect, 'spawned')) {
+  const expectsJson = ['decision', 'spawned', 'read_only', 'recorded'].some((key) => {
+    return Object.prototype.hasOwnProperty.call(expect, key);
+  });
+  if (expectsJson) {
     const parsed = parseJsonLine(result.stdout);
     if (!parsed) {
-      problems.push('expected JSON policy output was not found');
+      problems.push('expected JSON output was not found');
     } else {
       if (Object.prototype.hasOwnProperty.call(expect, 'decision') && parsed.decision !== expect.decision) {
         problems.push(`decision expected ${expect.decision} got ${parsed.decision}`);
       }
       if (Object.prototype.hasOwnProperty.call(expect, 'spawned') && parsed.spawned !== expect.spawned) {
         problems.push(`spawned expected ${expect.spawned} got ${parsed.spawned}`);
+      }
+      if (Object.prototype.hasOwnProperty.call(expect, 'read_only') && parsed.read_only !== expect.read_only) {
+        problems.push(`read_only expected ${expect.read_only} got ${parsed.read_only}`);
+      }
+      if (Object.prototype.hasOwnProperty.call(expect, 'recorded') && parsed.recorded !== expect.recorded) {
+        problems.push(`recorded expected ${expect.recorded} got ${parsed.recorded}`);
       }
     }
   }
@@ -1084,12 +1093,14 @@ function branchFromPrepushInput(stdinText) {
 }
 
 async function handlePrepushCheck(args) {
-  if (args[0] !== '--internal-git-hook') {
+  const record = args.includes('--record');
+  const hookArgs = args.filter((arg) => arg !== '--record');
+  if (hookArgs[0] !== '--internal-git-hook') {
     console.log(JSON.stringify({ ok: false, status: 'FAIL_CLOSED', reason: 'missing internal hook marker' }));
     process.exitCode = 1;
     return;
   }
-  const remote = args[1] || null;
+  const remote = hookArgs[1] || null;
   const stdinText = await readStdin();
   const branch = branchFromPrepushInput(stdinText) || await currentBranch();
   const head = await currentHead();
@@ -1110,21 +1121,25 @@ async function handlePrepushCheck(args) {
     checks.matching_run_id_remote_branch_head = capability.ok === true;
     ok = Object.values(checks).every(Boolean);
   }
-  appendLedger('prepush_check', {
-    status: ok ? 'ALLOW' : 'FAIL_CLOSED',
-    remote: remote || 'UNKNOWN',
-    branch: branch || 'UNKNOWN',
-    head: head || 'UNKNOWN',
-    checks,
-    capability: {
-      ok: capability.ok === true,
-      reason: capability.reason || null,
-      capability_id: capability.capability_id || null
-    }
-  });
+  if (record) {
+    appendLedger('prepush_check', {
+      status: ok ? 'ALLOW' : 'FAIL_CLOSED',
+      remote: remote || 'UNKNOWN',
+      branch: branch || 'UNKNOWN',
+      head: head || 'UNKNOWN',
+      checks,
+      capability: {
+        ok: capability.ok === true,
+        reason: capability.reason || null,
+        capability_id: capability.capability_id || null
+      }
+    });
+  }
   console.log(JSON.stringify({
     ok,
     status: ok ? 'ALLOW' : 'FAIL_CLOSED',
+    read_only: !record,
+    recorded: record,
     remote: remote || 'UNKNOWN',
     branch: branch || 'UNKNOWN',
     head: head || 'UNKNOWN',
