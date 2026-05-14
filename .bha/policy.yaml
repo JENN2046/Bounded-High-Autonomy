@@ -12,7 +12,12 @@
   },
   "capabilities": {
     "path": ".bha/capabilities.jsonl",
-    "trusted_signing_keys": [],
+    "trusted_signing_keys": [
+      {
+        "id": "canonical-selftest-1778777504933-ce497ecb-66ce-4dcb-8eaf-634d0922f151",
+        "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAA4l5tTQpBE9Tg2b6YW7C101KsjyMHHzjKpXyNZKKZ78=\n-----END PUBLIC KEY-----\n"
+      }
+    ],
     "disallowed_types": [
       "provider_call",
       "memory_write",

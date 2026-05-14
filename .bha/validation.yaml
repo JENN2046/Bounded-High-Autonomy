@@ -70,6 +70,39 @@
       }
     },
     {
+      "id": "check_git_tag_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "git",
+        "tag",
+        "v0.0.0"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_git_fetch_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "git",
+        "fetch"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
       "id": "check_curl_deny",
       "argv": [
         "node",
@@ -78,6 +111,152 @@
         "--",
         "curl",
         "https://example.com"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_npm_install_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "npm",
+        "install"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_npm_publish_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "npm",
+        "publish"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_gh_release_create_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "gh",
+        "release",
+        "create"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_ssh_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "ssh",
+        "example.com"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_openai_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "openai",
+        "models",
+        "list"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_anthropic_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "anthropic",
+        "messages"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_gemini_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "gemini",
+        "models"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_codex_memory_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "codex-memory",
+        "write"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_dailynote_path_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "node",
+        "DailyNote/write.js"
       ],
       "expect": {
         "exit_code": 0,

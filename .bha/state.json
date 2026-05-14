@@ -2,14 +2,14 @@
   "schema": "bha.state.v1",
   "version": "1.0.0",
   "run_id": "bha-dry-run-v1",
-  "updated_at": "2026-05-14T16:23:56.773Z",
-  "ledger_head_hash": "0e4a4ee076782497d312e15b902813c0a2558be683d168e7af53aeb495d63feb",
-  "ledger_event_count": 177,
+  "updated_at": "2026-05-14T17:02:59.410Z",
+  "ledger_head_hash": "96711fa761c2829d81640512490ff5c4bbab7bb701d2e931a7133008367f174d",
+  "ledger_event_count": 430,
   "validation": {
     "status": "PASS",
-    "completed_at": "2026-05-14T16:23:56.771Z",
-    "inputs_hash": "f50a9e61a9aac739d54ab5f273a7f15b2e1c4cd737a31b280932adf28f4c4de5",
-    "ledger_event_hash": "0e4a4ee076782497d312e15b902813c0a2558be683d168e7af53aeb495d63feb",
+    "completed_at": "2026-05-14T17:02:59.408Z",
+    "inputs_hash": "fbf3b1e05136b3fd2420eed9c0878597a22fe23539a96cce751f9ad52d2d43a4",
+    "ledger_event_hash": "96711fa761c2829d81640512490ff5c4bbab7bb701d2e931a7133008367f174d",
     "commands": [
       {
         "id": "git_diff_check",
@@ -104,6 +104,49 @@
         "error": null
       },
       {
+        "id": "check_git_tag_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "git",
+          "tag",
+          "v0.0.0"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_git_fetch_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "git",
+          "fetch"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
         "id": "check_curl_deny",
         "argv": [
           "node",
@@ -123,19 +166,276 @@
         "exit_code": 0,
         "signal": null,
         "error": null
+      },
+      {
+        "id": "check_npm_install_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "npm",
+          "install"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_npm_publish_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "npm",
+          "publish"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_gh_release_create_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "gh",
+          "release",
+          "create"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_ssh_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "ssh",
+          "example.com"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_openai_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "openai",
+          "models",
+          "list"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_anthropic_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "anthropic",
+          "messages"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_gemini_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "gemini",
+          "models"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_codex_memory_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "codex-memory",
+          "write"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_dailynote_path_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "node",
+          "DailyNote/write.js"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
       }
     ]
   },
   "last_policy_decision": {
     "command": [
-      "curl",
-      "https://example.com"
+      "node",
+      "DailyNote/write.js"
     ],
     "decision": "DENY",
     "allowed": false,
-    "rule": "DENY_NETWORK_COMMAND",
-    "category": "network",
-    "reason": "network commands are forbidden in dry-run",
+    "rule": "DENY_PATH",
+    "category": "denied_path",
+    "reason": "denied path argument is forbidden",
     "spawned": false
+  },
+  "capability_selftest": {
+    "status": "PASS",
+    "completed_at": "2026-05-14T16:51:45.619Z",
+    "mode": "canonical_capabilities_jsonl_selftest",
+    "key_id": "canonical-selftest-1778777504933-ce497ecb-66ce-4dcb-8eaf-634d0922f151",
+    "public_key_recorded": true,
+    "private_key_repo_write": false,
+    "capability_positive_path": {
+      "status": "PASS",
+      "capability_id": "canonical-selftest-1778777504933-ce497ecb-66ce-4dcb-8eaf-634d0922f151-positive",
+      "issue_ok": true,
+      "consume_ok": true,
+      "simulation_ok": true,
+      "reason": null
+    },
+    "prepush_authorized_simulation": {
+      "status": "PASS",
+      "mode": "internal_prepush_replay_simulation",
+      "real_git_push_executed": false,
+      "capability_id": "canonical-selftest-1778777504933-ce497ecb-66ce-4dcb-8eaf-634d0922f151-positive"
+    },
+    "negative_capability_tests": {
+      "unsigned_capability": {
+        "status": "FAIL_CLOSED",
+        "reason": "UNSIGNED_CAPABILITY_INVALID"
+      },
+      "expired_capability": {
+        "status": "FAIL_CLOSED",
+        "reason": "CAPABILITY_EXPIRED"
+      },
+      "mismatched_remote": {
+        "status": "FAIL_CLOSED",
+        "reason": "NO_VALID_CONSUMED_GIT_PUSH_CAPABILITY",
+        "issue_ok": true,
+        "consume_ok": true
+      },
+      "mismatched_branch": {
+        "status": "FAIL_CLOSED",
+        "reason": "NO_VALID_CONSUMED_GIT_PUSH_CAPABILITY",
+        "issue_ok": true,
+        "consume_ok": true
+      },
+      "mismatched_head": {
+        "status": "FAIL_CLOSED",
+        "reason": "NO_VALID_CONSUMED_GIT_PUSH_CAPABILITY",
+        "issue_ok": true,
+        "consume_ok": false
+      },
+      "reused_capability": {
+        "status": "FAIL_CLOSED",
+        "reason": "CAPABILITY_REPLAY_DETECTED"
+      }
+    },
+    "external_effects": {
+      "real_git_push_executed": false,
+      "git_tag_executed": false,
+      "release_executed": false,
+      "deploy_executed": false,
+      "provider_call_executed": false,
+      "memory_write_executed": false,
+      "network_call_executed": false,
+      "package_install_executed": false,
+      "git_directory_write": false,
+      "private_key_repo_write": false
+    }
   }
 }
