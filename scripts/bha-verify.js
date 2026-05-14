@@ -90,6 +90,73 @@ function capabilityHash(event) {
   return sha256(stable(copy));
 }
 
+function trustedSigningKeys(policy) {
+  return ((((policy || {}).capabilities || {}).trusted_signing_keys) || []).map((item) => {
+    if (item && typeof item === 'object') {
+      return {
+        id: String(item.id || item.key_id || ''),
+        public_key_pem: item.public_key_pem || item.publicKeyPem || null
+      };
+    }
+    return { id: String(item), public_key_pem: null };
+  }).filter((item) => item.id);
+}
+
+function trustedSigningKey(policy, id) {
+  return trustedSigningKeys(policy).find((item) => item.id === String(id));
+}
+
+function capabilityRequestPayload(payload) {
+  const copy = Object.assign({}, payload || {});
+  delete copy.signature;
+  delete copy.payload_hash;
+  return copy;
+}
+
+function capabilityPayloadHash(payload) {
+  return sha256(stable(capabilityRequestPayload(payload)));
+}
+
+function capabilitySignablePayload(payload) {
+  const copy = Object.assign({}, payload || {});
+  delete copy.signature;
+  return copy;
+}
+
+function capabilitySignatureValid(payload, key) {
+  if (!payload || !payload.signature || !key || !key.public_key_pem) {
+    return false;
+  }
+  try {
+    return crypto.verify(
+      null,
+      Buffer.from(stable(capabilitySignablePayload(payload))),
+      key.public_key_pem,
+      Buffer.from(String(payload.signature), 'base64')
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isExpired(expiresAt, now) {
+  const millis = Date.parse(String(expiresAt || ''));
+  return Number.isNaN(millis) || millis <= (now || Date.now());
+}
+
+function capabilityRevoked(capabilities, id) {
+  return capabilities.some((event) => {
+    return event.type === 'capability_revoke' &&
+      event.payload &&
+      event.payload.capability_id === id &&
+      event.payload.valid !== false;
+  });
+}
+
+function capabilityTypeFromRequest(requested) {
+  return String((requested || {}).type || (requested || {}).for || (requested || {}).capability || '').trim();
+}
+
 function commandName(command) {
   return path.basename(String(command || '')).replace(/\.(exe|cmd|bat)$/i, '').toLowerCase();
 }
@@ -457,36 +524,119 @@ function verifyClaims(events, capabilities, issues) {
   }
 }
 
-function verifyCapabilities(capabilities, policy, issues) {
-  const trusted = new Set((((policy || {}).capabilities || {}).trusted_signing_keys || []).map((item) => String(item)));
+function verifyCapabilityIssue(event, policy, state, capabilities, ledger, issues) {
+  const payload = event.payload || {};
+  const requested = payload.requested || {};
+  const trusted = new Set(trustedSigningKeys(policy).map((item) => item.id));
+  const type = payload.capability_type || capabilityTypeFromRequest(requested);
+  const disallowed = new Set((((policy || {}).capabilities || {}).disallowed_types || []).map((item) => String(item)));
+  if (payload.valid !== true) {
+    return;
+  }
+  if (disallowed.has(String(type))) {
+    issues.push({ code: 'DISALLOWED_CAPABILITY_VALID', severity: 'FAIL', message: `${type} capability was marked valid`, event_hash: event.event_hash });
+  }
+  if (type !== 'git_push') {
+    issues.push({ code: 'UNSUPPORTED_CAPABILITY_MARKED_VALID', severity: 'FAIL', message: `${type} capability was marked valid`, event_hash: event.event_hash });
+  }
+  if (!requested.signature || !requested.signing_key_id) {
+    issues.push({ code: 'UNSIGNED_CAPABILITY_MARKED_VALID', severity: 'FAIL', message: 'unsigned capability_issue was marked valid', event_hash: event.event_hash });
+  }
+  if (trusted.size === 0) {
+    issues.push({ code: 'CAPABILITY_VALID_WITHOUT_TRUSTED_KEYS', severity: 'FAIL', message: 'dry-run v1 has no trusted signing keys but a capability was marked valid', event_hash: event.event_hash });
+  }
+  const key = trustedSigningKey(policy, requested.signing_key_id);
+  if (requested.signing_key_id && !trusted.has(String(requested.signing_key_id))) {
+    issues.push({ code: 'UNKNOWN_SIGNING_KEY_MARKED_VALID', severity: 'FAIL', message: 'capability used an untrusted signing key', event_hash: event.event_hash });
+  }
+  if (requested.signing_key_id && trusted.has(String(requested.signing_key_id)) && !key.public_key_pem) {
+    issues.push({ code: 'TRUSTED_SIGNING_KEY_HAS_NO_PUBLIC_KEY', severity: 'FAIL', message: 'trusted signing key has no public key', event_hash: event.event_hash });
+  }
+  if (requested.payload_hash && requested.payload_hash !== capabilityPayloadHash(requested)) {
+    issues.push({ code: 'CAPABILITY_PAYLOAD_HASH_MISMATCH', severity: 'FAIL', message: 'capability payload_hash mismatch', event_hash: event.event_hash });
+  }
+  if (key && key.public_key_pem && !capabilitySignatureValid(requested, key)) {
+    issues.push({ code: 'CAPABILITY_SIGNATURE_INVALID', severity: 'FAIL', message: 'capability signature is invalid', event_hash: event.event_hash });
+  }
+  if (state && requested.run_id !== state.run_id) {
+    issues.push({ code: 'CAPABILITY_RUN_ID_MISMATCH', severity: 'FAIL', message: 'valid capability run_id does not match state', event_hash: event.event_hash });
+  }
+  if (!requested.remote || !requested.branch || !requested.head || !requested.ledger_head_hash || !requested.expires_at) {
+    issues.push({ code: 'CAPABILITY_BINDING_MISSING', severity: 'FAIL', message: 'valid capability is missing required bindings', event_hash: event.event_hash });
+  }
+  const ledgerEvent = (ledger || []).find((item) => item.type === 'capability_capability_issue' &&
+    item.payload &&
+    item.payload.capability_event_hash === event.event_hash);
+  if (!ledgerEvent) {
+    issues.push({ code: 'CAPABILITY_LEDGER_EVENT_MISSING', severity: 'FAIL', message: 'valid capability has no linked ledger event', event_hash: event.event_hash });
+  } else if (requested.ledger_head_hash !== ledgerEvent.prev_hash) {
+    issues.push({ code: 'CAPABILITY_LEDGER_HEAD_MISMATCH', severity: 'FAIL', message: 'valid capability ledger_head_hash does not match issue-time ledger head', event_hash: event.event_hash });
+  }
+  if (requested.one_use !== true) {
+    issues.push({ code: 'CAPABILITY_ONE_USE_REQUIRED', severity: 'FAIL', message: 'valid capability is not one_use', event_hash: event.event_hash });
+  }
+  if (isExpired(requested.expires_at)) {
+    issues.push({ code: 'CAPABILITY_EXPIRED', severity: 'FAIL', message: 'valid capability is expired', event_hash: event.event_hash });
+  }
+  if (capabilityRevoked(capabilities, payload.capability_id)) {
+    issues.push({ code: 'CAPABILITY_REVOKED', severity: 'FAIL', message: 'valid capability has been revoked', event_hash: event.event_hash });
+  }
+}
+
+function verifyCapabilities(capabilities, policy, state, ledger, issues) {
   const issuesById = new Map();
   for (const event of capabilities) {
     if (event.event_hash !== capabilityHash(event)) {
       issues.push({ code: 'CAPABILITY_EVENT_HASH_MISMATCH', severity: 'FAIL', message: 'capability event_hash mismatch', event_hash: event.event_hash || 'UNKNOWN' });
     }
     if (event.type === 'capability_issue' && event.payload) {
-      issuesById.set(event.payload.capability_id, event.payload);
-      if (event.payload.valid === true) {
-        const requested = event.payload.requested || {};
-        if (!requested.signature || !requested.signing_key_id) {
-          issues.push({ code: 'UNSIGNED_CAPABILITY_MARKED_VALID', severity: 'FAIL', message: 'unsigned capability_issue was marked valid', event_hash: event.event_hash });
-        }
-        if (trusted.size === 0) {
-          issues.push({ code: 'CAPABILITY_VALID_WITHOUT_TRUSTED_KEYS', severity: 'FAIL', message: 'dry-run v1 has no trusted signing keys but a capability was marked valid', event_hash: event.event_hash });
-        }
-        if (requested.signing_key_id && !trusted.has(String(requested.signing_key_id))) {
-          issues.push({ code: 'UNKNOWN_SIGNING_KEY_MARKED_VALID', severity: 'FAIL', message: 'capability used an untrusted signing key', event_hash: event.event_hash });
-        }
-      }
+      issuesById.set(event.payload.capability_id, { event_hash: event.event_hash, payload: event.payload });
+      verifyCapabilityIssue(event, policy, state, capabilities, ledger, issues);
+    }
+  }
+  const validConsumesById = new Map();
+  for (const event of capabilities) {
+    if (event.type === 'capability_consume' && event.payload && event.payload.valid === true) {
+      const list = validConsumesById.get(event.payload.capability_id) || [];
+      list.push(event);
+      validConsumesById.set(event.payload.capability_id, list);
     }
   }
   for (const event of capabilities) {
     if (event.type !== 'capability_consume' || !event.payload || event.payload.valid !== true) {
       continue;
     }
-    const issue = issuesById.get(event.payload.capability_id);
-    if (!issue || issue.valid !== true) {
+    const issueRecord = issuesById.get(event.payload.capability_id);
+    if (!issueRecord || issueRecord.payload.valid !== true) {
       issues.push({ code: 'CAPABILITY_CONSUMED_WITHOUT_VALID_ISSUE', severity: 'FAIL', message: 'capability consume was marked valid without a valid issue event', event_hash: event.event_hash });
+      continue;
+    }
+    const issue = issueRecord.payload;
+    const requested = issue.requested || {};
+    const consumes = validConsumesById.get(event.payload.capability_id) || [];
+    if (consumes.length !== 1) {
+      issues.push({ code: 'CAPABILITY_REPLAY_DETECTED', severity: 'FAIL', message: 'capability has multiple valid consumes', event_hash: event.event_hash });
+    }
+    if (event.payload.issue_event_hash !== issueRecord.event_hash) {
+      issues.push({ code: 'CAPABILITY_ISSUE_EVENT_MISMATCH', severity: 'FAIL', message: 'capability consume references the wrong issue event', event_hash: event.event_hash });
+    }
+    if (event.payload.for !== 'git_push' || issue.capability_type !== 'git_push') {
+      issues.push({ code: 'CAPABILITY_ACTION_MISMATCH', severity: 'FAIL', message: 'capability consume action mismatch', event_hash: event.event_hash });
+    }
+    if (event.run_id !== (state && state.run_id) || requested.run_id !== (state && state.run_id)) {
+      issues.push({ code: 'CAPABILITY_RUN_ID_MISMATCH', severity: 'FAIL', message: 'capability consume run_id mismatch', event_hash: event.event_hash });
+    }
+    if (event.payload.remote !== requested.remote) {
+      issues.push({ code: 'CAPABILITY_REMOTE_MISMATCH', severity: 'FAIL', message: 'capability consume remote mismatch', event_hash: event.event_hash });
+    }
+    if (event.payload.branch !== requested.branch) {
+      issues.push({ code: 'CAPABILITY_BRANCH_MISMATCH', severity: 'FAIL', message: 'capability consume branch mismatch', event_hash: event.event_hash });
+    }
+    if (event.payload.head !== requested.head) {
+      issues.push({ code: 'CAPABILITY_HEAD_MISMATCH', severity: 'FAIL', message: 'capability consume HEAD mismatch', event_hash: event.event_hash });
+    }
+    if (capabilityRevoked(capabilities, event.payload.capability_id)) {
+      issues.push({ code: 'CAPABILITY_REVOKED', severity: 'FAIL', message: 'consumed capability has been revoked', event_hash: event.event_hash });
     }
   }
 }
@@ -512,7 +662,7 @@ async function main() {
   verifyForbiddenExecution(ledger, files.policy, issues);
   verifyValidation(files.state, files.validation, ledger, issues);
   verifyClaims(ledger, capabilities, issues);
-  verifyCapabilities(capabilities, files.policy, issues);
+  verifyCapabilities(capabilities, files.policy, files.state, ledger, issues);
   verifyRollback(issues);
   await verifyDeniedPathTouched(files.mission, files.policy, issues, warnings);
   await verifyTrackedDeniedPaths(files.mission, files.policy, issues, warnings);

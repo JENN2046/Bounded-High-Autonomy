@@ -101,31 +101,89 @@ function ledgerHead() {
   return { hash: events[events.length - 1].event_hash || null, count: events.length };
 }
 
-function appendLedger(type, payload, mutateState) {
-  fs.mkdirSync(BHA_DIR, { recursive: true });
-  const mission = loadMission();
-  const state = loadState();
-  const head = ledgerHead();
-  const event = {
-    schema: 'bha.ledger.event.v1',
-    run_id: state.run_id || mission.run_id,
-    event_id: crypto.randomUUID(),
-    ts: new Date().toISOString(),
-    type,
-    actor: 'bha-run',
-    prev_hash: head.hash || 'GENESIS',
-    payload
-  };
-  event.event_hash = eventHash(event);
-  fs.appendFileSync(LEDGER_PATH, stable(event) + '\n', 'utf8');
-  state.ledger_head_hash = event.event_hash;
-  state.ledger_event_count = head.count + 1;
-  state.updated_at = event.ts;
-  if (typeof mutateState === 'function') {
-    mutateState(state, event);
+function syncSleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function syncGitDirPath() {
+  const dotGit = path.join(ROOT, '.git');
+  if (!fs.existsSync(dotGit)) {
+    return null;
   }
-  writeJson(STATE_PATH, state);
-  return event;
+  const stat = fs.statSync(dotGit);
+  if (stat.isDirectory()) {
+    return dotGit;
+  }
+  if (stat.isFile()) {
+    const text = readText(dotGit).trim();
+    const match = text.match(/^gitdir:\s*(.+)$/i);
+    if (match) {
+      return path.resolve(ROOT, match[1].trim());
+    }
+  }
+  return null;
+}
+
+function withLedgerLock(callback) {
+  const gitDir = syncGitDirPath();
+  const lockDir = gitDir ? path.join(gitDir, 'bha-auth', 'locks') : path.join(BHA_DIR, '.locks');
+  fs.mkdirSync(lockDir, { recursive: true });
+  const lockFile = path.join(lockDir, 'ledger.lock');
+  let fd = null;
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    try {
+      fd = fs.openSync(lockFile, 'wx');
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }) + '\n', 'utf8');
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST') {
+        throw error;
+      }
+      syncSleep(25);
+    }
+  }
+  if (fd === null) {
+    throw new Error('ledger lock timeout');
+  }
+  try {
+    return callback();
+  } finally {
+    fs.closeSync(fd);
+    try {
+      fs.unlinkSync(lockFile);
+    } catch (_error) {
+      // Lock cleanup is best effort; a stale lock fails closed on the next writer.
+    }
+  }
+}
+
+function appendLedger(type, payload, mutateState) {
+  return withLedgerLock(() => {
+    fs.mkdirSync(BHA_DIR, { recursive: true });
+    const mission = loadMission();
+    const state = loadState();
+    const head = ledgerHead();
+    const event = {
+      schema: 'bha.ledger.event.v1',
+      run_id: state.run_id || mission.run_id,
+      event_id: crypto.randomUUID(),
+      ts: new Date().toISOString(),
+      type,
+      actor: 'bha-run',
+      prev_hash: head.hash || 'GENESIS',
+      payload
+    };
+    event.event_hash = eventHash(event);
+    fs.appendFileSync(LEDGER_PATH, stable(event) + '\n', 'utf8');
+    state.ledger_head_hash = event.event_hash;
+    state.ledger_event_count = head.count + 1;
+    state.updated_at = event.ts;
+    if (typeof mutateState === 'function') {
+      mutateState(state, event);
+    }
+    writeJson(STATE_PATH, state);
+    return event;
+  });
 }
 
 function commandName(command) {
@@ -609,7 +667,114 @@ function disallowedCapabilityType(type) {
 
 function trustedSigningKeys() {
   const policy = loadPolicy();
-  return (((policy.capabilities || {}).trusted_signing_keys) || []).map((item) => String(item));
+  return (((policy.capabilities || {}).trusted_signing_keys) || []).map((item) => {
+    if (item && typeof item === 'object') {
+      return {
+        id: String(item.id || item.key_id || ''),
+        public_key_pem: item.public_key_pem || item.publicKeyPem || null
+      };
+    }
+    return { id: String(item), public_key_pem: null };
+  }).filter((item) => item.id);
+}
+
+function findTrustedSigningKey(id) {
+  return trustedSigningKeys().find((item) => item.id === String(id));
+}
+
+function capabilityRequestPayload(payload) {
+  const copy = Object.assign({}, payload || {});
+  delete copy.signature;
+  delete copy.payload_hash;
+  return copy;
+}
+
+function capabilityPayloadHash(payload) {
+  return sha256(stable(capabilityRequestPayload(payload)));
+}
+
+function capabilitySignablePayload(payload) {
+  const copy = Object.assign({}, payload || {});
+  delete copy.signature;
+  return copy;
+}
+
+function capabilitySignatureValid(payload, key) {
+  if (!payload || !payload.signature || !key || !key.public_key_pem) {
+    return false;
+  }
+  try {
+    return crypto.verify(
+      null,
+      Buffer.from(stable(capabilitySignablePayload(payload))),
+      key.public_key_pem,
+      Buffer.from(String(payload.signature), 'base64')
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isExpired(expiresAt, now) {
+  const millis = Date.parse(String(expiresAt || ''));
+  return Number.isNaN(millis) || millis <= (now || Date.now());
+}
+
+function capabilityRevoked(events, id) {
+  return events.some((event) => {
+    return event.type === 'capability_revoke' &&
+      event.payload &&
+      event.payload.capability_id === id &&
+      event.payload.valid !== false;
+  });
+}
+
+function validateCapabilityRequest(payload, type, state, events) {
+  const id = String(payload.id || payload.capability_id || '');
+  if (!id) {
+    return { valid: false, reason: 'CAPABILITY_ID_MISSING' };
+  }
+  if (disallowedCapabilityType(type)) {
+    return { valid: false, reason: 'DISALLOWED_CAPABILITY_TYPE' };
+  }
+  if (type !== 'git_push') {
+    return { valid: false, reason: 'CAPABILITY_TYPE_NOT_SUPPORTED' };
+  }
+  if (!payload.signature || !payload.signing_key_id) {
+    return { valid: false, reason: 'UNSIGNED_CAPABILITY_INVALID' };
+  }
+  const key = findTrustedSigningKey(payload.signing_key_id);
+  if (!key) {
+    return { valid: false, reason: 'UNKNOWN_SIGNING_KEY' };
+  }
+  if (!key.public_key_pem) {
+    return { valid: false, reason: 'SIGNING_KEY_HAS_NO_PUBLIC_KEY' };
+  }
+  if (payload.payload_hash && payload.payload_hash !== capabilityPayloadHash(payload)) {
+    return { valid: false, reason: 'CAPABILITY_PAYLOAD_HASH_MISMATCH' };
+  }
+  if (!capabilitySignatureValid(payload, key)) {
+    return { valid: false, reason: 'CAPABILITY_SIGNATURE_INVALID' };
+  }
+  if (payload.run_id !== state.run_id) {
+    return { valid: false, reason: 'CAPABILITY_RUN_ID_MISMATCH' };
+  }
+  if (!payload.remote || !payload.branch || !payload.head) {
+    return { valid: false, reason: 'CAPABILITY_BINDING_MISSING' };
+  }
+  if (payload.ledger_head_hash !== state.ledger_head_hash) {
+    return { valid: false, reason: 'CAPABILITY_LEDGER_HEAD_MISMATCH' };
+  }
+  if (payload.one_use !== true) {
+    return { valid: false, reason: 'CAPABILITY_ONE_USE_REQUIRED' };
+  }
+  if (isExpired(payload.expires_at)) {
+    return { valid: false, reason: 'CAPABILITY_EXPIRED' };
+  }
+  if (capabilityRevoked(events || [], id)) {
+    return { valid: false, reason: 'CAPABILITY_REVOKED' };
+  }
+  return { valid: true, reason: 'CAPABILITY_SIGNATURE_VALID' };
 }
 
 function capabilityHash(event) {
@@ -643,6 +808,177 @@ function readCapabilityEvents() {
   return readJsonl(CAPABILITIES_PATH);
 }
 
+function authRecordHash(record, hashField) {
+  const copy = Object.assign({}, record || {});
+  delete copy[hashField];
+  return sha256(stable(copy));
+}
+
+function sealAuthRecord(record, hashField) {
+  record[hashField] = authRecordHash(record, hashField);
+  return record;
+}
+
+function validAuthRecord(record, hashField) {
+  return !!record && record[hashField] === authRecordHash(record, hashField);
+}
+
+function authFileName(id) {
+  return sha256(String(id || ''));
+}
+
+async function gitDirPath() {
+  const result = await runCommand(['git', 'rev-parse', '--git-dir'], {});
+  if (result.exit_code !== 0 || result.error) {
+    return null;
+  }
+  const raw = result.stdout.trim();
+  if (!raw) {
+    return null;
+  }
+  return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(ROOT, raw);
+}
+
+async function authStoreRoot() {
+  const gitDir = await gitDirPath();
+  if (!gitDir) {
+    return null;
+  }
+  return path.join(gitDir, 'bha-auth');
+}
+
+async function ensureAuthStore() {
+  const root = await authStoreRoot();
+  if (!root) {
+    return null;
+  }
+  for (const name of ['issued', 'consumed', 'sessions', 'locks']) {
+    fs.mkdirSync(path.join(root, name), { recursive: true });
+  }
+  return root;
+}
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(readText(file));
+  } catch (_error) {
+    return null;
+  }
+}
+
+function writeJsonNew(file, value) {
+  const fd = fs.openSync(file, 'wx');
+  try {
+    fs.writeFileSync(fd, stable(value) + '\n', 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function listJsonFiles(dir) {
+  if (!fs.existsSync(dir)) {
+    return [];
+  }
+  return fs.readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => path.join(dir, name));
+}
+
+async function readIssuedTicket(id) {
+  const root = await authStoreRoot();
+  if (!root) {
+    return { ok: false, reason: 'AUTH_STORE_MISSING' };
+  }
+  const file = path.join(root, 'issued', `${authFileName(id)}.json`);
+  if (!fs.existsSync(file)) {
+    return { ok: false, reason: 'CAPABILITY_TICKET_MISSING' };
+  }
+  const ticket = readJsonFile(file);
+  if (!ticket || !validAuthRecord(ticket, 'ticket_hash')) {
+    return { ok: false, reason: 'CAPABILITY_TICKET_MALFORMED' };
+  }
+  return { ok: true, ticket, file };
+}
+
+async function writeIssuedTicket(ticket) {
+  const root = await ensureAuthStore();
+  if (!root) {
+    return { ok: false, reason: 'AUTH_STORE_MISSING' };
+  }
+  const file = path.join(root, 'issued', `${authFileName(ticket.capability_id)}.json`);
+  if (fs.existsSync(file)) {
+    return { ok: false, reason: 'CAPABILITY_ALREADY_ISSUED' };
+  }
+  const sealed = sealAuthRecord(ticket, 'ticket_hash');
+  writeJsonNew(file, sealed);
+  return { ok: true, file, ticket_hash: sealed.ticket_hash };
+}
+
+async function consumedMarkers(id) {
+  const root = await authStoreRoot();
+  if (!root) {
+    return { ok: false, reason: 'AUTH_STORE_MISSING', markers: [] };
+  }
+  const markers = [];
+  for (const file of listJsonFiles(path.join(root, 'consumed'))) {
+    const marker = readJsonFile(file);
+    if (marker && marker.capability_id === id) {
+      markers.push({ marker, file, valid_hash: validAuthRecord(marker, 'marker_hash') });
+    }
+  }
+  return { ok: true, markers };
+}
+
+async function sessionMarkers(id) {
+  const root = await authStoreRoot();
+  if (!root) {
+    return { ok: false, reason: 'AUTH_STORE_MISSING', markers: [] };
+  }
+  const markers = [];
+  for (const file of listJsonFiles(path.join(root, 'sessions'))) {
+    const marker = readJsonFile(file);
+    if (marker && marker.capability_id === id) {
+      markers.push({ marker, file, valid_hash: validAuthRecord(marker, 'session_hash') });
+    }
+  }
+  return { ok: true, markers };
+}
+
+async function writeConsumedMarker(marker) {
+  const root = await ensureAuthStore();
+  if (!root) {
+    return { ok: false, reason: 'AUTH_STORE_MISSING' };
+  }
+  const file = path.join(root, 'consumed', `${authFileName(marker.capability_id)}.json`);
+  if (fs.existsSync(file)) {
+    return { ok: false, reason: 'CAPABILITY_ALREADY_CONSUMED' };
+  }
+  writeJsonNew(file, sealAuthRecord(marker, 'marker_hash'));
+  return { ok: true, file };
+}
+
+async function reserveCapabilityUse(id, remote, branch, head) {
+  const root = await ensureAuthStore();
+  if (!root) {
+    return { ok: false, reason: 'AUTH_STORE_MISSING' };
+  }
+  const file = path.join(root, 'sessions', `${authFileName(id)}.json`);
+  if (fs.existsSync(file)) {
+    return { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED' };
+  }
+  const session = sealAuthRecord({
+    schema: 'bha.auth.session.v1',
+    capability_id: id,
+    run_id: loadState().run_id,
+    remote,
+    branch,
+    head,
+    used_at: new Date().toISOString()
+  }, 'session_hash');
+  writeJsonNew(file, session);
+  return { ok: true, file };
+}
+
 async function handleIssueCapability(args) {
   const jsonIndex = args.indexOf('--json');
   if (jsonIndex === -1 || !args[jsonIndex + 1]) {
@@ -660,27 +996,47 @@ async function handleIssueCapability(args) {
   }
   const type = capabilityType(payload);
   const id = String(payload.id || payload.capability_id || crypto.randomUUID());
-  let valid = false;
-  let status = 'INVALID';
-  let reason = 'UNSIGNED_CAPABILITY_INVALID';
-  if (disallowedCapabilityType(type)) {
-    reason = 'DISALLOWED_CAPABILITY_TYPE';
-  } else if (!payload.signature || !payload.signing_key_id) {
-    reason = 'UNSIGNED_CAPABILITY_INVALID';
-  } else if (!trustedSigningKeys().includes(String(payload.signing_key_id))) {
-    reason = 'UNKNOWN_SIGNING_KEY';
-  } else {
-    reason = 'NO_VALID_SIGNING_KEY_CONFIGURED_FOR_DRY_RUN_V1';
+  payload.capability_id = id;
+  const state = loadState();
+  const validation = validateCapabilityRequest(payload, type, state, readCapabilityEvents());
+  const valid = validation.valid === true;
+  const status = valid ? 'VALID' : 'INVALID';
+  const reason = validation.reason;
+  let store = { ok: false, reason: valid ? 'AUTH_STORE_NOT_WRITTEN' : 'CAPABILITY_INVALID' };
+  if (valid) {
+    store = await writeIssuedTicket({
+      schema: 'bha.auth.issue.v1',
+      capability_id: id,
+      run_id: state.run_id,
+      issued_at: new Date().toISOString(),
+      capability_type: type || 'UNKNOWN',
+      valid,
+      status,
+      reason,
+      requested: payload,
+      request_hash: capabilityPayloadHash(payload)
+    });
   }
-  const event = appendCapabilityEvent('capability_issue', {
+  const event = {
     capability_id: id,
     requested: payload,
     capability_type: type || 'UNKNOWN',
     valid,
     status,
     reason
-  });
-  console.log(JSON.stringify({ ok: true, capability_id: id, valid, status, reason, event_hash: event.event_hash }));
+  };
+  console.log(JSON.stringify({
+    ok: valid && store.ok === true,
+    capability_id: id,
+    valid,
+    status: store.ok ? status : 'INVALID',
+    reason: store.ok ? reason : store.reason || reason,
+    auth_store: store.ok ? '.git/bha-auth/issued' : 'NOT_WRITTEN',
+    ticket_hash: store.ok ? store.ticket_hash : null
+  }));
+  if (!valid || !store.ok) {
+    process.exitCode = 2;
+  }
 }
 
 function getOption(args, name) {
@@ -706,31 +1062,77 @@ async function handleConsumeCapability(args) {
     process.exitCode = 2;
     return;
   }
-  const events = readCapabilityEvents();
-  const issue = events.find((event) => event.type === 'capability_issue' && event.payload && event.payload.capability_id === id);
+  const ticketResult = await readIssuedTicket(id);
   let valid = false;
   let status = 'DENIED';
-  let reason = 'CAPABILITY_NOT_FOUND';
-  if (issue) {
-    reason = issue.payload.reason || 'CAPABILITY_INVALID';
-    if (issue.payload.valid === true && issue.payload.capability_type === forAction && !disallowedCapabilityType(forAction)) {
+  let reason = ticketResult.reason || 'CAPABILITY_NOT_FOUND';
+  const state = loadState();
+  const head = await currentHead();
+  let ticket = null;
+  if (ticketResult.ok) {
+    ticket = ticketResult.ticket;
+    reason = ticket.reason || 'CAPABILITY_INVALID';
+    const requested = ticket.requested || {};
+    const existingConsumed = await consumedMarkers(id);
+    const existingSessions = await sessionMarkers(id);
+    const validation = validateCapabilityRequest(requested, ticket.capability_type, state, readCapabilityEvents());
+    if (ticket.valid !== true || validation.valid !== true) {
+      reason = validation.reason || ticket.reason || 'CAPABILITY_INVALID';
+    } else if (capabilityRevoked(readCapabilityEvents(), id)) {
+      reason = 'CAPABILITY_REVOKED';
+    } else if (!existingConsumed.ok || existingConsumed.markers.length > 0 || (existingSessions.ok && existingSessions.markers.length > 0)) {
+      reason = 'CAPABILITY_ALREADY_CONSUMED';
+    } else if (ticket.capability_type !== forAction || forAction !== 'git_push' || disallowedCapabilityType(forAction)) {
+      reason = 'CAPABILITY_ACTION_MISMATCH';
+    } else if (requested.run_id !== state.run_id) {
+      reason = 'CAPABILITY_RUN_ID_MISMATCH';
+    } else if (requested.remote !== remote) {
+      reason = 'CAPABILITY_REMOTE_MISMATCH';
+    } else if (requested.branch !== branch) {
+      reason = 'CAPABILITY_BRANCH_MISMATCH';
+    } else if (requested.head !== head) {
+      reason = 'CAPABILITY_HEAD_MISMATCH';
+    } else if (requested.one_use !== true) {
+      reason = 'CAPABILITY_ONE_USE_REQUIRED';
+    } else if (isExpired(requested.expires_at)) {
+      reason = 'CAPABILITY_EXPIRED';
+    } else {
       valid = true;
       status = 'CONSUMED';
       reason = 'CAPABILITY_CONSUMED';
     }
   }
-  const head = await currentHead();
-  const event = appendCapabilityEvent('capability_consume', {
+  let store = { ok: false, reason };
+  if (valid) {
+    store = await writeConsumedMarker({
+      schema: 'bha.auth.consume.v1',
+      capability_id: id,
+      run_id: state.run_id,
+      for: forAction,
+      remote,
+      branch,
+      head,
+      ticket_hash: ticket.ticket_hash,
+      one_use: true,
+      valid,
+      status,
+      reason,
+      consumed_at: new Date().toISOString()
+    });
+    if (!store.ok) {
+      valid = false;
+      status = 'DENIED';
+      reason = store.reason;
+    }
+  }
+  console.log(JSON.stringify({
+    ok: valid,
     capability_id: id,
-    for: forAction,
-    remote,
-    branch,
-    head,
     valid,
     status,
-    reason
-  });
-  console.log(JSON.stringify({ ok: valid, capability_id: id, valid, status, reason, event_hash: event.event_hash }));
+    reason,
+    auth_store: valid ? '.git/bha-auth/consumed' : 'NOT_WRITTEN'
+  }));
   if (!valid) {
     process.exitCode = 2;
   }
@@ -769,30 +1171,70 @@ async function verifierResult() {
   };
 }
 
-function matchingConsumedCapability(remote, branch, head) {
+async function matchingConsumedCapability(remote, branch, head, options) {
+  const reserve = options && options.reserve === true;
   const state = loadState();
-  const events = readCapabilityEvents();
-  const issues = new Map();
-  for (const event of events) {
-    if (event.type === 'capability_issue' && event.payload && event.payload.valid === true) {
-      issues.set(event.payload.capability_id, event.payload);
-    }
+  const root = await authStoreRoot();
+  if (!root || !fs.existsSync(root)) {
+    return { ok: false, reason: 'AUTH_STORE_MISSING' };
   }
-  for (const event of events) {
-    if (event.type !== 'capability_consume' || !event.payload || event.payload.valid !== true) {
+  for (const file of listJsonFiles(path.join(root, 'consumed'))) {
+    const marker = readJsonFile(file);
+    if (!marker || !validAuthRecord(marker, 'marker_hash')) {
+      return { ok: false, reason: 'CAPABILITY_CONSUME_MARKER_MALFORMED' };
+    }
+    if (marker.valid !== true) {
       continue;
     }
-    const payload = event.payload;
-    const issue = issues.get(payload.capability_id);
-    if (!issue) {
-      continue;
+    const id = marker.capability_id;
+    const markerSet = await consumedMarkers(id);
+    if (!markerSet.ok || markerSet.markers.length !== 1) {
+      return { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED', capability_id: id };
     }
-    if (payload.for === 'git_push' &&
-        payload.remote === remote &&
-        payload.branch === branch &&
-        payload.head === head &&
-        event.run_id === state.run_id) {
-      return { ok: true, event_hash: event.event_hash, capability_id: payload.capability_id };
+    if (markerSet.markers.some((item) => !item.valid_hash)) {
+      return { ok: false, reason: 'CAPABILITY_CONSUME_MARKER_MALFORMED', capability_id: id };
+    }
+    const sessions = await sessionMarkers(id);
+    if (!sessions.ok) {
+      return { ok: false, reason: sessions.reason, capability_id: id };
+    }
+    if (sessions.markers.length > 0) {
+      return { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED', capability_id: id };
+    }
+    const ticketResult = await readIssuedTicket(id);
+    if (!ticketResult.ok) {
+      return { ok: false, reason: ticketResult.reason, capability_id: id };
+    }
+    const ticket = ticketResult.ticket;
+    const requested = ticket.requested || {};
+    const validation = validateCapabilityRequest(requested, ticket.capability_type, state, readCapabilityEvents());
+    if (validation.valid !== true) {
+      return { ok: false, reason: validation.reason, capability_id: id };
+    }
+    if (capabilityRevoked(readCapabilityEvents(), id)) {
+      return { ok: false, reason: 'CAPABILITY_REVOKED', capability_id: id };
+    }
+    if (marker.ticket_hash !== ticket.ticket_hash) {
+      return { ok: false, reason: 'CAPABILITY_TICKET_HASH_MISMATCH', capability_id: id };
+    }
+    if (marker.for === 'git_push' &&
+        marker.remote === remote &&
+        marker.branch === branch &&
+        marker.head === head &&
+        marker.run_id === state.run_id &&
+        requested.run_id === state.run_id &&
+        requested.remote === remote &&
+        requested.branch === branch &&
+        requested.head === head &&
+        requested.one_use === true &&
+        !isExpired(requested.expires_at)) {
+      if (reserve) {
+        const reserved = await reserveCapabilityUse(id, remote, branch, head);
+        if (!reserved.ok) {
+          return { ok: false, reason: reserved.reason, capability_id: id };
+        }
+      }
+      return { ok: true, ticket_hash: ticket.ticket_hash, capability_id: id };
     }
   }
   return { ok: false, reason: 'NO_VALID_CONSUMED_GIT_PUSH_CAPABILITY' };
@@ -834,7 +1276,7 @@ async function handlePrepushCheck(args) {
   const head = await currentHead();
   const status = await gitStatusShort();
   const verify = await verifierResult();
-  const capability = remote && branch && head ? matchingConsumedCapability(remote, branch, head) : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
+  let capability = remote && branch && head ? await matchingConsumedCapability(remote, branch, head, { reserve: false }) : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
   const checks = {
     verifier_pass: verify.ok === true,
     clean_ledger: verify.parsed ? verify.parsed.ok === true : false,
@@ -842,7 +1284,13 @@ async function handlePrepushCheck(args) {
     matching_run_id_remote_branch_head: capability.ok === true,
     clean_git_status: status.ok === true && status.clean === true
   };
-  const ok = Object.values(checks).every(Boolean);
+  let ok = Object.values(checks).every(Boolean);
+  if (ok) {
+    capability = await matchingConsumedCapability(remote, branch, head, { reserve: true });
+    checks.valid_consumed_capability = capability.ok === true;
+    checks.matching_run_id_remote_branch_head = capability.ok === true;
+    ok = Object.values(checks).every(Boolean);
+  }
   console.log(JSON.stringify({
     ok,
     status: ok ? 'ALLOW' : 'FAIL_CLOSED',
