@@ -1,0 +1,141 @@
+{
+  "schema": "bha.state.v1",
+  "version": "1.0.0",
+  "run_id": "bha-dry-run-v1",
+  "updated_at": "2026-05-14T15:13:00.533Z",
+  "ledger_head_hash": "ca4b623fb3083c4cbf2896109ef0d69c12a2d9cf7e623ff889f88f7ce88b573c",
+  "ledger_event_count": 84,
+  "validation": {
+    "status": "PASS",
+    "completed_at": "2026-05-14T15:13:00.532Z",
+    "inputs_hash": "ad224d0f9fe87e9a227ad82fe7a961a41239ac8066375fbe8c12db8a01d07a35",
+    "ledger_event_hash": "ca4b623fb3083c4cbf2896109ef0d69c12a2d9cf7e623ff889f88f7ce88b573c",
+    "commands": [
+      {
+        "id": "git_diff_check",
+        "argv": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "expect": {
+          "exit_code": 0
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "node_check_bha_run",
+        "argv": [
+          "node",
+          "--check",
+          "scripts/bha-run.js"
+        ],
+        "expect": {
+          "exit_code": 0
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "node_check_bha_verify",
+        "argv": [
+          "node",
+          "--check",
+          "scripts/bha-verify.js"
+        ],
+        "expect": {
+          "exit_code": 0
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_git_status_allow",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "git",
+          "status"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "ALLOW",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_git_push_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "git",
+          "push",
+          "origin",
+          "main"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "check_curl_deny",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "check",
+          "--",
+          "curl",
+          "https://example.com"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "decision": "DENY",
+          "spawned": false
+        },
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      }
+    ]
+  },
+  "last_policy_decision": {
+    "command": [
+      "curl",
+      "https://example.com"
+    ],
+    "decision": "DENY",
+    "allowed": false,
+    "rule": "DENY_NETWORK_COMMAND",
+    "category": "network",
+    "reason": "network commands are forbidden in dry-run",
+    "spawned": false
+  }
+}

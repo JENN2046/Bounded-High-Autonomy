@@ -1,0 +1,89 @@
+{
+  "schema": "bha.validation.v1",
+  "version": "1.0.0",
+  "required_commands": [
+    {
+      "id": "git_diff_check",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "node_check_bha_run",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/bha-run.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "node_check_bha_verify",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/bha-verify.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "check_git_status_allow",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "git",
+        "status"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "ALLOW",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_git_push_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "git",
+        "push",
+        "origin",
+        "main"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    },
+    {
+      "id": "check_curl_deny",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "check",
+        "--",
+        "curl",
+        "https://example.com"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "decision": "DENY",
+        "spawned": false
+      }
+    }
+  ]
+}

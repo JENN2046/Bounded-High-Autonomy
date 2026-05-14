@@ -1,0 +1,120 @@
+{
+  "schema": "bha.policy.v1",
+  "version": "1.0.0",
+  "mode": "dry-run",
+  "deny_rules_run_before_allow_rules": true,
+  "ledger": {
+    "path": ".bha/ledger.jsonl",
+    "hash": "sha256"
+  },
+  "state": {
+    "path": ".bha/state.json"
+  },
+  "capabilities": {
+    "path": ".bha/capabilities.jsonl",
+    "trusted_signing_keys": [],
+    "disallowed_types": [
+      "provider_call",
+      "memory_write",
+      "deploy",
+      "release",
+      "tag",
+      "force_push",
+      "production_write",
+      "secret_read",
+      "mass_delete"
+    ]
+  },
+  "scrub_env": [
+    "*_API_KEY",
+    "*_TOKEN",
+    "*_SECRET",
+    "OPENAI_*",
+    "ANTHROPIC_*",
+    "GEMINI_*",
+    "GOOGLE_API_KEY",
+    "AZURE_OPENAI_*",
+    "AWS_*",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY"
+  ],
+  "deny": {
+    "network_commands": [
+      "curl",
+      "wget",
+      "Invoke-WebRequest",
+      "Invoke-RestMethod"
+    ],
+    "provider_commands": [
+      "openai",
+      "anthropic",
+      "gemini"
+    ],
+    "memory_commands": [
+      "codex-memory",
+      "DailyNote"
+    ],
+    "git_remote_subcommands": [
+      "push",
+      "pull",
+      "fetch",
+      "clone",
+      "ls-remote",
+      "submodule"
+    ],
+    "destructive_commands": [
+      "rm",
+      "rmdir",
+      "del"
+    ],
+    "path_patterns": [
+      "coverage"
+    ]
+  },
+  "allow": [
+    {
+      "command": "git",
+      "args": [
+        "status"
+      ],
+      "reason": "local repository status inspection"
+    },
+    {
+      "command": "git",
+      "args": [
+        "diff",
+        "--check"
+      ],
+      "reason": "local whitespace validation"
+    },
+    {
+      "command": "node",
+      "args": [
+        "--check",
+        "scripts/bha-run.js"
+      ],
+      "reason": "local syntax validation"
+    },
+    {
+      "command": "node",
+      "args": [
+        "--check",
+        "scripts/bha-verify.js"
+      ],
+      "reason": "local syntax validation"
+    },
+    {
+      "command": "node",
+      "args_prefix": [
+        "scripts/bha-run.js",
+        "check",
+        "--"
+      ],
+      "reason": "nested dry-run policy check"
+    }
+  ]
+}

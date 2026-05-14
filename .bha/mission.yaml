@@ -1,0 +1,36 @@
+{
+  "schema": "bha.mission.v1",
+  "version": "1.0.0",
+  "run_id": "bha-dry-run-v1",
+  "name": "BHA v1 Runtime Kernel Dry Run",
+  "mode": "dry-run",
+  "purpose": "Smallest executable BHA runtime kernel for local dry-run enforcement.",
+  "allowed_files": [
+    ".bha/mission.yaml",
+    ".bha/policy.yaml",
+    ".bha/state.json",
+    ".bha/capabilities.jsonl",
+    ".bha/ledger.jsonl",
+    ".bha/validation.yaml",
+    ".bha/rollback.md",
+    "scripts/bha-run.js",
+    "scripts/bha-verify.js",
+    ".githooks/pre-push"
+  ],
+  "denied_paths": [
+    "AGENTS.md",
+    ".agent_board",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    ".env",
+    ".env.*",
+    "node_modules",
+    "dist",
+    "build",
+    "runs",
+    "outputs",
+    "accepted_samples"
+  ]
+}
