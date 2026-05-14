@@ -18,6 +18,8 @@ const ROLLBACK_PATH = path.join(BHA_DIR, 'rollback.md');
 const RUN_SCRIPT = path.join(ROOT, 'scripts', 'bha-run.js');
 const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
+const AUTH_LOCK_STALE_MS = 10 * 60 * 1000;
+const AUTH_GC_GRACE_MS = 24 * 60 * 60 * 1000;
 
 const VALIDATION_INPUTS = [
   MISSION_PATH,
@@ -105,6 +107,44 @@ function syncSleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function processIsAlive(pid) {
+  const parsed = Number(pid);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return false;
+  }
+  try {
+    process.kill(parsed, 0);
+    return true;
+  } catch (error) {
+    return error && error.code === 'EPERM';
+  }
+}
+
+function removeIfStaleLock(lockFile) {
+  if (!fs.existsSync(lockFile)) {
+    return false;
+  }
+  let parsed = null;
+  try {
+    parsed = JSON.parse(readText(lockFile));
+  } catch (_error) {
+    parsed = null;
+  }
+  const stat = fs.statSync(lockFile);
+  const timestamp = parsed && parsed.ts ? Date.parse(parsed.ts) : stat.mtimeMs;
+  const age = Date.now() - (Number.isNaN(timestamp) ? stat.mtimeMs : timestamp);
+  const pidDead = parsed && parsed.pid ? !processIsAlive(parsed.pid) : false;
+  if (pidDead || age > AUTH_LOCK_STALE_MS) {
+    try {
+      fs.unlinkSync(lockFile);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+  return false;
+}
+
 function syncGitDirPath() {
   const dotGit = path.join(ROOT, '.git');
   if (!fs.existsSync(dotGit)) {
@@ -139,6 +179,7 @@ function withLedgerLock(callback) {
       if (error.code !== 'EEXIST') {
         throw error;
       }
+      removeIfStaleLock(lockFile);
       syncSleep(25);
     }
   }
@@ -855,6 +896,7 @@ async function ensureAuthStore() {
   for (const name of ['issued', 'consumed', 'sessions', 'locks']) {
     fs.mkdirSync(path.join(root, name), { recursive: true });
   }
+  cleanupAuthStore(root);
   return root;
 }
 
@@ -882,6 +924,46 @@ function listJsonFiles(dir) {
   return fs.readdirSync(dir)
     .filter((name) => name.endsWith('.json'))
     .map((name) => path.join(dir, name));
+}
+
+function safeUnlink(file) {
+  try {
+    fs.unlinkSync(file);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function recordExpiredAt(record) {
+  const requested = record && record.requested ? record.requested : null;
+  const expiresAt = requested ? requested.expires_at : record && record.expires_at;
+  const millis = Date.parse(String(expiresAt || ''));
+  return Number.isNaN(millis) ? null : millis;
+}
+
+function cleanupAuthStore(root) {
+  const now = Date.now();
+  const expiredIssued = new Set();
+  for (const file of listJsonFiles(path.join(root, 'issued'))) {
+    const ticket = readJsonFile(file);
+    const expiredAt = recordExpiredAt(ticket);
+    if (!ticket || !validAuthRecord(ticket, 'ticket_hash')) {
+      continue;
+    }
+    if (expiredAt !== null && expiredAt + AUTH_GC_GRACE_MS < now) {
+      expiredIssued.add(ticket.capability_id);
+      safeUnlink(file);
+    }
+  }
+  for (const name of ['consumed', 'sessions']) {
+    for (const file of listJsonFiles(path.join(root, name))) {
+      const record = readJsonFile(file);
+      if (!record || expiredIssued.has(record.capability_id)) {
+        safeUnlink(file);
+      }
+    }
+  }
 }
 
 async function readIssuedTicket(id) {
