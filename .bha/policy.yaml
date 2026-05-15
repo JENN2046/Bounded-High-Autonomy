@@ -15,7 +15,14 @@
     "trusted_signing_keys": [
       {
         "id": "canonical-selftest-1778777504933-ce497ecb-66ce-4dcb-8eaf-634d0922f151",
+        "purpose": "selftest-only",
         "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAA4l5tTQpBE9Tg2b6YW7C101KsjyMHHzjKpXyNZKKZ78=\n-----END PUBLIC KEY-----\n"
+      },
+      {
+        "id": "owner-main",
+        "purpose": "owner",
+        "public_key_ssh": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJTg5qkSnODbPROQRoG5cN9IvWzGMNA7b7n1lNRUEe40 bha-owner-main",
+        "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAlODmqRKc4Ns9E5BGgblw30i9bMYw0DtvufWU1FQR7jQ=\n-----END PUBLIC KEY-----\n"
       }
     ],
     "disallowed_types": [

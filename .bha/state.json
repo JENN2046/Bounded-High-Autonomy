@@ -2,14 +2,14 @@
   "schema": "bha.state.v1",
   "version": "1.0.0",
   "run_id": "bha-dry-run-v1",
-  "updated_at": "2026-05-14T17:26:27.050Z",
-  "ledger_head_hash": "902dc421b4c23767be68b6fd71010acc23fd89516d25f24f00d4e4dab982f43c",
-  "ledger_event_count": 565,
+  "updated_at": "2026-05-15T00:29:15.266Z",
+  "ledger_head_hash": "50d5d8f65f57c6ff6cb9491fb3a0374b5fba8c8f73e63ee14bbe220237c57563",
+  "ledger_event_count": 599,
   "validation": {
     "status": "PASS",
-    "completed_at": "2026-05-14T17:26:27.048Z",
-    "inputs_hash": "e7ddcda3b9dd0792848f8d8f5251d2babdcd5f1075769bdc2043df430be38647",
-    "ledger_event_hash": "902dc421b4c23767be68b6fd71010acc23fd89516d25f24f00d4e4dab982f43c",
+    "completed_at": "2026-05-15T00:29:15.263Z",
+    "inputs_hash": "69b9a969dc7d91569da7eceefe2343670fec5923089ccba360e999f1f9ae03bd",
+    "ledger_event_hash": "50d5d8f65f57c6ff6cb9491fb3a0374b5fba8c8f73e63ee14bbe220237c57563",
     "commands": [
       {
         "id": "git_diff_check",
