@@ -1,137 +1,246 @@
 {
   "schema": "bha.policy.v1",
-  "version": "1.0.0",
-  "mode": "dry-run",
-  "deny_rules_run_before_allow_rules": true,
-  "ledger": {
-    "path": ".bha/ledger.jsonl",
-    "hash": "sha256"
+  "metadata": {
+    "policy_id": "bha-dry-run-policy",
+    "version": "1.0.0",
+    "created_at": "2026-05-14T13:42:00.000Z",
+    "mode": "dry-run",
+    "deny_rules_run_before_allow_rules": true
   },
-  "state": {
-    "path": ".bha/state.json"
-  },
-  "capabilities": {
-    "path": ".bha/capabilities.jsonl",
-    "trusted_signing_keys": [
-      {
-        "id": "canonical-selftest-1778777504933-ce497ecb-66ce-4dcb-8eaf-634d0922f151",
-        "purpose": "selftest-only",
-        "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAA4l5tTQpBE9Tg2b6YW7C101KsjyMHHzjKpXyNZKKZ78=\n-----END PUBLIC KEY-----\n"
-      },
-      {
-        "id": "owner-main",
-        "purpose": "owner",
-        "public_key_ssh": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJTg5qkSnODbPROQRoG5cN9IvWzGMNA7b7n1lNRUEe40 bha-owner-main",
-        "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAlODmqRKc4Ns9E5BGgblw30i9bMYw0DtvufWU1FQR7jQ=\n-----END PUBLIC KEY-----\n"
-      },
-      {
-        "id": "owner-main-pkcs8",
-        "purpose": "owner",
-        "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXpOUyByOzjciCDCYRwej8t0ZB6P8S5oTKmBpiZndSZc=\n-----END PUBLIC KEY-----\n"
-      }
+  "paths": {
+    "allowed": [
+      "BHA_DESIGN.md",
+      "AGENTS.md",
+      ".bha/mission.yaml",
+      ".bha/policy.yaml",
+      ".bha/state.json",
+      ".bha/capabilities.jsonl",
+      ".bha/checkpoint.json",
+      ".bha/ledger.jsonl",
+      ".bha/validation.yaml",
+      ".bha/rollback.md",
+      ".bha/roadmap.md",
+      "scripts/bha-run.js",
+      "scripts/bha-verify.js",
+      ".githooks/pre-push"
     ],
-    "disallowed_types": [
+    "denied": [
+      "coverage"
+    ],
+    "protected": [
+      ".git",
+      ".codex",
+      ".agents"
+    ]
+  },
+  "actors": {},
+  "trusted_public_keys": [
+    {
+      "id": "canonical-selftest-1778777504933-ce497ecb-66ce-4dcb-8eaf-634d0922f151",
+      "purpose": "selftest-only",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAA4l5tTQpBE9Tg2b6YW7C101KsjyMHHzjKpXyNZKKZ78=\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "id": "owner-main",
+      "purpose": "owner",
+      "public_key_ssh": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJTg5qkSnODbPROQRoG5cN9IvWzGMNA7b7n1lNRUEe40 bha-owner-main",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAlODmqRKc4Ns9E5BGgblw30i9bMYw0DtvufWU1FQR7jQ=\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "id": "owner-main-pkcs8",
+      "purpose": "owner",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXpOUyByOzjciCDCYRwej8t0ZB6P8S5oTKmBpiZndSZc=\n-----END PUBLIC KEY-----\n"
+    }
+  ],
+  "action_rules": {
+    "deny_commands": {
+      "network_commands": [
+        "curl",
+        "wget",
+        "Invoke-WebRequest",
+        "Invoke-RestMethod"
+      ],
+      "provider_commands": [
+        "openai",
+        "anthropic",
+        "gemini"
+      ],
+      "memory_commands": [
+        "codex-memory",
+        "DailyNote"
+      ],
+      "git_remote_subcommands": [
+        "push",
+        "pull",
+        "fetch",
+        "clone",
+        "ls-remote",
+        "submodule"
+      ],
+      "destructive_commands": [
+        "rm",
+        "rmdir",
+        "del"
+      ]
+    },
+    "allow": [
+      {
+        "command": "git",
+        "args": [
+          "status"
+        ],
+        "reason": "local repository status inspection"
+      },
+      {
+        "command": "git",
+        "args": [
+          "diff",
+          "--check"
+        ],
+        "reason": "local whitespace validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/bha-run.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/bha-verify.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args_prefix": [
+          "scripts/bha-run.js",
+          "check",
+          "--"
+        ],
+        "reason": "nested dry-run policy check"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-verify.js",
+          "--self-test"
+        ],
+        "reason": "read-only verifier self-test"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "closeout",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only closeout preview"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "git-push-capability-flow",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--expires-minutes",
+          "20",
+          "--key-id",
+          "owner-main-pkcs8",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only git_push capability flow preview"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "rollback-drill",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only rollback drill"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "checkpoint",
+          "--format",
+          "json"
+        ],
+        "reason": "local checkpoint evidence write"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "make-push-payload",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--expires-minutes",
+          "20",
+          "--key-id",
+          "owner-main-pkcs8"
+        ],
+        "reason": "read-only canonical git_push capability payload generation"
+      },
+      {
+        "command": "node",
+        "args_prefix": [
+          "scripts/bha-run.js",
+          "verify-signed-capability",
+          "--json"
+        ],
+        "reason": "read-only signed capability validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "prepush-check",
+          "--internal-git-hook",
+          "origin"
+        ],
+        "reason": "read-only prepush fail-closed check"
+      }
+    ]
+  },
+  "validation_rules": {},
+  "capability_rules": {
+    "capability_possible_v1": [
+      "git_push"
+    ],
+    "always_denied_v1": [
       "provider_call",
       "memory_write",
+      "private_key_access",
+      "secret_access",
       "deploy",
       "release",
       "tag",
       "force_push",
+      "destructive_fs",
       "production_write",
-      "secret_read",
-      "mass_delete"
+      "package_publish"
     ]
   },
-  "scrub_env": [
-    "*_API_KEY",
-    "*_TOKEN",
-    "*_SECRET",
-    "OPENAI_*",
-    "ANTHROPIC_*",
-    "GEMINI_*",
-    "GOOGLE_API_KEY",
-    "AZURE_OPENAI_*",
-    "AWS_*",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "ALL_PROXY",
-    "NO_PROXY"
-  ],
-  "deny": {
-    "network_commands": [
-      "curl",
-      "wget",
-      "Invoke-WebRequest",
-      "Invoke-RestMethod"
-    ],
-    "provider_commands": [
-      "openai",
-      "anthropic",
-      "gemini"
-    ],
-    "memory_commands": [
-      "codex-memory",
-      "DailyNote"
-    ],
-    "git_remote_subcommands": [
-      "push",
-      "pull",
-      "fetch",
-      "clone",
-      "ls-remote",
-      "submodule"
-    ],
-    "destructive_commands": [
-      "rm",
-      "rmdir",
-      "del"
-    ],
-    "path_patterns": [
-      "coverage"
-    ]
-  },
-  "allow": [
-    {
-      "command": "git",
-      "args": [
-        "status"
-      ],
-      "reason": "local repository status inspection"
-    },
-    {
-      "command": "git",
-      "args": [
-        "diff",
-        "--check"
-      ],
-      "reason": "local whitespace validation"
-    },
-    {
-      "command": "node",
-      "args": [
-        "--check",
-        "scripts/bha-run.js"
-      ],
-      "reason": "local syntax validation"
-    },
-    {
-      "command": "node",
-      "args": [
-        "--check",
-        "scripts/bha-verify.js"
-      ],
-      "reason": "local syntax validation"
-    },
-    {
-      "command": "node",
-      "args_prefix": [
-        "scripts/bha-run.js",
-        "check",
-        "--"
-      ],
-      "reason": "nested dry-run policy check"
-    }
+  "unattended_rules": {},
+  "stop_conditions": [
+    "unverified_worktree_change",
+    "stale_validation",
+    "invalid_capability",
+    "denied_path_touched"
   ]
 }

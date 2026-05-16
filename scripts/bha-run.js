@@ -15,15 +15,22 @@ const LEDGER_PATH = path.join(BHA_DIR, 'ledger.jsonl');
 const CAPABILITIES_PATH = path.join(BHA_DIR, 'capabilities.jsonl');
 const VALIDATION_PATH = path.join(BHA_DIR, 'validation.yaml');
 const ROLLBACK_PATH = path.join(BHA_DIR, 'rollback.md');
+const ROADMAP_PATH = path.join(BHA_DIR, 'roadmap.md');
+const CHECKPOINT_PATH = path.join(BHA_DIR, 'checkpoint.json');
 const RUN_SCRIPT = path.join(ROOT, 'scripts', 'bha-run.js');
 const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
+const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
+const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
 
 const VALIDATION_INPUTS = [
+  DESIGN_PATH,
+  AGENTS_PATH,
   MISSION_PATH,
   POLICY_PATH,
   VALIDATION_PATH,
   ROLLBACK_PATH,
+  ROADMAP_PATH,
   RUN_SCRIPT,
   VERIFY_SCRIPT,
   PRE_PUSH_PATH
@@ -47,6 +54,25 @@ function stable(value) {
 
 function sha256(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+function withoutHashFields(value) {
+  const copy = JSON.parse(JSON.stringify(value || {}));
+  delete copy.policy_hash;
+  delete copy.mission_hash;
+  if (copy.metadata && typeof copy.metadata === 'object') {
+    delete copy.metadata.policy_hash;
+    delete copy.metadata.mission_hash;
+  }
+  return copy;
+}
+
+function policyHash(policy) {
+  return sha256(stable(withoutHashFields(policy || loadPolicy())));
+}
+
+function missionHash(mission) {
+  return sha256(stable(withoutHashFields(mission || loadMission())));
 }
 
 function readText(file) {
@@ -113,11 +139,15 @@ function appendLedger(type, payload, mutateState) {
   return withLedgerLock(() => {
     fs.mkdirSync(BHA_DIR, { recursive: true });
     const mission = loadMission();
+    const policy = loadPolicy();
     const state = loadState();
     const head = ledgerHead();
     const event = {
       schema: 'bha.ledger.event.v1',
       run_id: state.run_id || mission.run_id,
+      mission_id: mission.mission_id || null,
+      policy_hash: policyHash(policy),
+      mission_hash: missionHash(mission),
       event_id: crypto.randomUUID(),
       ts: new Date().toISOString(),
       type,
@@ -129,6 +159,8 @@ function appendLedger(type, payload, mutateState) {
     fs.appendFileSync(LEDGER_PATH, stable(event) + '\n', 'utf8');
     state.ledger_head_hash = event.event_hash;
     state.ledger_event_count = head.count + 1;
+    state.policy_hash = event.policy_hash;
+    state.mission_hash = event.mission_hash;
     state.updated_at = event.ts;
     if (typeof mutateState === 'function') {
       mutateState(state, event);
@@ -156,7 +188,7 @@ function normalizeRepoPath(value) {
 
 function deniedPathPatterns(mission, policy) {
   const missionPatterns = Array.isArray(mission.denied_paths) ? mission.denied_paths : [];
-  const policyPatterns = policy.deny && Array.isArray(policy.deny.path_patterns) ? policy.deny.path_patterns : [];
+  const policyPatterns = policy.paths && Array.isArray(policy.paths.denied) ? policy.paths.denied : [];
   return missionPatterns.concat(policyPatterns);
 }
 
@@ -244,7 +276,8 @@ function scrubbedEnv() {
 }
 
 function listFromPolicy(policy, section, fallback) {
-  return (policy.deny && Array.isArray(policy.deny[section])) ? policy.deny[section] : fallback;
+  const denyCommands = policy.action_rules && policy.action_rules.deny_commands;
+  return (denyCommands && Array.isArray(denyCommands[section])) ? denyCommands[section] : fallback;
 }
 
 function classifyForbidden(argv, policy) {
@@ -295,7 +328,8 @@ function argsPrefixMatch(actual, expected) {
 function classifyAllowed(argv, policy) {
   const cmd = commandName(argv[0]);
   const args = argv.slice(1).map(String);
-  for (const rule of policy.allow || []) {
+  const allowRules = policy.action_rules && Array.isArray(policy.action_rules.allow) ? policy.action_rules.allow : [];
+  for (const rule of allowRules) {
     if (commandName(rule.command) !== cmd) {
       continue;
     }
@@ -340,6 +374,17 @@ function evaluatePolicy(argv) {
     reason: 'command is not in the dry-run allowlist',
     category: 'not_allowlisted'
   };
+}
+
+function evaluateValidationCommandPolicy(argv) {
+  const args = Array.isArray(argv) ? argv.map(String) : [];
+  if (commandName(args[0]) === 'node' &&
+      args[1] === 'scripts/bha-run.js' &&
+      args[2] === 'check' &&
+      args[3] === '--') {
+    return evaluatePolicy(args.slice(0, 4));
+  }
+  return evaluatePolicy(args);
 }
 
 function splitAfterDashDash(args) {
@@ -502,7 +547,7 @@ function commandExpectationPassed(result, expect) {
   if (Object.prototype.hasOwnProperty.call(expect, 'exit_code') && result.exit_code !== expect.exit_code) {
     problems.push(`exit_code expected ${expect.exit_code} got ${result.exit_code}`);
   }
-  const expectsJson = ['decision', 'spawned', 'read_only', 'recorded'].some((key) => {
+  const expectsJson = ['decision', 'spawned', 'read_only', 'recorded', 'ok', 'status', 'reason', 'json', 'has_keys', 'missing_keys'].some((key) => {
     return Object.prototype.hasOwnProperty.call(expect, key);
   });
   if (expectsJson) {
@@ -522,6 +567,30 @@ function commandExpectationPassed(result, expect) {
       if (Object.prototype.hasOwnProperty.call(expect, 'recorded') && parsed.recorded !== expect.recorded) {
         problems.push(`recorded expected ${expect.recorded} got ${parsed.recorded}`);
       }
+      if (Object.prototype.hasOwnProperty.call(expect, 'ok') && parsed.ok !== expect.ok) {
+        problems.push(`ok expected ${expect.ok} got ${parsed.ok}`);
+      }
+      if (Object.prototype.hasOwnProperty.call(expect, 'status') && parsed.status !== expect.status) {
+        problems.push(`status expected ${expect.status} got ${parsed.status}`);
+      }
+      if (Object.prototype.hasOwnProperty.call(expect, 'reason') && parsed.reason !== expect.reason) {
+        problems.push(`reason expected ${expect.reason} got ${parsed.reason}`);
+      }
+      for (const key of expect.has_keys || []) {
+        if (!Object.prototype.hasOwnProperty.call(parsed, key)) {
+          problems.push(`expected JSON key ${key} was missing`);
+        }
+      }
+      for (const key of expect.missing_keys || []) {
+        if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+          problems.push(`unexpected JSON key ${key} was present`);
+        }
+      }
+      for (const [key, expectedValue] of Object.entries(expect.json || {})) {
+        if (parsed[key] !== expectedValue) {
+          problems.push(`${key} expected ${expectedValue} got ${parsed[key]}`);
+        }
+      }
     }
   }
   if (result.error) {
@@ -530,24 +599,117 @@ function commandExpectationPassed(result, expect) {
   return problems;
 }
 
+function rollbackDrillChecks() {
+  const checks = [];
+  const addCheck = (id, pass, evidence, requirement) => {
+    checks.push({
+      id,
+      status: pass ? 'PASS' : 'FAIL',
+      evidence,
+      requirement
+    });
+  };
+  if (!fs.existsSync(ROLLBACK_PATH)) {
+    addCheck('rollback_file_exists', false, rel(ROLLBACK_PATH), '.bha/rollback.md must exist');
+    return checks;
+  }
+  const text = readText(ROLLBACK_PATH);
+  const lower = text.toLowerCase();
+  addCheck('rollback_file_exists', true, rel(ROLLBACK_PATH), '.bha/rollback.md must exist');
+  addCheck('explicit_local_dry_run_scope', /local/i.test(text) && /dry-run/i.test(text), rel(ROLLBACK_PATH), 'rollback must be scoped to local dry-run recovery');
+  addCheck('stop_using_hook_path', /hooks?\s*path|core\.hookspath|pre-push/i.test(text), rel(ROLLBACK_PATH), 'rollback must explain how to stop relying on the local pre-push hook');
+  addCheck('restore_evidence_files', /\.bha\/state\.json/i.test(text) && /\.bha\/ledger\.jsonl/i.test(text) && /\.bha\/capabilities\.jsonl/i.test(text), rel(ROLLBACK_PATH), 'rollback must cover state, ledger, and capability evidence recovery');
+  addCheck('recover_from_known_good_copy', /known-good|known good|version control|git restore/i.test(text), rel(ROLLBACK_PATH), 'rollback must use version control or a known-good local copy as the recovery source');
+  addCheck('non_destructive_boundary', /do not run `git reset --hard`/i.test(text) && /do not run `git clean/i.test(text) && /remove-item -recurse/i.test(lower), rel(ROLLBACK_PATH), 'rollback drill must explicitly forbid destructive cleanup commands');
+  addCheck('no_remote_or_external_effects', /do not push/i.test(text) && /do not tag/i.test(text) && /do not release/i.test(text) && /do not deploy/i.test(text) && /do not publish/i.test(text), rel(ROLLBACK_PATH), 'rollback drill must forbid remote and external side effects');
+  addCheck('no_secret_or_private_key_access', /private key/i.test(text) && /secret/i.test(text), rel(ROLLBACK_PATH), 'rollback drill must forbid secret and private key access');
+  return checks;
+}
+
+async function handleRollbackDrill(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const checks = rollbackDrillChecks();
+  const failed = checks.filter((check) => check.status !== 'PASS');
+  const report = {
+    ok: failed.length === 0,
+    status: failed.length === 0 ? 'PASS' : 'BLOCKED',
+    schema: 'bha.rollback_drill.v1',
+    recorded: false,
+    read_only: true,
+    executed_recovery_actions: false,
+    rollback_path: rel(ROLLBACK_PATH),
+    evidence_sources: [
+      rel(ROLLBACK_PATH),
+      rel(MISSION_PATH),
+      rel(POLICY_PATH),
+      rel(VALIDATION_PATH)
+    ],
+    checks,
+    hard_boundaries: [
+      'rollback-drill reads local repository files only',
+      'rollback-drill does not modify git config, hooks, ledger, state, or repository files',
+      'rollback-drill does not run git reset, git clean, Remove-Item -Recurse, push, tag, release, deploy, publish, provider calls, memory writes, or secret/private-key access'
+    ]
+  };
+  console.log(JSON.stringify(report));
+  if (!report.ok) {
+    process.exitCode = 1;
+  }
+}
+
 async function handleValidate() {
   const validation = readJsonStrict(VALIDATION_PATH);
+  const policy = loadPolicy();
+  const mission = loadMission();
   const required = validation.required_commands || [];
   const inputsHash = validationInputsHash();
   appendLedger('validation_started', {
     required_command_count: required.length,
-    inputs_hash: inputsHash
+    inputs_hash: inputsHash,
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission)
   });
 
   const commandResults = [];
   for (const command of required) {
-    const result = await runCommand(command.argv, {});
+    const decision = evaluateValidationCommandPolicy(command.argv);
+    let result;
+    let spawned = false;
+    let policyProblems = [];
+    if (decision.allowed) {
+      spawned = true;
+      result = await runCommand(command.argv, {});
+    } else {
+      result = {
+        argv: scrubArgv(command.argv),
+        started_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+        exit_code: null,
+        signal: null,
+        stdout: '',
+        stderr: '',
+        error: `policy denied validation command: ${decision.reason || decision.rule || 'DENY'}`
+      };
+      policyProblems = [result.error];
+    }
     const problems = commandExpectationPassed(result, command.expect || {});
+    problems.push(...policyProblems);
     const status = problems.length === 0 ? 'PASS' : 'FAIL';
     const record = {
       id: command.id,
       argv: scrubArgv(command.argv),
       expect: command.expect || {},
+      decision: decision.decision,
+      allowed: decision.allowed,
+      rule: decision.rule,
+      category: decision.category,
+      reason: decision.reason,
+      spawned,
       status,
       problems,
       exit_code: result.exit_code,
@@ -562,6 +724,12 @@ async function handleValidate() {
     appendLedger('validation_step', {
       id: record.id,
       argv: record.argv,
+      decision: record.decision,
+      allowed: record.allowed,
+      rule: record.rule,
+      category: record.category,
+      reason: record.reason,
+      spawned: record.spawned,
       status: record.status,
       problems: record.problems,
       exit_code: record.exit_code,
@@ -576,10 +744,18 @@ async function handleValidate() {
     status,
     completed_at: completedAt,
     inputs_hash: inputsHash,
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
     commands: commandResults.map((result) => ({
       id: result.id,
       argv: result.argv,
       expect: result.expect,
+      decision: result.decision,
+      allowed: result.allowed,
+      rule: result.rule,
+      category: result.category,
+      reason: result.reason,
+      spawned: result.spawned,
       status: result.status,
       problems: result.problems,
       exit_code: result.exit_code,
@@ -592,6 +768,8 @@ async function handleValidate() {
       status,
       completed_at: completedAt,
       inputs_hash: inputsHash,
+      policy_hash: summary.policy_hash,
+      mission_hash: summary.mission_hash,
       ledger_event_hash: event.event_hash,
       commands: summary.commands
     };
@@ -622,13 +800,13 @@ function capabilityType(payload) {
 
 function disallowedCapabilityType(type) {
   const policy = loadPolicy();
-  const disallowed = (((policy.capabilities || {}).disallowed_types) || []).map((item) => String(item));
+  const disallowed = (((policy.capability_rules || {}).always_denied_v1) || []).map((item) => String(item));
   return disallowed.includes(String(type));
 }
 
 function trustedSigningKeys() {
   const policy = loadPolicy();
-  return (((policy.capabilities || {}).trusted_signing_keys) || []).map((item) => {
+  return ((policy.trusted_public_keys || [])).map((item) => {
     if (item && typeof item === 'object') {
       return {
         id: String(item.id || item.key_id || ''),
@@ -686,6 +864,136 @@ function capabilitySignatureValid(payload, key) {
   }
 }
 
+function capabilityResult(payload, valid, reason, extra) {
+  return Object.assign({
+    ok: valid === true,
+    status: valid === true ? 'VALID' : 'INVALID',
+    valid: valid === true,
+    capability_id: payload && (payload.capability_id || payload.id) ? String(payload.capability_id || payload.id) : null,
+    reason,
+    key_id: payload && payload.signing_key_id ? String(payload.signing_key_id) : null,
+    payload_hash: payload && payload.payload_hash ? String(payload.payload_hash) : null,
+    head: payload && payload.head ? String(payload.head) : null,
+    ledger_head_hash: payload && payload.ledger_head_hash ? String(payload.ledger_head_hash) : null
+  }, extra || {});
+}
+
+function canonicalPayloadHashFormat(value) {
+  return /^[0-9a-f]{64}$/.test(String(value || ''));
+}
+
+function validateCanonicalSignedCapability(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return capabilityResult(payload, false, 'CAPABILITY_JSON_OBJECT_REQUIRED');
+  }
+  if ((payload.payload && typeof payload.payload === 'object') ||
+      (payload.signature && typeof payload.signature === 'object')) {
+    return capabilityResult(payload, false, 'CAPABILITY_ENVELOPE_UNSUPPORTED_EXPECT_FLAT');
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'head_sha')) {
+    return capabilityResult(payload, false, 'CAPABILITY_FIELD_HEAD_REQUIRED_NOT_HEAD_SHA');
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'payload_hash') &&
+      !canonicalPayloadHashFormat(payload.payload_hash)) {
+    return capabilityResult(payload, false, 'CAPABILITY_PAYLOAD_HASH_FORMAT_INVALID_EXPECT_RAW_HEX');
+  }
+  if (payload.algorithm !== 'ed25519') {
+    return capabilityResult(payload, false, 'CAPABILITY_ALGORITHM_UNSUPPORTED');
+  }
+  if (payload.signature_encoding !== 'base64') {
+    return capabilityResult(payload, false, 'CAPABILITY_SIGNATURE_ENCODING_UNSUPPORTED');
+  }
+  if (payload.payload_hash_format !== 'sha256-hex') {
+    return capabilityResult(payload, false, 'CAPABILITY_PAYLOAD_HASH_FORMAT_UNSUPPORTED');
+  }
+  if (!payload.signature || typeof payload.signature !== 'string' || !payload.signing_key_id) {
+    return capabilityResult(payload, false, 'UNSIGNED_CAPABILITY_INVALID');
+  }
+  const key = findTrustedSigningKey(payload.signing_key_id);
+  if (!key) {
+    return capabilityResult(payload, false, 'UNKNOWN_SIGNING_KEY');
+  }
+  if (!key.public_key_pem) {
+    return capabilityResult(payload, false, 'SIGNING_KEY_HAS_NO_PUBLIC_KEY');
+  }
+  const computedHash = capabilityPayloadHash(payload);
+  if (payload.payload_hash !== computedHash) {
+    return capabilityResult(payload, false, 'CAPABILITY_PAYLOAD_HASH_MISMATCH', {
+      computed_payload_hash: computedHash
+    });
+  }
+  if (!capabilitySignatureValid(payload, key)) {
+    return capabilityResult(payload, false, 'CAPABILITY_SIGNATURE_INVALID');
+  }
+  return capabilityResult(payload, true, 'CAPABILITY_SIGNATURE_VALID');
+}
+
+async function remoteExists(remote) {
+  const result = await runCommand(['git', 'remote', 'get-url', remote], {});
+  return result.exit_code === 0 && !result.error;
+}
+
+async function verifySignedCapability(payload) {
+  const canonical = validateCanonicalSignedCapability(payload);
+  if (canonical.valid !== true) {
+    return canonical;
+  }
+  const state = loadState();
+  const type = capabilityType(payload);
+  if (payload.schema !== 'bha.capability.v1') {
+    return capabilityResult(payload, false, 'CAPABILITY_SCHEMA_UNSUPPORTED');
+  }
+  if (!payload.capability_id && !payload.id) {
+    return capabilityResult(payload, false, 'CAPABILITY_ID_MISSING');
+  }
+  if (disallowedCapabilityType(type)) {
+    return capabilityResult(payload, false, 'DISALLOWED_CAPABILITY_TYPE');
+  }
+  if (type !== 'git_push') {
+    return capabilityResult(payload, false, 'CAPABILITY_TYPE_NOT_SUPPORTED');
+  }
+  if (payload.run_id !== state.run_id) {
+    return capabilityResult(payload, false, 'CAPABILITY_RUN_ID_MISMATCH');
+  }
+  if (payload.policy_hash !== policyHash()) {
+    return capabilityResult(payload, false, 'CAPABILITY_POLICY_HASH_MISMATCH');
+  }
+  if (payload.mission_hash !== missionHash()) {
+    return capabilityResult(payload, false, 'CAPABILITY_MISSION_HASH_MISMATCH');
+  }
+  if (!payload.remote || !payload.branch || !payload.head) {
+    return capabilityResult(payload, false, 'CAPABILITY_BINDING_MISSING');
+  }
+  if (!await remoteExists(String(payload.remote))) {
+    return capabilityResult(payload, false, 'CAPABILITY_REMOTE_UNKNOWN');
+  }
+  const branch = await currentBranch();
+  if (payload.branch !== branch) {
+    return capabilityResult(payload, false, 'CAPABILITY_BRANCH_MISMATCH');
+  }
+  const head = await currentHead();
+  if (payload.head !== head) {
+    return capabilityResult(payload, false, 'CAPABILITY_HEAD_MISMATCH');
+  }
+  const verifier = await verifierResult();
+  if (!verifier.ok || !verifier.parsed) {
+    return capabilityResult(payload, false, 'CAPABILITY_VERIFIER_NOT_PASSING');
+  }
+  if (payload.ledger_head_hash !== verifier.parsed.ledger_head_hash) {
+    return capabilityResult(payload, false, 'CAPABILITY_LEDGER_HEAD_MISMATCH');
+  }
+  if (payload.one_use !== true) {
+    return capabilityResult(payload, false, 'CAPABILITY_ONE_USE_REQUIRED');
+  }
+  if (isExpired(payload.expires_at)) {
+    return capabilityResult(payload, false, 'CAPABILITY_EXPIRED');
+  }
+  if (payload.command !== `git push ${payload.remote} ${payload.branch}`) {
+    return capabilityResult(payload, false, 'CAPABILITY_COMMAND_MISMATCH');
+  }
+  return capabilityResult(payload, true, 'CAPABILITY_SIGNATURE_VALID');
+}
+
 function isExpired(expiresAt, now) {
   const millis = Date.parse(String(expiresAt || ''));
   return Number.isNaN(millis) || millis <= (now || Date.now());
@@ -706,30 +1014,24 @@ function validateCapabilityRequest(payload, type, state, events, options) {
   if (!id) {
     return { valid: false, reason: 'CAPABILITY_ID_MISSING' };
   }
+  const canonical = validateCanonicalSignedCapability(payload);
+  if (canonical.valid !== true) {
+    return { valid: false, reason: canonical.reason };
+  }
   if (disallowedCapabilityType(type)) {
     return { valid: false, reason: 'DISALLOWED_CAPABILITY_TYPE' };
   }
   if (type !== 'git_push') {
     return { valid: false, reason: 'CAPABILITY_TYPE_NOT_SUPPORTED' };
   }
-  if (!payload.signature || !payload.signing_key_id) {
-    return { valid: false, reason: 'UNSIGNED_CAPABILITY_INVALID' };
-  }
-  const key = findTrustedSigningKey(payload.signing_key_id);
-  if (!key) {
-    return { valid: false, reason: 'UNKNOWN_SIGNING_KEY' };
-  }
-  if (!key.public_key_pem) {
-    return { valid: false, reason: 'SIGNING_KEY_HAS_NO_PUBLIC_KEY' };
-  }
-  if (payload.payload_hash && payload.payload_hash !== capabilityPayloadHash(payload)) {
-    return { valid: false, reason: 'CAPABILITY_PAYLOAD_HASH_MISMATCH' };
-  }
-  if (!capabilitySignatureValid(payload, key)) {
-    return { valid: false, reason: 'CAPABILITY_SIGNATURE_INVALID' };
-  }
   if (payload.run_id !== state.run_id) {
     return { valid: false, reason: 'CAPABILITY_RUN_ID_MISMATCH' };
+  }
+  if (payload.policy_hash !== policyHash()) {
+    return { valid: false, reason: 'CAPABILITY_POLICY_HASH_MISMATCH' };
+  }
+  if (payload.mission_hash !== missionHash()) {
+    return { valid: false, reason: 'CAPABILITY_MISSION_HASH_MISMATCH' };
   }
   if (!payload.remote || !payload.branch || !payload.head) {
     return { valid: false, reason: 'CAPABILITY_BINDING_MISSING' };
@@ -756,9 +1058,14 @@ function capabilityHash(event) {
 }
 
 function appendCapabilityEvent(type, payload) {
+  const mission = loadMission();
+  const policy = loadPolicy();
   const event = {
     schema: 'bha.capability.event.v1',
     run_id: loadState().run_id,
+    mission_id: mission.mission_id || null,
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
     event_id: crypto.randomUUID(),
     ts: new Date().toISOString(),
     type,
@@ -789,14 +1096,13 @@ function findCapabilityIssue(events, id) {
 
 function ensureTrustedSigningKey(keyId, publicKeyPem) {
   const policy = loadPolicy();
-  policy.capabilities = policy.capabilities || {};
-  const keys = Array.isArray(policy.capabilities.trusted_signing_keys)
-    ? policy.capabilities.trusted_signing_keys
+  const keys = Array.isArray(policy.trusted_public_keys)
+    ? policy.trusted_public_keys
     : [];
   if (!keys.some((item) => String(item.id || item.key_id || '') === String(keyId))) {
     keys.push({ id: keyId, public_key_pem: publicKeyPem });
   }
-  policy.capabilities.trusted_signing_keys = keys;
+  policy.trusted_public_keys = keys;
   writeJson(POLICY_PATH, policy);
 }
 
@@ -832,11 +1138,27 @@ async function handleIssueCapability(args) {
   const type = capabilityType(payload);
   const id = String(payload.id || payload.capability_id || crypto.randomUUID());
   payload.capability_id = id;
-  const state = loadState();
-  const validation = validateCapabilityRequest(payload, type, state, readCapabilityEvents());
+  const validation = await verifySignedCapability(payload);
   const valid = validation.valid === true;
   const status = valid ? 'VALID' : 'INVALID';
   const reason = validation.reason;
+  if (!valid) {
+    console.log(JSON.stringify({
+      ok: false,
+      capability_id: id,
+      valid: false,
+      status,
+      reason,
+      key_id: validation.key_id,
+      payload_hash: validation.payload_hash,
+      head: validation.head,
+      ledger_head_hash: validation.ledger_head_hash,
+      recorded: false,
+      capability_store: '.bha/capabilities.jsonl'
+    }));
+    process.exitCode = 2;
+    return;
+  }
   const event = appendCapabilityEvent('capability_issue', {
     capability_id: id,
     requested: payload,
@@ -859,6 +1181,37 @@ async function handleIssueCapability(args) {
   }
 }
 
+async function handleVerifySignedCapability(args) {
+  const jsonIndex = args.indexOf('--json');
+  if (jsonIndex === -1 || !args[jsonIndex + 1]) {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', reason: 'missing --json payload' }));
+    process.exitCode = 2;
+    return;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(args[jsonIndex + 1]);
+  } catch (error) {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', reason: `invalid JSON payload: ${error.message}` }));
+    process.exitCode = 2;
+    return;
+  }
+  const result = await verifySignedCapability(payload);
+  console.log(JSON.stringify({
+    ok: result.ok,
+    status: result.status,
+    capability_id: result.capability_id,
+    reason: result.reason,
+    key_id: result.key_id,
+    payload_hash: result.payload_hash,
+    head: result.head,
+    ledger_head_hash: result.ledger_head_hash
+  }));
+  if (result.ok !== true) {
+    process.exitCode = 2;
+  }
+}
+
 function getOption(args, name) {
   const index = args.indexOf(name);
   return index === -1 ? null : args[index + 1] || null;
@@ -870,6 +1223,162 @@ async function currentHead() {
     return null;
   }
   return result.stdout.trim();
+}
+
+async function buildPushPayload(remote, branch, keyId, expiresMinutes) {
+  if (!remote || !branch || !keyId || !Number.isFinite(expiresMinutes) || expiresMinutes <= 0) {
+    return { ok: false, error: 'missing --remote, --branch, --expires-minutes, or --key-id' };
+  }
+  const key = findTrustedSigningKey(keyId);
+  if (!key || !key.public_key_pem) {
+    return { ok: false, error: 'unknown trusted signing key' };
+  }
+  if (!await remoteExists(remote)) {
+    return { ok: false, error: 'unknown remote' };
+  }
+  const current = await currentBranch();
+  if (current !== branch) {
+    return { ok: false, error: 'branch mismatch', current_branch: current, requested_branch: branch };
+  }
+  const head = await currentHead();
+  if (!head) {
+    return { ok: false, error: 'unable to read HEAD' };
+  }
+  const verifier = await verifierResult();
+  if (!verifier.parsed || !verifier.parsed.ledger_head_hash) {
+    return { ok: false, error: 'unable to read verifier ledger head' };
+  }
+  const state = loadState();
+  const policy = loadPolicy();
+  const mission = loadMission();
+  const capabilityPrefix = `push-${remote}-${branch}-${head.slice(0, 7)}`;
+  const existingSerials = readCapabilityEvents()
+    .map((event) => event && event.payload ? String(event.payload.capability_id || '') : '')
+    .filter((id) => id.startsWith(`${capabilityPrefix}-`))
+    .map((id) => Number(id.slice(capabilityPrefix.length + 1)))
+    .filter((serial) => Number.isInteger(serial) && serial > 0);
+  const nextSerial = existingSerials.length ? Math.max(...existingSerials) + 1 : 1;
+  const payload = {
+    schema: 'bha.capability.v1',
+    capability_id: `${capabilityPrefix}-${String(nextSerial).padStart(3, '0')}`,
+    run_id: state.run_id,
+    type: 'git_push',
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
+    remote,
+    branch,
+    head,
+    ledger_head_hash: verifier.parsed.ledger_head_hash,
+    one_use: true,
+    expires_at: new Date(Date.now() + expiresMinutes * 60 * 1000).toISOString(),
+    signing_key_id: keyId,
+    algorithm: 'ed25519',
+    signature_encoding: 'base64',
+    payload_hash_format: 'sha256-hex',
+    command: `git push ${remote} ${branch}`,
+    denied_actions_remain_denied: [
+      'force_push',
+      'tag',
+      'release',
+      'deploy',
+      'provider_call',
+      'memory_write',
+      'package_install',
+      'private_key_repo_write'
+    ]
+  };
+  return {
+    ok: true,
+    payload,
+    verifier: verifier.parsed,
+    current_branch: current,
+    current_head: head
+  };
+}
+
+async function handleMakePushPayload(args) {
+  const remote = getOption(args, '--remote');
+  const branch = getOption(args, '--branch');
+  const keyId = getOption(args, '--key-id');
+  const expiresMinutesRaw = getOption(args, '--expires-minutes');
+  const expiresMinutes = Number(expiresMinutesRaw);
+  const built = await buildPushPayload(remote, branch, keyId, expiresMinutes);
+  if (built.ok !== true) {
+    console.log(JSON.stringify(built));
+    process.exitCode = 2;
+    return;
+  }
+  console.log(JSON.stringify(built.payload));
+}
+
+async function handleGitPushCapabilityFlow(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const remote = getOption(args, '--remote');
+  const branch = getOption(args, '--branch');
+  const keyId = getOption(args, '--key-id');
+  const expiresMinutesRaw = getOption(args, '--expires-minutes');
+  const expiresMinutes = Number(expiresMinutesRaw);
+  const built = await buildPushPayload(remote, branch, keyId, expiresMinutes);
+  if (built.ok !== true) {
+    console.log(JSON.stringify(Object.assign({ status: 'BLOCKED', recorded: false, read_only: true }, built)));
+    process.exitCode = 2;
+    return;
+  }
+  const payloadJson = JSON.stringify(built.payload);
+  console.log(JSON.stringify({
+    ok: true,
+    status: 'READY_TO_SIGN',
+    recorded: false,
+    read_only: true,
+    schema: 'bha.git_push_capability_flow.v1',
+    payload: built.payload,
+    steps: [
+      {
+        id: 'make_unsigned_payload',
+        status: 'READY',
+        argv: ['node', 'scripts/bha-run.js', 'make-push-payload', '--remote', remote, '--branch', branch, '--expires-minutes', String(expiresMinutes), '--key-id', keyId]
+      },
+      {
+        id: 'sign_externally',
+        status: 'HUMAN_OR_EXTERNAL_SIGNER_REQUIRED',
+        input: 'canonical flat JSON payload',
+        output: 'same JSON object plus payload_hash and signature',
+        private_key_handling: 'DO_NOT_READ_PRINT_STORE_OR_WRITE_PRIVATE_KEY_MATERIAL_IN_BHA'
+      },
+      {
+        id: 'verify_signed_payload',
+        status: 'WAITING_FOR_SIGNED_PAYLOAD',
+        argv_prefix: ['node', 'scripts/bha-run.js', 'verify-signed-capability', '--json']
+      },
+      {
+        id: 'issue_capability',
+        status: 'WAITING_FOR_SIGNED_PAYLOAD',
+        argv_prefix: ['node', 'scripts/bha-run.js', 'issue-capability', '--json']
+      },
+      {
+        id: 'consume_capability',
+        status: 'WAITING_FOR_ISSUED_CAPABILITY',
+        argv: ['node', 'scripts/bha-run.js', 'consume-capability', '--id', built.payload.capability_id, '--for', 'git_push', '--remote', remote, '--branch', branch]
+      },
+      {
+        id: 'prepush_check',
+        status: 'GATED_UNTIL_CONSUMED_CAPABILITY_EXISTS',
+        argv: ['node', 'scripts/bha-run.js', 'prepush-check', '--internal-git-hook', remote]
+      }
+    ],
+    hard_boundaries: [
+      'private key material is never read, printed, stored, or written by BHA',
+      'capability authorizes only git_push for the exact remote, branch, head, policy_hash, mission_hash, and ledger_head_hash',
+      'prepush-check remains fail-closed without a valid consumed capability',
+      'force_push, tag, release, deploy, provider_call, memory_write, and package_publish remain denied'
+    ],
+    unsigned_payload_json: payloadJson
+  }));
 }
 
 async function handleConsumeCapability(args) {
@@ -959,7 +1468,12 @@ async function gitStatusShort() {
 }
 
 function authorizedRuntimeDirty(stdout) {
-  const allowed = new Set(['.bha/capabilities.jsonl', '.bha/ledger.jsonl', '.bha/state.json']);
+  const allowed = new Set([
+    '.bha/capabilities.jsonl',
+    '.bha/checkpoint.json',
+    '.bha/ledger.jsonl',
+    '.bha/state.json'
+  ]);
   const lines = String(stdout || '').split(/\r?\n/).filter((line) => line.trim() !== '');
   if (lines.length === 0) {
     return true;
@@ -1092,9 +1606,89 @@ function branchFromPrepushInput(stdinText) {
   return match ? match[1] : null;
 }
 
+function validationCommandPassed(state, id) {
+  const commands = state && state.validation && Array.isArray(state.validation.commands)
+    ? state.validation.commands
+    : [];
+  return commands.some((command) => command.id === id && command.status === 'PASS');
+}
+
+function readCheckpointFile() {
+  if (!fs.existsSync(CHECKPOINT_PATH)) {
+    return null;
+  }
+  try {
+    return readJsonStrict(CHECKPOINT_PATH);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function ledgerEventByHash(events, hash, type) {
+  return (events || []).find((event) => event.event_hash === hash && (!type || event.type === type));
+}
+
+function newestLedgerEventOfType(events, type) {
+  const matches = (events || []).filter((event) => event.type === type);
+  return matches.length ? matches[matches.length - 1] : null;
+}
+
+function prepushEvidenceGates(state, ledger, verify) {
+  const head = ledger.length ? ledger[ledger.length - 1].event_hash : null;
+  const validation = state && state.validation ? state.validation : null;
+  const checkpoint = readCheckpointFile();
+  const checkpointEvent = checkpoint ? ledgerEventByHash(ledger, checkpoint.ledger_event_hash, 'checkpoint_written') : null;
+  const newestCheckpoint = newestLedgerEventOfType(ledger, 'checkpoint_written');
+  const closeoutEvent = state && state.closeout ? ledgerEventByHash(ledger, state.closeout.ledger_event_hash, 'closeout_completed') : null;
+  const newestCloseout = newestLedgerEventOfType(ledger, 'closeout_completed');
+  const rollbackChecks = rollbackDrillChecks();
+  const gates = {
+    verifier_pass: verify.ok === true && verify.parsed && verify.parsed.status === 'PASS',
+    verifier_no_warnings: verify.parsed && Array.isArray(verify.parsed.warnings) && verify.parsed.warnings.length === 0,
+    ledger_state_match: Boolean(state && head && state.ledger_head_hash === head && verify.parsed && verify.parsed.ledger_head_hash === head),
+    validation_fresh: Boolean(validation &&
+      validation.status === 'PASS' &&
+      validation.inputs_hash === validationInputsHash() &&
+      validation.policy_hash === policyHash() &&
+      validation.mission_hash === missionHash() &&
+      ledgerEventByHash(ledger, validation.ledger_event_hash, 'validation_completed')),
+    rollback_recorded: rollbackChecks.every((check) => check.status === 'PASS') && validationCommandPassed(state, 'rollback_drill_readonly'),
+    checkpoint_recorded: Boolean(checkpoint &&
+      state &&
+      state.last_checkpoint &&
+      checkpointEvent &&
+      newestCheckpoint &&
+      newestCheckpoint.event_hash === checkpointEvent.event_hash &&
+      state.last_checkpoint.ledger_event_hash === checkpointEvent.event_hash &&
+      state.last_checkpoint_id === checkpoint.checkpoint_id &&
+      checkpoint.verifier_status === 'PASS' &&
+      checkpoint.checkpoint_binding &&
+      checkpoint.checkpoint_binding.checkpoint_event_hash === checkpointEvent.event_hash),
+    closeout_current: Boolean(state &&
+      state.closeout &&
+      closeoutEvent &&
+      newestCloseout &&
+      newestCloseout.event_hash === closeoutEvent.event_hash &&
+      state.closeout.ledger_event_hash === closeoutEvent.event_hash &&
+      state.closeout.final_ledger_head_hash === head &&
+      closeoutEvent.event_hash === head)
+  };
+  return { gates, rollback_checks: rollbackChecks };
+}
+
+function firstFailedGate(checks) {
+  for (const [key, value] of Object.entries(checks)) {
+    if (value !== true) {
+      return key.toUpperCase();
+    }
+  }
+  return null;
+}
+
 async function handlePrepushCheck(args) {
   const record = args.includes('--record');
-  const hookArgs = args.filter((arg) => arg !== '--record');
+  const preflight = args.includes('--preflight');
+  const hookArgs = args.filter((arg) => arg !== '--record' && arg !== '--preflight');
   if (hookArgs[0] !== '--internal-git-hook') {
     console.log(JSON.stringify({ ok: false, status: 'FAIL_CLOSED', reason: 'missing internal hook marker' }));
     process.exitCode = 1;
@@ -1106,16 +1700,24 @@ async function handlePrepushCheck(args) {
   const head = await currentHead();
   const status = await gitStatusShort();
   const verify = await verifierResult();
+  const state = loadState();
+  const ledger = readJsonl(LEDGER_PATH);
+  const evidence = prepushEvidenceGates(state, ledger, verify);
   let capability = remote && branch && head ? await matchingConsumedCapability(remote, branch, head, { reserve: false }) : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
   const checks = {
-    verifier_pass: verify.ok === true,
-    clean_ledger: verify.parsed ? verify.parsed.ok === true : false,
+    verifier_pass: evidence.gates.verifier_pass,
+    verifier_no_warnings: evidence.gates.verifier_no_warnings,
+    clean_ledger: evidence.gates.ledger_state_match,
+    validation_fresh: evidence.gates.validation_fresh,
+    rollback_recorded: evidence.gates.rollback_recorded,
+    checkpoint_recorded: evidence.gates.checkpoint_recorded,
+    closeout_current: evidence.gates.closeout_current,
     valid_consumed_capability: capability.ok === true,
     matching_run_id_remote_branch_head: capability.ok === true,
     clean_git_status: status.ok === true && (status.clean === true || authorizedRuntimeDirty(status.stdout))
   };
   let ok = Object.values(checks).every(Boolean);
-  if (ok) {
+  if (ok && !preflight) {
     capability = await matchingConsumedCapability(remote, branch, head, { reserve: true });
     checks.valid_consumed_capability = capability.ok === true;
     checks.matching_run_id_remote_branch_head = capability.ok === true;
@@ -1128,6 +1730,7 @@ async function handlePrepushCheck(args) {
       branch: branch || 'UNKNOWN',
       head: head || 'UNKNOWN',
       checks,
+      reason: ok ? 'ALLOW' : (capability.reason || firstFailedGate(checks) || 'PREPUSH_GATE_FAILED'),
       capability: {
         ok: capability.ok === true,
         reason: capability.reason || null,
@@ -1138,12 +1741,15 @@ async function handlePrepushCheck(args) {
   console.log(JSON.stringify({
     ok,
     status: ok ? 'ALLOW' : 'FAIL_CLOSED',
-    read_only: !record,
+    reason: ok ? 'ALLOW' : (capability.reason || firstFailedGate(checks) || 'PREPUSH_GATE_FAILED'),
+    read_only: !record && (preflight || !ok),
     recorded: record,
+    preflight,
     remote: remote || 'UNKNOWN',
     branch: branch || 'UNKNOWN',
     head: head || 'UNKNOWN',
     checks,
+    evidence_gates: evidence.gates,
     capability,
     git_status: {
       ok: status.ok,
@@ -1228,17 +1834,23 @@ async function recordPrepushSimulation(remote, branch, head, label) {
 
 function selftestCapabilityPayload(id, keyId, privateKey, bindings, overrides) {
   const payload = Object.assign({
+    schema: 'bha.capability.v1',
     id,
     capability_id: id,
     type: 'git_push',
     run_id: bindings.run_id,
+    policy_hash: policyHash(),
+    mission_hash: missionHash(),
     remote: bindings.remote,
     branch: bindings.branch,
     head: bindings.head,
     ledger_head_hash: loadState().ledger_head_hash,
     one_use: true,
     expires_at: bindings.expires_at,
-    signing_key_id: keyId
+    signing_key_id: keyId,
+    algorithm: 'ed25519',
+    signature_encoding: 'base64',
+    payload_hash_format: 'sha256-hex'
   }, overrides || {});
   return signCapabilityPayload(payload, privateKey);
 }
@@ -1465,8 +2077,108 @@ function capabilityCloseoutSummary(capabilities, state) {
   };
 }
 
+async function handleCheckpoint(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const mission = loadMission();
+  const policy = loadPolicy();
+  const state = loadState();
+  const head = ledgerHead();
+  const branch = await currentBranch();
+  const current = await currentHead();
+  const gitStatus = await gitStatusShort();
+  const verify = await verifierResult();
+  const validation = state.validation || null;
+  const validationCommands = validation && Array.isArray(validation.commands) ? validation.commands : [];
+  const failedValidation = validationCommands.filter((command) => command.status !== 'PASS').map((command) => command.id);
+  const changedFiles = gitStatus.ok ? changedFilesFromStatus(gitStatus.stdout) : [];
+  const verifierIssues = verify.parsed && Array.isArray(verify.parsed.issues) ? verify.parsed.issues : [];
+  const checkpointId = `checkpoint-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  const checkpoint = {
+    schema: 'bha.checkpoint.v1',
+    checkpoint_id: checkpointId,
+    created_at: new Date().toISOString(),
+    run_id: state.run_id,
+    actor_id: 'bha-run',
+    goal: {
+      mission_id: mission.mission_id,
+      name: mission.name,
+      objective: mission.objective,
+      mission_hash: missionHash(mission)
+    },
+    phase: 'checkpoint',
+    workspace: rel(ROOT) || '.',
+    branch: branch || 'UNKNOWN',
+    head: current || 'UNKNOWN',
+    ledger_head_hash: head.hash || 'GENESIS',
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
+    completed: validationCommands.filter((command) => command.status === 'PASS').map((command) => command.id),
+    changed_files: changedFiles,
+    validation_run: validation ? {
+      status: validation.status,
+      completed_at: validation.completed_at || 'UNKNOWN',
+      ledger_event_hash: validation.ledger_event_hash || 'NOT_RECORDED',
+      command_count: validationCommands.length
+    } : 'NOT_RECORDED',
+    validation_not_run: failedValidation,
+    verifier_status: verify.parsed ? verify.parsed.status : 'UNKNOWN',
+    verifier_ledger_head_hash: verify.parsed && verify.parsed.ledger_head_hash ? verify.parsed.ledger_head_hash : 'UNKNOWN',
+    blockers: verifierIssues.map((issue) => issue.code),
+    risks: [
+      'worktree may be dirty by design during local v1 kernel development',
+      'real git push remains blocked without signed consumed git_push capability',
+      'checkpoint is resumable evidence, not proof of external-world side effects'
+    ],
+    next_safe_action: 'Continue local v1 kernel hardening; do not perform remote writes without explicit authorization and a valid consumed git_push capability.',
+    stop_conditions: mission.hard_stop_conditions || [],
+    checkpoint_binding: {
+      verified_ledger_head_hash: head.hash || 'GENESIS',
+      checkpoint_event_hash: 'SELF_EVENT_HASH',
+      final_ledger_head_hash: 'SELF_EVENT_HASH'
+    }
+  };
+  const event = appendLedger('checkpoint_written', checkpoint, (nextState, checkpointEvent) => {
+    nextState.last_checkpoint = {
+      checkpoint_id: checkpoint.checkpoint_id,
+      created_at: checkpointEvent.ts,
+      ledger_event_hash: checkpointEvent.event_hash,
+      verified_ledger_head_hash: checkpoint.ledger_head_hash,
+      checkpoint_event_hash: checkpointEvent.event_hash,
+      final_ledger_head_hash: checkpointEvent.event_hash,
+      path: rel(CHECKPOINT_PATH),
+      policy_hash: checkpointEvent.policy_hash,
+      mission_hash: checkpointEvent.mission_hash
+    };
+    nextState.last_checkpoint_id = checkpoint.checkpoint_id;
+  });
+  checkpoint.ledger_event_hash = event.event_hash;
+  checkpoint.created_at = event.ts;
+  checkpoint.checkpoint_binding.checkpoint_event_hash = event.event_hash;
+  checkpoint.checkpoint_binding.final_ledger_head_hash = event.event_hash;
+  writeJson(CHECKPOINT_PATH, checkpoint);
+  console.log(JSON.stringify({
+    ok: true,
+    status: 'CHECKPOINT_RECORDED',
+    recorded: true,
+    read_only: false,
+    checkpoint,
+    checkpoint_binding: checkpoint.checkpoint_binding,
+    event: {
+      event_hash: event.event_hash,
+      event_id: event.event_id,
+      type: event.type
+    }
+  }));
+}
+
 async function handleCloseout(args) {
   const format = getOption(args, '--format') || 'json';
+  const record = args.includes('--record');
   if (format !== 'json') {
     console.log(JSON.stringify({ ok: false, error: 'only --format json is supported' }));
     process.exitCode = 2;
@@ -1485,6 +2197,10 @@ async function handleCloseout(args) {
   const changedFiles = gitStatus.ok ? changedFilesFromStatus(gitStatus.stdout) : [];
   const effects = forbiddenLedgerEffects(ledger, policy);
   const selftest = state && state.capability_selftest ? state.capability_selftest : null;
+  const verifiedLedgerHeadHash = verify.parsed && verify.parsed.ledger_head_hash
+    ? verify.parsed.ledger_head_hash
+    : (ledger.length ? ledger[ledger.length - 1].event_hash : 'NOT_RECORDED');
+  const finalLedgerHeadHash = ledger.length ? ledger[ledger.length - 1].event_hash : 'NOT_RECORDED';
   const unknowns = [];
   if (!selftest) {
     unknowns.push('capability_selftest');
@@ -1492,13 +2208,33 @@ async function handleCloseout(args) {
   if (!state || !state.validation) {
     unknowns.push('validation');
   }
-  console.log(JSON.stringify({
+  const unsupportedClaims = verify.parsed && Array.isArray(verify.parsed.issues)
+    ? verify.parsed.issues.filter((issue) => issue.code === 'CLOSEOUT_UNSUPPORTED_CLAIM')
+    : [];
+  const verifierWarnings = verify.parsed && Array.isArray(verify.parsed.warnings)
+    ? verify.parsed.warnings
+    : [];
+  const blockingVerifierWarnings = verifierWarnings.filter((warning) => {
+    return warning && warning.code !== 'CLOSEOUT_NOT_CURRENT_LEDGER_HEAD';
+  });
+  const report = {
     ok: true,
     status: 'CLOSEOUT_GENERATED',
-    mission: mission ? { run_id: mission.run_id, mode: mission.mode, name: mission.name } : 'UNKNOWN',
-    policy: policy ? { version: policy.version, mode: policy.mode, deny_before_allow: policy.deny_rules_run_before_allow_rules === true } : 'UNKNOWN',
+    closeout_status: verify.ok && validationStatus === 'PASS' && unsupportedClaims.length === 0 ? 'PASS' : 'BLOCKED',
+    recorded: false,
+    read_only: true,
+    mission: mission ? { mission_id: mission.mission_id, run_id: mission.run_id, mode: mission.mode, name: mission.name, mission_hash: missionHash(mission) } : 'UNKNOWN',
+    policy: policy ? {
+      policy_id: policy.metadata ? policy.metadata.policy_id : 'UNKNOWN',
+      version: policy.metadata ? policy.metadata.version : 'UNKNOWN',
+      mode: policy.metadata ? policy.metadata.mode : 'UNKNOWN',
+      deny_before_allow: policy.metadata ? policy.metadata.deny_rules_run_before_allow_rules === true : 'UNKNOWN',
+      policy_hash: policyHash(policy)
+    } : 'UNKNOWN',
     state: state ? {
       run_id: state.run_id,
+      policy_hash: state.policy_hash || 'NOT_RECORDED',
+      mission_hash: state.mission_hash || 'NOT_RECORDED',
       ledger_head_hash: state.ledger_head_hash || 'NOT_RECORDED',
       ledger_event_count: state.ledger_event_count,
       validation_status: validationStatus || 'NOT_RECORDED'
@@ -1506,6 +2242,12 @@ async function handleCloseout(args) {
     ledger: {
       events: ledger.length,
       head_hash: ledger.length ? ledger[ledger.length - 1].event_hash : 'NOT_RECORDED'
+    },
+    closeout_binding: {
+      verified_ledger_head_hash: verifiedLedgerHeadHash,
+      closeout_event_hash: 'NOT_RECORDED_READ_ONLY_CLOSEOUT',
+      final_ledger_head_hash: finalLedgerHeadHash,
+      verifier_status_applies_to: 'verified_ledger_head_hash'
     },
     capabilities: capabilitySummary,
     validation: validation ? {
@@ -1545,13 +2287,101 @@ async function handleCloseout(args) {
       error: verify.error || truncate(verify.stderr) || 'UNKNOWN'
     },
     unknowns,
-    unsupported_claims: verify.parsed && Array.isArray(verify.parsed.issues)
-      ? verify.parsed.issues.filter((issue) => issue.code === 'UNSUPPORTED_CLOSEOUT_CLAIM')
-      : [],
+    unsupported_claims: unsupportedClaims,
+    verifier_warnings: verifierWarnings,
     next_gate: selftest && selftest.status === 'PASS'
       ? 'READ_ONLY_VERIFIER_AND_MANUAL_AUTHORIZATION_FOR_ANY_REAL_PUSH'
       : 'CAPABILITY_SELFTEST_REQUIRED'
-  }));
+  };
+
+  if (record) {
+    const blockers = [];
+    if (!verify.ok || !verify.parsed || verify.parsed.status !== 'PASS') {
+      blockers.push('VERIFIER_NOT_PASSING');
+    }
+    if (blockingVerifierWarnings.length > 0) {
+      blockers.push('VERIFIER_WARNINGS_PRESENT');
+    }
+    if (validationStatus !== 'PASS') {
+      blockers.push('VALIDATION_NOT_PASSING');
+    }
+    if (unsupportedClaims.length > 0) {
+      blockers.push('CLOSEOUT_UNSUPPORTED_CLAIM');
+    }
+    if (unknowns.length > 0) {
+      blockers.push('CLOSEOUT_UNKNOWN_EVIDENCE');
+    }
+    if (effects.forbidden_spawned) {
+      blockers.push('FORBIDDEN_COMMAND_EXECUTED');
+    }
+    if (blockers.length > 0) {
+      report.ok = false;
+      report.status = 'CLOSEOUT_BLOCKED';
+      report.closeout_status = 'BLOCKED';
+      report.blockers = blockers;
+      console.log(JSON.stringify(report));
+      process.exitCode = 3;
+      return;
+    }
+
+    const closeoutPayload = {
+      schema: 'bha.closeout.v1',
+      status: 'PASS',
+      mode: 'recorded',
+      run_id: state.run_id,
+      policy_hash: policyHash(policy),
+      mission_hash: missionHash(mission),
+      verifier_status: verify.parsed.status,
+      validation_status: validationStatus,
+      verifier_warnings: verifierWarnings,
+      validation_ledger_event_hash: state.validation && state.validation.ledger_event_hash
+        ? state.validation.ledger_event_hash
+        : 'NOT_RECORDED',
+      unsupported_claims: unsupportedClaims,
+      unknowns,
+      closeout_binding: {
+        verified_ledger_head_hash: verifiedLedgerHeadHash,
+        closeout_event_hash: 'SELF_EVENT_HASH',
+        final_ledger_head_hash: 'SELF_EVENT_HASH',
+        verifier_status_applies_to: 'verified_ledger_head_hash'
+      },
+      changed_files: changedFiles,
+      external_effects: report.external_effects,
+      capability_summary: capabilitySummary
+    };
+    const event = appendLedger('closeout_completed', closeoutPayload, (nextState, closeoutEvent) => {
+      nextState.closeout = {
+        status: 'PASS',
+        completed_at: closeoutEvent.ts,
+        ledger_event_hash: closeoutEvent.event_hash,
+        verified_ledger_head_hash: verifiedLedgerHeadHash,
+        closeout_event_hash: closeoutEvent.event_hash,
+        final_ledger_head_hash: closeoutEvent.event_hash,
+        validation_ledger_event_hash: closeoutPayload.validation_ledger_event_hash,
+        policy_hash: closeoutEvent.policy_hash,
+        mission_hash: closeoutEvent.mission_hash
+      };
+    });
+
+    report.status = 'CLOSEOUT_RECORDED';
+    report.recorded = true;
+    report.read_only = false;
+    report.closeout_binding.closeout_event_hash = event.event_hash;
+    report.closeout_binding.final_ledger_head_hash = event.event_hash;
+    report.closeout_event = {
+      event_hash: event.event_hash,
+      event_id: event.event_id,
+      type: event.type
+    };
+    report.ledger.events += 1;
+    report.ledger.head_hash = event.event_hash;
+    if (report.state && report.state !== 'UNKNOWN') {
+      report.state.ledger_head_hash = event.event_hash;
+      report.state.ledger_event_count += 1;
+    }
+  }
+
+  console.log(JSON.stringify(report));
 }
 
 async function main() {
@@ -1565,8 +2395,18 @@ async function main() {
       await handleValidate();
     } else if (command === 'verify') {
       await handleVerify();
+    } else if (command === 'checkpoint') {
+      await handleCheckpoint(args);
     } else if (command === 'closeout') {
       await handleCloseout(args);
+    } else if (command === 'make-push-payload') {
+      await handleMakePushPayload(args);
+    } else if (command === 'git-push-capability-flow') {
+      await handleGitPushCapabilityFlow(args);
+    } else if (command === 'rollback-drill') {
+      await handleRollbackDrill(args);
+    } else if (command === 'verify-signed-capability') {
+      await handleVerifySignedCapability(args);
     } else if (command === 'issue-capability') {
       await handleIssueCapability(args);
     } else if (command === 'consume-capability') {

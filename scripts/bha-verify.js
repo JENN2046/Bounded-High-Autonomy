@@ -14,17 +14,25 @@ const STATE_PATH = path.join(BHA_DIR, 'state.json');
 const LEDGER_PATH = path.join(BHA_DIR, 'ledger.jsonl');
 const CAPABILITIES_PATH = path.join(BHA_DIR, 'capabilities.jsonl');
 const VALIDATION_PATH = path.join(BHA_DIR, 'validation.yaml');
+const CLOSEOUT_PATH = path.join(BHA_DIR, 'closeout.json');
 const ROLLBACK_PATH = path.join(BHA_DIR, 'rollback.md');
+const ROADMAP_PATH = path.join(BHA_DIR, 'roadmap.md');
+const CHECKPOINT_PATH = path.join(BHA_DIR, 'checkpoint.json');
 const RUN_SCRIPT = path.join(ROOT, 'scripts', 'bha-run.js');
 const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
+const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
+const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
 const ROOT_REAL = fs.realpathSync.native(ROOT);
 
 const VALIDATION_INPUTS = [
+  DESIGN_PATH,
+  AGENTS_PATH,
   MISSION_PATH,
   POLICY_PATH,
   VALIDATION_PATH,
   ROLLBACK_PATH,
+  ROADMAP_PATH,
   RUN_SCRIPT,
   VERIFY_SCRIPT,
   PRE_PUSH_PATH
@@ -48,6 +56,25 @@ function stable(value) {
 
 function sha256(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+function withoutHashFields(value) {
+  const copy = JSON.parse(JSON.stringify(value || {}));
+  delete copy.policy_hash;
+  delete copy.mission_hash;
+  if (copy.metadata && typeof copy.metadata === 'object') {
+    delete copy.metadata.policy_hash;
+    delete copy.metadata.mission_hash;
+  }
+  return copy;
+}
+
+function policyHash(policy) {
+  return sha256(stable(withoutHashFields(policy || readJsonStrict(POLICY_PATH))));
+}
+
+function missionHash(mission) {
+  return sha256(stable(withoutHashFields(mission || readJsonStrict(MISSION_PATH))));
 }
 
 function readText(file) {
@@ -91,7 +118,7 @@ function capabilityHash(event) {
 }
 
 function trustedSigningKeys(policy) {
-  return ((((policy || {}).capabilities || {}).trusted_signing_keys) || []).map((item) => {
+  return (((policy || {}).trusted_public_keys) || []).map((item) => {
     if (item && typeof item === 'object') {
       return {
         id: String(item.id || item.key_id || ''),
@@ -175,7 +202,7 @@ function normalizeRepoPath(value) {
 
 function deniedPathPatterns(mission, policy) {
   const missionPatterns = Array.isArray((mission || {}).denied_paths) ? mission.denied_paths : [];
-  const policyPatterns = policy && policy.deny && Array.isArray(policy.deny.path_patterns) ? policy.deny.path_patterns : [];
+  const policyPatterns = policy && policy.paths && Array.isArray(policy.paths.denied) ? policy.paths.denied : [];
   return missionPatterns.concat(policyPatterns);
 }
 
@@ -246,7 +273,8 @@ function verifyCanonicalPathTarget(pathText, mission, policy, issues) {
 }
 
 function listFromPolicy(policy, section, fallback) {
-  return (policy && policy.deny && Array.isArray(policy.deny[section])) ? policy.deny[section] : fallback;
+  const denyCommands = policy && policy.action_rules && policy.action_rules.deny_commands;
+  return (denyCommands && Array.isArray(denyCommands[section])) ? denyCommands[section] : fallback;
 }
 
 function classifyForbidden(argv, policy) {
@@ -375,7 +403,20 @@ function loadRequiredFiles(issues) {
 
 function verifyLedger(events, state, issues) {
   let previous = null;
+  const eventIds = new Map();
   events.forEach((event, index) => {
+    if (event.event_id) {
+      if (eventIds.has(event.event_id)) {
+        issues.push({
+          code: 'LEDGER_DUPLICATE_EVENT_ID',
+          severity: 'FAIL',
+          message: `ledger event ${index + 1} duplicates event_id from event ${eventIds.get(event.event_id) + 1}`,
+          event_id: event.event_id
+        });
+      } else {
+        eventIds.set(event.event_id, index);
+      }
+    }
     const expectedPrev = previous || 'GENESIS';
     if (event.prev_hash !== expectedPrev) {
       issues.push({ code: 'LEDGER_PREV_HASH_MISMATCH', severity: 'FAIL', message: `ledger event ${index + 1} prev_hash mismatch` });
@@ -473,6 +514,12 @@ function verifyValidation(state, validation, events, issues) {
   if (state.validation.inputs_hash !== validationInputsHash()) {
     issues.push({ code: 'VALIDATION_STALE_INPUTS', severity: 'FAIL', message: 'validation inputs changed after validation was recorded' });
   }
+  if (state.validation.policy_hash && state.validation.policy_hash !== policyHash()) {
+    issues.push({ code: 'VALIDATION_POLICY_HASH_MISMATCH', severity: 'FAIL', message: 'policy changed after validation was recorded' });
+  }
+  if (state.validation.mission_hash && state.validation.mission_hash !== missionHash()) {
+    issues.push({ code: 'VALIDATION_MISSION_HASH_MISMATCH', severity: 'FAIL', message: 'mission changed after validation was recorded' });
+  }
   const required = validation && Array.isArray(validation.required_commands) ? validation.required_commands : [];
   const recorded = Array.isArray(state.validation.commands) ? state.validation.commands : [];
   if (recorded.length !== required.length) {
@@ -490,6 +537,12 @@ function verifyValidation(state, validation, events, issues) {
     if (stable(record.expect || {}) !== stable(command.expect || {})) {
       issues.push({ code: 'VALIDATION_EXPECTATION_STALE', severity: 'FAIL', message: `${command.id} expectation differs from validation.yaml` });
     }
+    if (record.decision !== 'ALLOW' || record.allowed !== true) {
+      issues.push({ code: 'VALIDATION_COMMAND_NOT_ALLOWED', severity: 'FAIL', message: `${command.id} was not allowed by policy before validation execution` });
+    }
+    if (record.spawned !== true) {
+      issues.push({ code: 'VALIDATION_COMMAND_NOT_SPAWNED', severity: 'FAIL', message: `${command.id} did not record spawned:true validation evidence` });
+    }
     if (record.status !== 'PASS') {
       issues.push({ code: 'VALIDATION_COMMAND_FAILED', severity: 'FAIL', message: `${command.id} recorded status is ${record.status}` });
     }
@@ -497,6 +550,27 @@ function verifyValidation(state, validation, events, issues) {
   const completion = events.find((event) => event.event_hash === state.validation.ledger_event_hash);
   if (!completion || completion.type !== 'validation_completed') {
     issues.push({ code: 'VALIDATION_LEDGER_EVENT_MISSING', severity: 'FAIL', message: 'state validation ledger event is missing' });
+  }
+}
+
+function verifyPolicyMissionHashes(files, issues) {
+  if (files.policy && files.policy.schema !== 'bha.policy.v1') {
+    issues.push({ code: 'POLICY_SCHEMA_UNSUPPORTED', severity: 'FAIL', message: 'policy schema must be bha.policy.v1' });
+  }
+  if (files.policy && (!files.policy.metadata || !files.policy.paths || !files.policy.action_rules || !files.policy.capability_rules)) {
+    issues.push({ code: 'POLICY_CANONICAL_LAYOUT_REQUIRED', severity: 'FAIL', message: 'policy must use the canonical metadata/paths/action_rules/capability_rules layout' });
+  }
+  if (files.mission && files.mission.schema !== 'bha.mission.v1') {
+    issues.push({ code: 'MISSION_SCHEMA_UNSUPPORTED', severity: 'FAIL', message: 'mission schema must be bha.mission.v1' });
+  }
+  if (files.mission && files.mission.mission_hash && files.mission.mission_hash !== 'SELF_HASH_EXCLUDED' && files.mission.mission_hash !== missionHash(files.mission)) {
+    issues.push({ code: 'MISSION_HASH_MISMATCH', severity: 'FAIL', message: 'mission_hash does not match canonical mission hash' });
+  }
+  if (files.state && files.state.policy_hash && files.policy && files.state.policy_hash !== policyHash(files.policy)) {
+    issues.push({ code: 'STATE_POLICY_HASH_MISMATCH', severity: 'FAIL', message: 'state.policy_hash does not match current policy' });
+  }
+  if (files.state && files.state.mission_hash && files.mission && files.state.mission_hash !== missionHash(files.mission)) {
+    issues.push({ code: 'STATE_MISSION_HASH_MISMATCH', severity: 'FAIL', message: 'state.mission_hash does not match current mission' });
   }
 }
 
@@ -529,7 +603,7 @@ function verifyCapabilityIssue(event, policy, state, capabilities, ledger, issue
   const requested = payload.requested || {};
   const trusted = new Set(trustedSigningKeys(policy).map((item) => item.id));
   const type = payload.capability_type || capabilityTypeFromRequest(requested);
-  const disallowed = new Set((((policy || {}).capabilities || {}).disallowed_types || []).map((item) => String(item)));
+  const disallowed = new Set((((policy || {}).capability_rules || {}).always_denied_v1 || []).map((item) => String(item)));
   if (payload.valid !== true) {
     return;
   }
@@ -560,6 +634,23 @@ function verifyCapabilityIssue(event, policy, state, capabilities, ledger, issue
   }
   if (state && requested.run_id !== state.run_id) {
     issues.push({ code: 'CAPABILITY_RUN_ID_MISMATCH', severity: 'FAIL', message: 'valid capability run_id does not match state', event_hash: event.event_hash });
+  }
+  if (requested.schema === 'bha.capability.v1') {
+    if (requested.policy_hash !== policyHash(policy)) {
+      issues.push({ code: 'CAPABILITY_POLICY_HASH_MISMATCH', severity: 'FAIL', message: 'valid capability policy_hash does not match current policy', event_hash: event.event_hash });
+    }
+    if (requested.mission_hash !== missionHash()) {
+      issues.push({ code: 'CAPABILITY_MISSION_HASH_MISMATCH', severity: 'FAIL', message: 'valid capability mission_hash does not match current mission', event_hash: event.event_hash });
+    }
+    if (requested.algorithm !== 'ed25519') {
+      issues.push({ code: 'CAPABILITY_ALGORITHM_UNSUPPORTED', severity: 'FAIL', message: 'valid capability algorithm must be ed25519', event_hash: event.event_hash });
+    }
+    if (requested.signature_encoding !== 'base64') {
+      issues.push({ code: 'CAPABILITY_SIGNATURE_ENCODING_UNSUPPORTED', severity: 'FAIL', message: 'valid capability signature_encoding must be base64', event_hash: event.event_hash });
+    }
+    if (requested.payload_hash_format !== 'sha256-hex') {
+      issues.push({ code: 'CAPABILITY_PAYLOAD_HASH_FORMAT_UNSUPPORTED', severity: 'FAIL', message: 'valid capability payload_hash_format must be sha256-hex', event_hash: event.event_hash });
+    }
   }
   if (!requested.remote || !requested.branch || !requested.head || !requested.ledger_head_hash || !requested.expires_at) {
     issues.push({ code: 'CAPABILITY_BINDING_MISSING', severity: 'FAIL', message: 'valid capability is missing required bindings', event_hash: event.event_hash });
@@ -647,30 +738,736 @@ function verifyRollback(issues) {
     return;
   }
   const text = readText(ROLLBACK_PATH).trim();
+  const lower = text.toLowerCase();
   if (!text || !/rollback/i.test(text)) {
     issues.push({ code: 'ROLLBACK_INCOMPLETE', severity: 'FAIL', message: '.bha/rollback.md does not contain rollback guidance' });
   }
+  const required = [
+    {
+      code: 'ROLLBACK_SCOPE_INCOMPLETE',
+      ok: /local/i.test(text) && /dry-run/i.test(text),
+      message: '.bha/rollback.md must scope rollback to local dry-run recovery'
+    },
+    {
+      code: 'ROLLBACK_HOOK_RECOVERY_MISSING',
+      ok: /hooks?\s*path|core\.hookspath|pre-push/i.test(text),
+      message: '.bha/rollback.md must describe how to stop relying on the local pre-push hook'
+    },
+    {
+      code: 'ROLLBACK_EVIDENCE_RECOVERY_MISSING',
+      ok: /\.bha\/state\.json/i.test(text) && /\.bha\/ledger\.jsonl/i.test(text) && /\.bha\/capabilities\.jsonl/i.test(text),
+      message: '.bha/rollback.md must describe state, ledger, and capability evidence recovery'
+    },
+    {
+      code: 'ROLLBACK_SOURCE_MISSING',
+      ok: /known-good|known good|version control|git restore/i.test(text),
+      message: '.bha/rollback.md must identify version control or a known-good local copy as the recovery source'
+    },
+    {
+      code: 'ROLLBACK_DESTRUCTIVE_BOUNDARY_MISSING',
+      ok: /do not run `git reset --hard`/i.test(text) && /do not run `git clean/i.test(text) && /remove-item -recurse/i.test(lower),
+      message: '.bha/rollback.md must explicitly forbid destructive cleanup commands'
+    },
+    {
+      code: 'ROLLBACK_REMOTE_BOUNDARY_MISSING',
+      ok: /do not push/i.test(text) && /do not tag/i.test(text) && /do not release/i.test(text) && /do not deploy/i.test(text) && /do not publish/i.test(text),
+      message: '.bha/rollback.md must explicitly forbid remote and external side effects'
+    },
+    {
+      code: 'ROLLBACK_SECRET_BOUNDARY_MISSING',
+      ok: /private key/i.test(text) && /secret/i.test(text),
+      message: '.bha/rollback.md must explicitly forbid secret and private key access'
+    }
+  ];
+  for (const item of required) {
+    if (!item.ok) {
+      issues.push({ code: item.code, severity: 'FAIL', message: item.message });
+    }
+  }
+}
+
+function verifyCheckpointFile(events, state, issues) {
+  if (!fs.existsSync(CHECKPOINT_PATH)) {
+    if (state && (state.last_checkpoint || state.last_checkpoint_id)) {
+      issues.push({ code: 'CHECKPOINT_FILE_MISSING', severity: 'FAIL', message: 'state references a checkpoint but .bha/checkpoint.json is missing' });
+    }
+    return;
+  }
+  let checkpoint;
+  try {
+    checkpoint = readJsonStrict(CHECKPOINT_PATH);
+  } catch (error) {
+    issues.push({ code: 'CHECKPOINT_INVALID_JSON', severity: 'FAIL', message: `.bha/checkpoint.json must be strict JSON: ${error.message}` });
+    return;
+  }
+  if (!checkpoint || typeof checkpoint !== 'object' || Array.isArray(checkpoint)) {
+    issues.push({ code: 'CHECKPOINT_INVALID_JSON', severity: 'FAIL', message: '.bha/checkpoint.json must be a JSON object' });
+    return;
+  }
+  if (checkpoint.schema !== 'bha.checkpoint.v1') {
+    issues.push({ code: 'CHECKPOINT_SCHEMA_UNSUPPORTED', severity: 'FAIL', message: 'checkpoint schema must be bha.checkpoint.v1' });
+  }
+  const required = [
+    'checkpoint_id',
+    'created_at',
+    'run_id',
+    'actor_id',
+    'goal',
+    'phase',
+    'workspace',
+    'branch',
+    'head',
+    'ledger_head_hash',
+    'policy_hash',
+    'mission_hash',
+    'completed',
+    'changed_files',
+    'validation_run',
+    'validation_not_run',
+    'verifier_status',
+    'blockers',
+    'risks',
+    'next_safe_action',
+    'stop_conditions',
+    'checkpoint_binding',
+    'ledger_event_hash'
+  ];
+  for (const key of required) {
+    if (!Object.prototype.hasOwnProperty.call(checkpoint, key)) {
+      issues.push({ code: 'CHECKPOINT_FIELD_MISSING', severity: 'FAIL', message: `.bha/checkpoint.json missing ${key}` });
+    }
+  }
+  if (checkpoint.policy_hash !== policyHash()) {
+    issues.push({ code: 'CHECKPOINT_POLICY_HASH_MISMATCH', severity: 'FAIL', message: 'checkpoint policy_hash does not match current policy' });
+  }
+  if (checkpoint.mission_hash !== missionHash()) {
+    issues.push({ code: 'CHECKPOINT_MISSION_HASH_MISMATCH', severity: 'FAIL', message: 'checkpoint mission_hash does not match current mission' });
+  }
+  const checkpointEvents = (events || []).filter((event) => event.type === 'checkpoint_written');
+  const event = checkpointEvents.find((item) => item.event_hash === checkpoint.ledger_event_hash);
+  if (!event) {
+    issues.push({ code: 'CHECKPOINT_LEDGER_EVENT_MISSING', severity: 'FAIL', message: 'checkpoint references a missing checkpoint_written ledger event' });
+    return;
+  }
+  const newestCheckpoint = checkpointEvents.length ? checkpointEvents[checkpointEvents.length - 1] : null;
+  if (newestCheckpoint && event.event_hash !== newestCheckpoint.event_hash) {
+    issues.push({ code: 'CHECKPOINT_NOT_LATEST', severity: 'FAIL', message: '.bha/checkpoint.json must reference the newest checkpoint_written event', event_hash: event.event_hash });
+  }
+  if (!state || !state.last_checkpoint || state.last_checkpoint.ledger_event_hash !== event.event_hash || state.last_checkpoint_id !== checkpoint.checkpoint_id) {
+    issues.push({ code: 'CHECKPOINT_STATE_MISMATCH', severity: 'FAIL', message: 'state.last_checkpoint must reference .bha/checkpoint.json and its ledger event' });
+  }
+  const payload = event.payload || {};
+  const payloadBinding = payload.checkpoint_binding || {};
+  const fileBinding = checkpoint.checkpoint_binding || {};
+  if (payload.schema !== 'bha.checkpoint.v1' || payload.checkpoint_id !== checkpoint.checkpoint_id) {
+    issues.push({ code: 'CHECKPOINT_LEDGER_PAYLOAD_MISMATCH', severity: 'FAIL', message: 'checkpoint ledger payload does not match checkpoint file', event_hash: event.event_hash });
+  }
+  if (payloadBinding.verified_ledger_head_hash !== event.prev_hash) {
+    issues.push({ code: 'CHECKPOINT_BINDING_MISMATCH', severity: 'FAIL', message: 'checkpoint payload verified_ledger_head_hash must equal checkpoint event prev_hash', event_hash: event.event_hash });
+  }
+  if (payloadBinding.checkpoint_event_hash !== 'SELF_EVENT_HASH' && payloadBinding.checkpoint_event_hash !== event.event_hash) {
+    issues.push({ code: 'CHECKPOINT_BINDING_MISMATCH', severity: 'FAIL', message: 'checkpoint payload checkpoint_event_hash must bind to the checkpoint event hash', event_hash: event.event_hash });
+  }
+  if (payloadBinding.final_ledger_head_hash !== 'SELF_EVENT_HASH' && payloadBinding.final_ledger_head_hash !== event.event_hash) {
+    issues.push({ code: 'CHECKPOINT_BINDING_MISMATCH', severity: 'FAIL', message: 'checkpoint payload final_ledger_head_hash must bind to the checkpoint event hash', event_hash: event.event_hash });
+  }
+  if (fileBinding.verified_ledger_head_hash !== event.prev_hash ||
+      fileBinding.checkpoint_event_hash !== event.event_hash ||
+      fileBinding.final_ledger_head_hash !== event.event_hash) {
+    issues.push({ code: 'CHECKPOINT_BINDING_MISMATCH', severity: 'FAIL', message: 'checkpoint file binding does not match the referenced checkpoint ledger event', event_hash: event.event_hash });
+  }
+}
+
+function verifyCloseoutClaims(closeout, issues) {
+  if (!closeout || typeof closeout !== 'object' || Array.isArray(closeout)) {
+    issues.push({ code: 'CLOSEOUT_INVALID_JSON', severity: 'FAIL', message: 'closeout must be a JSON object' });
+    return;
+  }
+  const claimSources = [];
+  if (closeout.claims && typeof closeout.claims === 'object' && !Array.isArray(closeout.claims)) {
+    claimSources.push(closeout.claims);
+  }
+  claimSources.push(closeout);
+  for (const claims of claimSources) {
+    for (const key of ['no_external_effects', 'tamper_proof', 'network_proof', 'provider_proof', 'memory_proof', 'ready_to_push']) {
+      if (claims[key] === true) {
+        issues.push({ code: 'CLOSEOUT_UNSUPPORTED_CLAIM', severity: 'FAIL', message: `closeout claim ${key}=true is not supported by BHA v1 local evidence` });
+      }
+    }
+  }
+  const explicitPass = closeout.passed === true || closeout.status === 'PASS' || closeout.closeout_status === 'PASS';
+  if (!explicitPass) {
+    return;
+  }
+  const binding = closeout.closeout_binding || {};
+  const verifier = closeout.verifier || {};
+  const validationStatus = closeout.validation && closeout.validation.recorded_status
+    ? closeout.validation.recorded_status
+    : (closeout.state && closeout.state.validation_status);
+  if (verifier.status !== 'PASS' ||
+      validationStatus !== 'PASS' ||
+      !binding.verified_ledger_head_hash ||
+      binding.verified_ledger_head_hash === 'NOT_RECORDED' ||
+      !binding.final_ledger_head_hash ||
+      binding.final_ledger_head_hash === 'NOT_RECORDED') {
+    issues.push({
+      code: 'CLOSEOUT_UNSUPPORTED_CLAIM',
+      severity: 'FAIL',
+      message: 'closeout pass claim requires PASS verifier, PASS validation, verified_ledger_head_hash, and final_ledger_head_hash'
+    });
+  }
+}
+
+function verifyCloseoutFile(issues) {
+  if (!fs.existsSync(CLOSEOUT_PATH)) {
+    return;
+  }
+  let closeout;
+  try {
+    closeout = readJsonStrict(CLOSEOUT_PATH);
+  } catch (error) {
+    issues.push({ code: 'CLOSEOUT_INVALID_JSON', severity: 'FAIL', message: `.bha/closeout.json must be strict JSON: ${error.message}` });
+    return;
+  }
+  verifyCloseoutClaims(closeout, issues);
+}
+
+function verifyCloseoutEvents(events, state, issues, warnings) {
+  const closeoutEvents = (events || []).filter((event) => event.type === 'closeout_completed');
+  for (const event of closeoutEvents) {
+    const payload = event.payload || {};
+    const binding = payload.closeout_binding || {};
+    if (payload.schema !== 'bha.closeout.v1') {
+      issues.push({ code: 'CLOSEOUT_SCHEMA_UNSUPPORTED', severity: 'FAIL', message: 'closeout_completed payload schema must be bha.closeout.v1', event_hash: event.event_hash });
+    }
+    if (payload.status !== 'PASS') {
+      issues.push({ code: 'CLOSEOUT_STATUS_UNSUPPORTED', severity: 'FAIL', message: 'recorded closeout status must be PASS', event_hash: event.event_hash });
+    }
+    if (payload.verifier_status !== 'PASS' || payload.validation_status !== 'PASS') {
+      issues.push({ code: 'CLOSEOUT_UNSUPPORTED_CLAIM', severity: 'FAIL', message: 'recorded closeout requires PASS verifier and PASS validation evidence', event_hash: event.event_hash });
+    }
+    if (Array.isArray(payload.unsupported_claims) && payload.unsupported_claims.length > 0) {
+      issues.push({ code: 'CLOSEOUT_UNSUPPORTED_CLAIM', severity: 'FAIL', message: 'recorded closeout contains unsupported claims', event_hash: event.event_hash });
+    }
+    if (payload.policy_hash !== event.policy_hash) {
+      issues.push({ code: 'CLOSEOUT_POLICY_HASH_MISMATCH', severity: 'FAIL', message: 'recorded closeout policy_hash does not match ledger event policy_hash', event_hash: event.event_hash });
+    }
+    if (payload.mission_hash !== event.mission_hash) {
+      issues.push({ code: 'CLOSEOUT_MISSION_HASH_MISMATCH', severity: 'FAIL', message: 'recorded closeout mission_hash does not match ledger event mission_hash', event_hash: event.event_hash });
+    }
+    if (binding.verified_ledger_head_hash !== event.prev_hash) {
+      issues.push({ code: 'CLOSEOUT_BINDING_MISMATCH', severity: 'FAIL', message: 'recorded closeout verified_ledger_head_hash must equal the closeout event prev_hash', event_hash: event.event_hash });
+    }
+    if (binding.closeout_event_hash !== 'SELF_EVENT_HASH' && binding.closeout_event_hash !== event.event_hash) {
+      issues.push({ code: 'CLOSEOUT_BINDING_MISMATCH', severity: 'FAIL', message: 'recorded closeout closeout_event_hash must bind to the closeout event hash', event_hash: event.event_hash });
+    }
+    if (binding.final_ledger_head_hash !== 'SELF_EVENT_HASH' && binding.final_ledger_head_hash !== event.event_hash) {
+      issues.push({ code: 'CLOSEOUT_BINDING_MISMATCH', severity: 'FAIL', message: 'recorded closeout final_ledger_head_hash must bind to the closeout event hash', event_hash: event.event_hash });
+    }
+  }
+
+  const newestCloseout = closeoutEvents.length ? closeoutEvents[closeoutEvents.length - 1] : null;
+  if (state && state.closeout && state.closeout.ledger_event_hash) {
+    const event = closeoutEvents.find((item) => item.event_hash === state.closeout.ledger_event_hash);
+    if (!event) {
+      issues.push({ code: 'CLOSEOUT_LEDGER_EVENT_MISSING', severity: 'FAIL', message: 'state.closeout references a missing closeout ledger event' });
+      return;
+    }
+    if (newestCloseout && state.closeout.ledger_event_hash !== newestCloseout.event_hash) {
+      issues.push({ code: 'CLOSEOUT_NOT_LATEST', severity: 'FAIL', message: 'state.closeout must reference the newest recorded closeout event', event_hash: state.closeout.ledger_event_hash });
+    }
+    if (state.closeout.closeout_event_hash !== event.event_hash ||
+        state.closeout.final_ledger_head_hash !== event.event_hash ||
+        state.closeout.verified_ledger_head_hash !== event.prev_hash) {
+      issues.push({ code: 'CLOSEOUT_BINDING_MISMATCH', severity: 'FAIL', message: 'state.closeout binding does not match the referenced closeout ledger event', event_hash: event.event_hash });
+    }
+  }
+  if (newestCloseout && state && state.ledger_head_hash && state.ledger_head_hash !== newestCloseout.event_hash) {
+    warnings.push({
+      code: 'CLOSEOUT_NOT_CURRENT_LEDGER_HEAD',
+      severity: 'WARN',
+      message: 'new ledger events exist after the newest recorded closeout',
+      closeout_event_hash: newestCloseout.event_hash,
+      ledger_head_hash: state.ledger_head_hash
+    });
+  }
+}
+
+function changedFilesFromStatus(stdout) {
+  return String(stdout || '').split(/\r?\n/).filter((line) => line.trim() !== '').map((line) => {
+    const status = line.slice(0, 2).trim() || 'UNKNOWN';
+    const rawPath = line.slice(3).trim();
+    const filePath = rawPath.replace(/.* -> /, '').replace(/\\/g, '/');
+    return { status, path: filePath || rawPath };
+  });
+}
+
+function validationInputRelPaths() {
+  return new Set(VALIDATION_INPUTS.map((file) => rel(file)));
+}
+
+async function verifyUnverifiedWorktree(files, issues, warnings) {
+  const result = await runCommand(['git', 'status', '--short', '--untracked-files=all']);
+  if (result.exit_code !== 0 || result.error) {
+    warnings.push({ code: 'GIT_STATUS_UNKNOWN', severity: 'UNKNOWN', message: result.error || result.stderr.trim() || 'git status unavailable' });
+    return;
+  }
+  const validationFresh = files.state &&
+    files.state.validation &&
+    files.state.validation.status === 'PASS' &&
+    files.state.validation.inputs_hash === validationInputsHash();
+  const validationInputs = validationInputRelPaths();
+  const evidenceFiles = new Set([
+    '.bha/ledger.jsonl',
+    '.bha/state.json',
+    '.bha/capabilities.jsonl',
+    '.bha/checkpoint.json'
+  ]);
+  for (const changed of changedFilesFromStatus(result.stdout)) {
+    if (evidenceFiles.has(changed.path)) {
+      continue;
+    }
+    if (validationFresh && validationInputs.has(changed.path)) {
+      continue;
+    }
+    issues.push({
+      code: 'UNVERIFIED_WORKTREE_CHANGE',
+      severity: 'BLOCKED',
+      message: `${changed.path} is dirty and not covered by the latest validation evidence`,
+      path: changed.path,
+      status: changed.status
+    });
+  }
+}
+
+function selfTestLedgerDuplicateEventId() {
+  const first = {
+    schema: 'bha.ledger.event.v1',
+    run_id: 'self-test',
+    event_id: 'duplicate-event-id',
+    ts: '2026-01-01T00:00:00.000Z',
+    type: 'self_test',
+    prev_hash: 'GENESIS',
+    payload: { n: 1 }
+  };
+  first.event_hash = eventHash(first);
+  const second = {
+    schema: 'bha.ledger.event.v1',
+    run_id: 'self-test',
+    event_id: 'duplicate-event-id',
+    ts: '2026-01-01T00:00:01.000Z',
+    type: 'self_test',
+    prev_hash: first.event_hash,
+    payload: { n: 2 }
+  };
+  second.event_hash = eventHash(second);
+  const issues = [];
+  verifyLedger([first, second], {
+    ledger_head_hash: second.event_hash,
+    ledger_event_count: 2
+  }, issues);
+  return issues;
+}
+
+function selfTestMalformedPolicy() {
+  const issues = [];
+  verifyPolicyMissionHashes({
+    policy: { schema: 'bha.policy.v1' },
+    mission: { schema: 'bha.mission.v1' },
+    state: {}
+  }, issues);
+  return issues;
+}
+
+function selfTestUnsignedCapability() {
+  const issues = [];
+  verifyClaims([], [{
+    type: 'capability_issue',
+    event_hash: 'self-test-capability-unsigned',
+    payload: {
+      valid: true,
+      capability_type: 'git_push',
+      requested: { schema: 'bha.capability.v1', type: 'git_push' }
+    }
+  }], issues);
+  return issues;
+}
+
+function selfTestStaleValidation() {
+  const issues = [];
+  verifyValidation({
+    validation: {
+      status: 'PASS',
+      inputs_hash: '0000000000000000000000000000000000000000000000000000000000000000',
+      commands: [],
+      ledger_event_hash: 'missing-self-test-event'
+    }
+  }, { required_commands: [] }, [], issues);
+  return issues;
+}
+
+function selfTestValidationPolicyEvidenceMissing() {
+  const issues = [];
+  const completion = {
+    type: 'validation_completed',
+    event_hash: 'self-test-validation-policy-evidence'
+  };
+  verifyValidation({
+    validation: {
+      status: 'PASS',
+      inputs_hash: validationInputsHash(),
+      commands: [{
+        id: 'self_test_validation_policy_gate',
+        argv: ['git', 'diff', '--check'],
+        expect: { exit_code: 0 },
+        status: 'PASS',
+        problems: [],
+        exit_code: 0
+      }],
+      ledger_event_hash: completion.event_hash
+    }
+  }, {
+    required_commands: [{
+      id: 'self_test_validation_policy_gate',
+      argv: ['git', 'diff', '--check'],
+      expect: { exit_code: 0 }
+    }]
+  }, [completion], issues);
+  return issues;
+}
+
+function selfTestCapabilityHashMismatch() {
+  const issues = [];
+  const policy = {
+    schema: 'bha.policy.v1',
+    metadata: {},
+    paths: {},
+    action_rules: {},
+    capability_rules: { always_denied_v1: [] },
+    trusted_public_keys: []
+  };
+  verifyCapabilityIssue({
+    type: 'capability_issue',
+    event_hash: 'self-test-capability-hash-mismatch',
+    payload: {
+      valid: true,
+      capability_id: 'self-test-capability-hash-mismatch',
+      capability_type: 'git_push',
+      requested: {
+        schema: 'bha.capability.v1',
+        type: 'git_push',
+        run_id: 'self-test-run',
+        policy_hash: 'wrong-policy-hash',
+        mission_hash: 'wrong-mission-hash',
+        remote: 'origin',
+        branch: 'master',
+        head: 'self-test-head',
+        ledger_head_hash: 'self-test-ledger-head',
+        one_use: true,
+        expires_at: '9999-12-31T23:59:59.000Z',
+        signing_key_id: 'missing-key',
+        signature: 'AA==',
+        algorithm: 'ed25519',
+        signature_encoding: 'base64',
+        payload_hash_format: 'sha256-hex'
+      }
+    }
+  }, policy, { run_id: 'self-test-run' }, [], [], issues);
+  return issues;
+}
+
+function selfTestCapabilityPolicy() {
+  return {
+    schema: 'bha.policy.v1',
+    metadata: {},
+    paths: {},
+    action_rules: {},
+    capability_rules: { always_denied_v1: [] },
+    trusted_public_keys: []
+  };
+}
+
+function selfTestCapabilityEvent(type, payload, id) {
+  const event = {
+    schema: 'bha.capability.event.v1',
+    run_id: 'self-test-run',
+    policy_hash: 'self-test-policy-hash',
+    mission_hash: 'self-test-mission-hash',
+    event_id: `self-test-${id}`,
+    ts: '2026-01-01T00:00:00.000Z',
+    type,
+    payload
+  };
+  event.event_hash = capabilityHash(event);
+  return event;
+}
+
+function selfTestCapabilityIssuePayload(id, requestedOverrides) {
+  return {
+    valid: true,
+    capability_id: id,
+    capability_type: 'git_push',
+    requested: Object.assign({
+      schema: 'bha.capability.v1',
+      type: 'git_push',
+      run_id: 'self-test-run',
+      policy_hash: 'self-test-policy-hash',
+      mission_hash: missionHash(),
+      remote: 'origin',
+      branch: 'master',
+      head: 'self-test-head',
+      ledger_head_hash: 'self-test-ledger-head',
+      one_use: true,
+      expires_at: '9999-12-31T23:59:59.000Z',
+      signing_key_id: 'missing-key',
+      signature: 'AA==',
+      algorithm: 'ed25519',
+      signature_encoding: 'base64',
+      payload_hash_format: 'sha256-hex'
+    }, requestedOverrides || {})
+  };
+}
+
+function selfTestExpiredCapability() {
+  const issues = [];
+  const event = selfTestCapabilityEvent('capability_issue', selfTestCapabilityIssuePayload('self-test-expired', {
+    expires_at: '2000-01-01T00:00:00.000Z'
+  }), 'expired');
+  verifyCapabilityIssue(event, selfTestCapabilityPolicy(), { run_id: 'self-test-run' }, [], [], issues);
+  return issues;
+}
+
+function selfTestCapabilityReplay() {
+  const issues = [];
+  const issue = selfTestCapabilityEvent('capability_issue', selfTestCapabilityIssuePayload('self-test-replay'), 'replay-issue');
+  const consumePayload = {
+    valid: true,
+    capability_id: 'self-test-replay',
+    issue_event_hash: issue.event_hash,
+    for: 'git_push',
+    remote: 'origin',
+    branch: 'master',
+    head: 'self-test-head'
+  };
+  const firstConsume = selfTestCapabilityEvent('capability_consume', consumePayload, 'replay-consume-1');
+  const secondConsume = selfTestCapabilityEvent('capability_consume', consumePayload, 'replay-consume-2');
+  verifyCapabilities([issue, firstConsume, secondConsume], selfTestCapabilityPolicy(), { run_id: 'self-test-run' }, [], issues);
+  return issues;
+}
+
+function selfTestCapabilityContextMismatch() {
+  const issues = [];
+  const issue = selfTestCapabilityEvent('capability_issue', selfTestCapabilityIssuePayload('self-test-context'), 'context-issue');
+  const consume = selfTestCapabilityEvent('capability_consume', {
+    valid: true,
+    capability_id: 'self-test-context',
+    issue_event_hash: issue.event_hash,
+    for: 'git_push',
+    remote: 'upstream',
+    branch: 'release',
+    head: 'wrong-head'
+  }, 'context-consume');
+  verifyCapabilities([issue, consume], selfTestCapabilityPolicy(), { run_id: 'self-test-run' }, [], issues);
+  return issues;
+}
+
+function selfTestUnsupportedCloseoutClaim() {
+  const issues = [];
+  verifyCloseoutClaims({
+    status: 'PASS',
+    passed: true,
+    claims: {
+      no_external_effects: true
+    },
+    verifier: {
+      status: 'FAIL'
+    },
+    validation: {
+      recorded_status: 'PASS'
+    },
+    closeout_binding: {
+      verified_ledger_head_hash: 'NOT_RECORDED',
+      final_ledger_head_hash: 'NOT_RECORDED'
+    }
+  }, issues);
+  return issues;
+}
+
+function selfTestCloseoutEventBinding() {
+  const event = {
+    schema: 'bha.ledger.event.v1',
+    run_id: 'self-test',
+    policy_hash: 'self-test-policy-hash',
+    mission_hash: 'self-test-mission-hash',
+    event_id: 'self-test-closeout',
+    ts: '2026-01-01T00:00:00.000Z',
+    type: 'closeout_completed',
+    actor: 'bha-run',
+    prev_hash: 'self-test-previous-head',
+    payload: {
+      schema: 'bha.closeout.v1',
+      status: 'PASS',
+      policy_hash: 'self-test-policy-hash',
+      mission_hash: 'self-test-mission-hash',
+      verifier_status: 'PASS',
+      validation_status: 'PASS',
+      unsupported_claims: [],
+      closeout_binding: {
+        verified_ledger_head_hash: 'wrong-verified-head',
+        closeout_event_hash: 'wrong-closeout-hash',
+        final_ledger_head_hash: 'wrong-final-head'
+      }
+    }
+  };
+  event.event_hash = eventHash(event);
+  const issues = [];
+  verifyCloseoutEvents([event], {}, issues, []);
+  return issues;
+}
+
+function selfTestCloseoutStateNotLatest() {
+  const first = {
+    schema: 'bha.ledger.event.v1',
+    run_id: 'self-test',
+    policy_hash: 'self-test-policy-hash',
+    mission_hash: 'self-test-mission-hash',
+    event_id: 'self-test-closeout-first',
+    ts: '2026-01-01T00:00:00.000Z',
+    type: 'closeout_completed',
+    actor: 'bha-run',
+    prev_hash: 'self-test-previous-head',
+    payload: {
+      schema: 'bha.closeout.v1',
+      status: 'PASS',
+      policy_hash: 'self-test-policy-hash',
+      mission_hash: 'self-test-mission-hash',
+      verifier_status: 'PASS',
+      validation_status: 'PASS',
+      unsupported_claims: [],
+      closeout_binding: {
+        verified_ledger_head_hash: 'self-test-previous-head',
+        closeout_event_hash: 'SELF_EVENT_HASH',
+        final_ledger_head_hash: 'SELF_EVENT_HASH'
+      }
+    }
+  };
+  first.event_hash = eventHash(first);
+  const second = {
+    schema: 'bha.ledger.event.v1',
+    run_id: 'self-test',
+    policy_hash: 'self-test-policy-hash',
+    mission_hash: 'self-test-mission-hash',
+    event_id: 'self-test-closeout-second',
+    ts: '2026-01-01T00:00:01.000Z',
+    type: 'closeout_completed',
+    actor: 'bha-run',
+    prev_hash: first.event_hash,
+    payload: {
+      schema: 'bha.closeout.v1',
+      status: 'PASS',
+      policy_hash: 'self-test-policy-hash',
+      mission_hash: 'self-test-mission-hash',
+      verifier_status: 'PASS',
+      validation_status: 'PASS',
+      unsupported_claims: [],
+      closeout_binding: {
+        verified_ledger_head_hash: first.event_hash,
+        closeout_event_hash: 'SELF_EVENT_HASH',
+        final_ledger_head_hash: 'SELF_EVENT_HASH'
+      }
+    }
+  };
+  second.event_hash = eventHash(second);
+  const issues = [];
+  verifyCloseoutEvents([first, second], {
+    ledger_head_hash: second.event_hash,
+    closeout: {
+      ledger_event_hash: first.event_hash,
+      verified_ledger_head_hash: first.prev_hash,
+      closeout_event_hash: first.event_hash,
+      final_ledger_head_hash: first.event_hash
+    }
+  }, issues, []);
+  return issues;
+}
+
+function checkExpectedCodes(id, issues, expectedCodes) {
+  const observed = Array.from(new Set(issues.map((issue) => issue.code))).sort();
+  const missing = expectedCodes.filter((code) => !observed.includes(code));
+  return {
+    id,
+    status: missing.length === 0 ? 'PASS' : 'FAIL',
+    expected_codes: expectedCodes,
+    observed_codes: observed,
+    missing_codes: missing
+  };
+}
+
+function handleSelfTest() {
+  const checks = [
+    checkExpectedCodes('malformed_policy_rejected', selfTestMalformedPolicy(), ['POLICY_CANONICAL_LAYOUT_REQUIRED']),
+    checkExpectedCodes('duplicate_ledger_event_id_rejected', selfTestLedgerDuplicateEventId(), ['LEDGER_DUPLICATE_EVENT_ID']),
+    checkExpectedCodes('manual_unsigned_capability_append_rejected', selfTestUnsignedCapability(), ['UNSIGNED_CAPABILITY_MARKED_VALID']),
+    checkExpectedCodes('stale_validation_rejected', selfTestStaleValidation(), ['VALIDATION_STALE_INPUTS']),
+    checkExpectedCodes('validation_policy_evidence_required', selfTestValidationPolicyEvidenceMissing(), [
+      'VALIDATION_COMMAND_NOT_ALLOWED',
+      'VALIDATION_COMMAND_NOT_SPAWNED'
+    ]),
+    checkExpectedCodes('capability_policy_and_mission_hash_mismatch_rejected', selfTestCapabilityHashMismatch(), [
+      'CAPABILITY_POLICY_HASH_MISMATCH',
+      'CAPABILITY_MISSION_HASH_MISMATCH'
+    ]),
+    checkExpectedCodes('expired_capability_rejected', selfTestExpiredCapability(), ['CAPABILITY_EXPIRED']),
+    checkExpectedCodes('capability_replay_rejected', selfTestCapabilityReplay(), ['CAPABILITY_REPLAY_DETECTED']),
+    checkExpectedCodes('capability_context_mismatch_rejected', selfTestCapabilityContextMismatch(), [
+      'CAPABILITY_REMOTE_MISMATCH',
+      'CAPABILITY_BRANCH_MISMATCH',
+      'CAPABILITY_HEAD_MISMATCH'
+    ]),
+    checkExpectedCodes('closeout_unsupported_claim_rejected', selfTestUnsupportedCloseoutClaim(), ['CLOSEOUT_UNSUPPORTED_CLAIM']),
+    checkExpectedCodes('closeout_binding_mismatch_rejected', selfTestCloseoutEventBinding(), ['CLOSEOUT_BINDING_MISMATCH']),
+    checkExpectedCodes('closeout_state_not_latest_rejected', selfTestCloseoutStateNotLatest(), ['CLOSEOUT_NOT_LATEST'])
+  ];
+  const ok = checks.every((check) => check.status === 'PASS');
+  console.log(JSON.stringify({
+    ok,
+    status: ok ? 'PASS' : 'FAIL',
+    mode: 'read_only_negative_matrix',
+    checks
+  }));
+  process.exitCode = ok ? 0 : 1;
 }
 
 async function main() {
+  if (process.argv.includes('--self-test')) {
+    handleSelfTest();
+    return;
+  }
   const issues = [];
   const warnings = [];
   const files = loadRequiredFiles(issues);
   const ledger = readJsonl(LEDGER_PATH, issues, 'LEDGER');
   const capabilities = readJsonl(CAPABILITIES_PATH, issues, 'CAPABILITIES');
+  verifyPolicyMissionHashes(files, issues);
   const head = verifyLedger(ledger, files.state, issues);
   verifyForbiddenExecution(ledger, files.policy, issues);
   verifyValidation(files.state, files.validation, ledger, issues);
   verifyClaims(ledger, capabilities, issues);
   verifyCapabilities(capabilities, files.policy, files.state, ledger, issues);
   verifyRollback(issues);
+  verifyCheckpointFile(ledger, files.state, issues);
+  verifyCloseoutFile(issues);
+  verifyCloseoutEvents(ledger, files.state, issues, warnings);
   await verifyDeniedPathTouched(files.mission, files.policy, issues, warnings);
   await verifyTrackedDeniedPaths(files.mission, files.policy, issues, warnings);
+  await verifyUnverifiedWorktree(files, issues, warnings);
 
   const ok = issues.length === 0;
+  const hasFail = issues.some((issue) => issue.severity === 'FAIL');
+  const status = ok ? 'PASS' : (hasFail ? 'FAIL' : 'BLOCKED');
   console.log(JSON.stringify({
     ok,
-    status: ok ? 'PASS' : 'FAIL',
+    status,
     ledger_head_hash: head || 'NOT_RECORDED',
     ledger_events: ledger.length,
     validation_status: files.state && files.state.validation ? files.state.validation.status : 'NOT_RECORDED',

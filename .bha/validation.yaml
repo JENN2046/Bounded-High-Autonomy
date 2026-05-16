@@ -36,6 +36,205 @@
       }
     },
     {
+      "id": "verifier_selftest_negative_matrix",
+      "argv": [
+        "node",
+        "scripts/bha-verify.js",
+        "--self-test"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "closeout_preview_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "closeout",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "CLOSEOUT_GENERATED",
+        "recorded": false,
+        "read_only": true,
+        "has_keys": [
+          "closeout_binding",
+          "verifier",
+          "unsupported_claims"
+        ]
+      }
+    },
+    {
+      "id": "git_push_capability_flow_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "git-push-capability-flow",
+        "--remote",
+        "origin",
+        "--branch",
+        "master",
+        "--expires-minutes",
+        "20",
+        "--key-id",
+        "owner-main-pkcs8",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "READY_TO_SIGN",
+        "recorded": false,
+        "read_only": true,
+        "has_keys": [
+          "payload",
+          "steps",
+          "hard_boundaries",
+          "unsigned_payload_json"
+        ]
+      }
+    },
+    {
+      "id": "rollback_drill_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "rollback-drill",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "PASS",
+        "recorded": false,
+        "read_only": true,
+        "has_keys": [
+          "checks",
+          "hard_boundaries",
+          "evidence_sources"
+        ]
+      }
+    },
+    {
+      "id": "checkpoint_record",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "checkpoint",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "CHECKPOINT_RECORDED",
+        "recorded": true,
+        "read_only": false,
+        "has_keys": [
+          "checkpoint",
+          "checkpoint_binding",
+          "event"
+        ]
+      }
+    },
+    {
+      "id": "make_push_payload_canonical",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "make-push-payload",
+        "--remote",
+        "origin",
+        "--branch",
+        "master",
+        "--expires-minutes",
+        "20",
+        "--key-id",
+        "owner-main-pkcs8"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "json": {
+          "schema": "bha.capability.v1",
+          "type": "git_push",
+          "remote": "origin",
+          "branch": "master",
+          "one_use": true,
+          "signing_key_id": "owner-main-pkcs8",
+          "command": "git push origin master"
+        },
+        "has_keys": [
+          "head",
+          "policy_hash",
+          "mission_hash",
+          "algorithm",
+          "signature_encoding",
+          "payload_hash_format"
+        ],
+        "missing_keys": [
+          "head_sha",
+          "payload_hash",
+          "signature"
+        ]
+      }
+    },
+    {
+      "id": "verify_signed_reject_nested_envelope",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "verify-signed-capability",
+        "--json",
+        "{\"payload\":{},\"signature\":{\"key_id\":\"owner-main-pkcs8\"}}"
+      ],
+      "expect": {
+        "exit_code": 2,
+        "ok": false,
+        "status": "INVALID",
+        "reason": "CAPABILITY_ENVELOPE_UNSUPPORTED_EXPECT_FLAT"
+      }
+    },
+    {
+      "id": "verify_signed_reject_head_sha",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "verify-signed-capability",
+        "--json",
+        "{\"schema\":\"bha.capability.v1\",\"capability_id\":\"validation-head-sha\",\"run_id\":\"bha-dry-run-v1\",\"type\":\"git_push\",\"remote\":\"origin\",\"branch\":\"master\",\"head_sha\":\"abc\",\"ledger_head_hash\":\"abc\",\"one_use\":true,\"expires_at\":\"9999-12-31T23:59:59.000Z\",\"signing_key_id\":\"owner-main-pkcs8\",\"command\":\"git push origin master\",\"payload_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"AA==\"}"
+      ],
+      "expect": {
+        "exit_code": 2,
+        "ok": false,
+        "status": "INVALID",
+        "reason": "CAPABILITY_FIELD_HEAD_REQUIRED_NOT_HEAD_SHA"
+      }
+    },
+    {
+      "id": "verify_signed_reject_prefixed_payload_hash",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "verify-signed-capability",
+        "--json",
+        "{\"schema\":\"bha.capability.v1\",\"capability_id\":\"validation-prefixed-hash\",\"run_id\":\"bha-dry-run-v1\",\"type\":\"git_push\",\"remote\":\"origin\",\"branch\":\"master\",\"head\":\"abc\",\"ledger_head_hash\":\"abc\",\"one_use\":true,\"expires_at\":\"9999-12-31T23:59:59.000Z\",\"signing_key_id\":\"owner-main-pkcs8\",\"command\":\"git push origin master\",\"payload_hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"AA==\"}"
+      ],
+      "expect": {
+        "exit_code": 2,
+        "ok": false,
+        "status": "INVALID",
+        "reason": "CAPABILITY_PAYLOAD_HASH_FORMAT_INVALID_EXPECT_RAW_HEX"
+      }
+    },
+    {
       "id": "check_git_status_allow",
       "argv": [
         "node",
@@ -270,12 +469,19 @@
         "node",
         "scripts/bha-run.js",
         "prepush-check",
-        "--internal-git-hook"
+        "--internal-git-hook",
+        "origin"
       ],
       "expect": {
         "exit_code": 1,
         "read_only": true,
-        "recorded": false
+        "recorded": false,
+        "has_keys": [
+          "reason",
+          "checks",
+          "evidence_gates",
+          "capability"
+        ]
       }
     }
   ]

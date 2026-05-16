@@ -2,14 +2,16 @@
   "schema": "bha.state.v1",
   "version": "1.0.0",
   "run_id": "bha-dry-run-v1",
-  "updated_at": "2026-05-16T02:02:50.609Z",
-  "ledger_head_hash": "7771ae67c5ec0e020c06c02c886d516e577fbff0c5b1f3cb3e288c8272b6e33b",
-  "ledger_event_count": 633,
+  "updated_at": "2026-05-16T13:29:53.749Z",
+  "ledger_head_hash": "ea1ed67f37ff6e8fcd3f9e70906c2a6fab15c78fffde77953bd41b0af25dbeff",
+  "ledger_event_count": 1542,
   "validation": {
     "status": "PASS",
-    "completed_at": "2026-05-16T02:02:50.607Z",
-    "inputs_hash": "11807531fe42e5f37cb461a1de76b6ad0052e6c98b7073baaed580181a43f104",
-    "ledger_event_hash": "7771ae67c5ec0e020c06c02c886d516e577fbff0c5b1f3cb3e288c8272b6e33b",
+    "completed_at": "2026-05-16T13:29:42.091Z",
+    "inputs_hash": "1d2a7a188c6dd3df2d1d9d30968ef30fadef84f3dafdb673e1256b72eb48b71b",
+    "policy_hash": "882811204ae1c3f07267155aa332f1d300a967c254429e3bf26bcf85c5969841",
+    "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
+    "ledger_event_hash": "dae179c18c8f9949c6f82513e6f5a9d7048dddacfce690529989bc0f252c0f81",
     "commands": [
       {
         "id": "git_diff_check",
@@ -21,6 +23,12 @@
         "expect": {
           "exit_code": 0
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_EXACT",
+        "category": "local",
+        "reason": "local whitespace validation",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -37,6 +45,12 @@
         "expect": {
           "exit_code": 0
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_EXACT",
+        "category": "local",
+        "reason": "local syntax validation",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -53,9 +67,313 @@
         "expect": {
           "exit_code": 0
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_EXACT",
+        "category": "local",
+        "reason": "local syntax validation",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "verifier_selftest_negative_matrix",
+        "argv": [
+          "node",
+          "scripts/bha-verify.js",
+          "--self-test"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "ok": true,
+          "status": "PASS"
+        },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_EXACT",
+        "category": "local",
+        "reason": "read-only verifier self-test",
+        "spawned": true,
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "closeout_preview_readonly",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "closeout",
+          "--format",
+          "json"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "ok": true,
+          "status": "CLOSEOUT_GENERATED",
+          "recorded": false,
+          "read_only": true,
+          "has_keys": [
+            "closeout_binding",
+            "verifier",
+            "unsupported_claims"
+          ]
+        },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_EXACT",
+        "category": "local",
+        "reason": "read-only closeout preview",
+        "spawned": true,
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "git_push_capability_flow_readonly",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "git-push-capability-flow",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--expires-minutes",
+          "20",
+          "--key-id",
+          "owner-main-pkcs8",
+          "--format",
+          "json"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "ok": true,
+          "status": "READY_TO_SIGN",
+          "recorded": false,
+          "read_only": true,
+          "has_keys": [
+            "payload",
+            "steps",
+            "hard_boundaries",
+            "unsigned_payload_json"
+          ]
+        },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_EXACT",
+        "category": "local",
+        "reason": "read-only git_push capability flow preview",
+        "spawned": true,
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "rollback_drill_readonly",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "rollback-drill",
+          "--format",
+          "json"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "ok": true,
+          "status": "PASS",
+          "recorded": false,
+          "read_only": true,
+          "has_keys": [
+            "checks",
+            "hard_boundaries",
+            "evidence_sources"
+          ]
+        },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_EXACT",
+        "category": "local",
+        "reason": "read-only rollback drill",
+        "spawned": true,
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "checkpoint_record",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "checkpoint",
+          "--format",
+          "json"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "ok": true,
+          "status": "CHECKPOINT_RECORDED",
+          "recorded": true,
+          "read_only": false,
+          "has_keys": [
+            "checkpoint",
+            "checkpoint_binding",
+            "event"
+          ]
+        },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_EXACT",
+        "category": "local",
+        "reason": "local checkpoint evidence write",
+        "spawned": true,
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "make_push_payload_canonical",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "make-push-payload",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--expires-minutes",
+          "20",
+          "--key-id",
+          "owner-main-pkcs8"
+        ],
+        "expect": {
+          "exit_code": 0,
+          "json": {
+            "schema": "bha.capability.v1",
+            "type": "git_push",
+            "remote": "origin",
+            "branch": "master",
+            "one_use": true,
+            "signing_key_id": "owner-main-pkcs8",
+            "command": "git push origin master"
+          },
+          "has_keys": [
+            "head",
+            "policy_hash",
+            "mission_hash",
+            "algorithm",
+            "signature_encoding",
+            "payload_hash_format"
+          ],
+          "missing_keys": [
+            "head_sha",
+            "payload_hash",
+            "signature"
+          ]
+        },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_EXACT",
+        "category": "local",
+        "reason": "read-only canonical git_push capability payload generation",
+        "spawned": true,
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "verify_signed_reject_nested_envelope",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "verify-signed-capability",
+          "--json",
+          "{\"payload\":{},\"signature\":{\"key_id\":\"owner-main-pkcs8\"}}"
+        ],
+        "expect": {
+          "exit_code": 2,
+          "ok": false,
+          "status": "INVALID",
+          "reason": "CAPABILITY_ENVELOPE_UNSUPPORTED_EXPECT_FLAT"
+        },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "read-only signed capability validation",
+        "spawned": true,
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 2,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "verify_signed_reject_head_sha",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "verify-signed-capability",
+          "--json",
+          "{\"schema\":\"bha.capability.v1\",\"capability_id\":\"validation-head-sha\",\"run_id\":\"bha-dry-run-v1\",\"type\":\"git_push\",\"remote\":\"origin\",\"branch\":\"master\",\"head_sha\":\"abc\",\"ledger_head_hash\":\"abc\",\"one_use\":true,\"expires_at\":\"9999-12-31T23:59:59.000Z\",\"signing_key_id\":\"owner-main-pkcs8\",\"command\":\"git push origin master\",\"payload_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"AA==\"}"
+        ],
+        "expect": {
+          "exit_code": 2,
+          "ok": false,
+          "status": "INVALID",
+          "reason": "CAPABILITY_FIELD_HEAD_REQUIRED_NOT_HEAD_SHA"
+        },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "read-only signed capability validation",
+        "spawned": true,
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 2,
+        "signal": null,
+        "error": null
+      },
+      {
+        "id": "verify_signed_reject_prefixed_payload_hash",
+        "argv": [
+          "node",
+          "scripts/bha-run.js",
+          "verify-signed-capability",
+          "--json",
+          "{\"schema\":\"bha.capability.v1\",\"capability_id\":\"validation-prefixed-hash\",\"run_id\":\"bha-dry-run-v1\",\"type\":\"git_push\",\"remote\":\"origin\",\"branch\":\"master\",\"head\":\"abc\",\"ledger_head_hash\":\"abc\",\"one_use\":true,\"expires_at\":\"9999-12-31T23:59:59.000Z\",\"signing_key_id\":\"owner-main-pkcs8\",\"command\":\"git push origin master\",\"payload_hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"AA==\"}"
+        ],
+        "expect": {
+          "exit_code": 2,
+          "ok": false,
+          "status": "INVALID",
+          "reason": "CAPABILITY_PAYLOAD_HASH_FORMAT_INVALID_EXPECT_RAW_HEX"
+        },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "read-only signed capability validation",
+        "spawned": true,
+        "status": "PASS",
+        "problems": [],
+        "exit_code": 2,
         "signal": null,
         "error": null
       },
@@ -74,6 +392,12 @@
           "decision": "ALLOW",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -97,6 +421,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -119,6 +449,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -140,6 +476,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -161,6 +503,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -182,6 +530,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -203,6 +557,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -225,6 +585,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -246,6 +612,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -268,6 +640,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -289,6 +667,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -310,6 +694,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -331,6 +721,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -352,6 +748,12 @@
           "decision": "DENY",
           "spawned": false
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_PREFIX",
+        "category": "local",
+        "reason": "nested dry-run policy check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 0,
@@ -364,13 +766,26 @@
           "node",
           "scripts/bha-run.js",
           "prepush-check",
-          "--internal-git-hook"
+          "--internal-git-hook",
+          "origin"
         ],
         "expect": {
           "exit_code": 1,
           "read_only": true,
-          "recorded": false
+          "recorded": false,
+          "has_keys": [
+            "reason",
+            "checks",
+            "evidence_gates",
+            "capability"
+          ]
         },
+        "decision": "ALLOW",
+        "allowed": true,
+        "rule": "ALLOW_EXACT",
+        "category": "local",
+        "reason": "read-only prepush fail-closed check",
+        "spawned": true,
         "status": "PASS",
         "problems": [],
         "exit_code": 1,
@@ -456,5 +871,30 @@
       "git_directory_write": false,
       "private_key_repo_write": false
     }
-  }
+  },
+  "policy_hash": "882811204ae1c3f07267155aa332f1d300a967c254429e3bf26bcf85c5969841",
+  "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
+  "closeout": {
+    "status": "PASS",
+    "completed_at": "2026-05-16T13:29:53.749Z",
+    "ledger_event_hash": "ea1ed67f37ff6e8fcd3f9e70906c2a6fab15c78fffde77953bd41b0af25dbeff",
+    "verified_ledger_head_hash": "fb9c9c999ddc5bf08dc3b15e85a9fba4c5013728948f6dcc20be1b680fcf0c06",
+    "closeout_event_hash": "ea1ed67f37ff6e8fcd3f9e70906c2a6fab15c78fffde77953bd41b0af25dbeff",
+    "final_ledger_head_hash": "ea1ed67f37ff6e8fcd3f9e70906c2a6fab15c78fffde77953bd41b0af25dbeff",
+    "validation_ledger_event_hash": "dae179c18c8f9949c6f82513e6f5a9d7048dddacfce690529989bc0f252c0f81",
+    "policy_hash": "882811204ae1c3f07267155aa332f1d300a967c254429e3bf26bcf85c5969841",
+    "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
+  },
+  "last_checkpoint": {
+    "checkpoint_id": "checkpoint-2026-05-16T13-29-48-097Z",
+    "created_at": "2026-05-16T13:29:48.106Z",
+    "ledger_event_hash": "fb9c9c999ddc5bf08dc3b15e85a9fba4c5013728948f6dcc20be1b680fcf0c06",
+    "verified_ledger_head_hash": "dae179c18c8f9949c6f82513e6f5a9d7048dddacfce690529989bc0f252c0f81",
+    "checkpoint_event_hash": "fb9c9c999ddc5bf08dc3b15e85a9fba4c5013728948f6dcc20be1b680fcf0c06",
+    "final_ledger_head_hash": "fb9c9c999ddc5bf08dc3b15e85a9fba4c5013728948f6dcc20be1b680fcf0c06",
+    "path": ".bha/checkpoint.json",
+    "policy_hash": "882811204ae1c3f07267155aa332f1d300a967c254429e3bf26bcf85c5969841",
+    "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
+  },
+  "last_checkpoint_id": "checkpoint-2026-05-16T13-29-48-097Z"
 }
