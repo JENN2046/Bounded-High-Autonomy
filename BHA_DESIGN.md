@@ -9,6 +9,19 @@ Document status:
   prototype changes may already exist and must be inspected before edits.
 - Design posture: prefer a small verifiable v1 over broad automation.
 
+V1.1 operator and post-push evidence addendum:
+
+- `gate-status` is a read-only operator command that reports verifier gates, hook configuration,
+  capability state, and the next safe action.
+- Capability signing remains external to BHA. Runtime helpers may prepare unsigned payloads or verify
+  signed JSON from `.bha/local/` files, but they must not read, print, store, or request private key
+  material.
+- Push hook USED session evidence is local-only under `.bha/local/` and ignored by Git. This keeps
+  replay protection local while avoiding an infinite loop where every push creates another required
+  evidence commit.
+- Repository-tracked capability evidence remains the signed issue and consume records plus ledger,
+  state, validation, checkpoint, and closeout evidence.
+
 ## 1. BHA Design Rhythm and Roadmap
 
 BHA should proceed in controlled phases. The goal is to avoid both premature implementation and

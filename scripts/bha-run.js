@@ -8,11 +8,13 @@ const { spawn } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const BHA_DIR = path.join(ROOT, '.bha');
+const BHA_LOCAL_DIR = path.join(BHA_DIR, 'local');
 const MISSION_PATH = path.join(BHA_DIR, 'mission.yaml');
 const POLICY_PATH = path.join(BHA_DIR, 'policy.yaml');
 const STATE_PATH = path.join(BHA_DIR, 'state.json');
 const LEDGER_PATH = path.join(BHA_DIR, 'ledger.jsonl');
 const CAPABILITIES_PATH = path.join(BHA_DIR, 'capabilities.jsonl');
+const LOCAL_CAPABILITY_SESSIONS_PATH = path.join(BHA_LOCAL_DIR, 'capability-sessions.jsonl');
 const VALIDATION_PATH = path.join(BHA_DIR, 'validation.yaml');
 const ROLLBACK_PATH = path.join(BHA_DIR, 'rollback.md');
 const ROADMAP_PATH = path.join(BHA_DIR, 'roadmap.md');
@@ -22,10 +24,12 @@ const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
 const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
 const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
+const GITIGNORE_PATH = path.join(ROOT, '.gitignore');
 
 const VALIDATION_INPUTS = [
   DESIGN_PATH,
   AGENTS_PATH,
+  GITIGNORE_PATH,
   MISSION_PATH,
   POLICY_PATH,
   VALIDATION_PATH,
@@ -99,6 +103,19 @@ function readJsonl(file) {
       throw new Error(`${rel(file)}:${index + 1}: invalid JSONL: ${error.message}`);
     }
   });
+}
+
+function isInsideDir(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function resolveLocalFile(filePath) {
+  const resolved = path.resolve(ROOT, filePath || '');
+  if (!isInsideDir(BHA_LOCAL_DIR, resolved)) {
+    throw new Error('file path must be inside .bha/local');
+  }
+  return resolved;
 }
 
 function eventHash(event) {
@@ -1083,8 +1100,37 @@ function appendCapabilityEvent(type, payload) {
   return event;
 }
 
+function appendLocalCapabilitySession(payload) {
+  const mission = loadMission();
+  const policy = loadPolicy();
+  const event = {
+    schema: 'bha.capability.event.v1',
+    run_id: loadState().run_id,
+    mission_id: mission.mission_id || null,
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
+    event_id: crypto.randomUUID(),
+    ts: new Date().toISOString(),
+    type: 'capability_session',
+    local_only: true,
+    payload
+  };
+  event.event_hash = capabilityHash(event);
+  fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
+  fs.appendFileSync(LOCAL_CAPABILITY_SESSIONS_PATH, stable(event) + '\n', 'utf8');
+  return event;
+}
+
 function readCapabilityEvents() {
   return readJsonl(CAPABILITIES_PATH);
+}
+
+function readLocalCapabilitySessions() {
+  return readJsonl(LOCAL_CAPABILITY_SESSIONS_PATH);
+}
+
+function readCapabilityEventsWithLocalSessions() {
+  return readCapabilityEvents().concat(readLocalCapabilitySessions());
 }
 
 function findCapabilityIssue(events, id) {
@@ -1120,16 +1166,36 @@ function validCapabilitySessions(events, id) {
     event.payload.valid === true);
 }
 
-async function handleIssueCapability(args) {
+function readCapabilityPayloadArg(args) {
   const jsonIndex = args.indexOf('--json');
-  if (jsonIndex === -1 || !args[jsonIndex + 1]) {
-    console.log(JSON.stringify({ ok: false, error: 'missing --json payload' }));
+  const filePath = getOption(args, '--file');
+  if (jsonIndex !== -1 && args[jsonIndex + 1]) {
+    return { ok: true, source: 'json', text: args[jsonIndex + 1] };
+  }
+  if (filePath) {
+    try {
+      const resolved = resolveLocalFile(filePath);
+      if (!fs.existsSync(resolved)) {
+        return { ok: false, reason: 'capability file does not exist' };
+      }
+      return { ok: true, source: 'file', text: readText(resolved), file: rel(resolved) };
+    } catch (error) {
+      return { ok: false, reason: error.message };
+    }
+  }
+  return { ok: false, reason: 'missing --json payload or --file path' };
+}
+
+async function handleIssueCapability(args) {
+  const input = readCapabilityPayloadArg(args);
+  if (!input.ok) {
+    console.log(JSON.stringify({ ok: false, error: input.reason }));
     process.exitCode = 2;
     return;
   }
   let payload;
   try {
-    payload = JSON.parse(args[jsonIndex + 1]);
+    payload = JSON.parse(input.text);
   } catch (error) {
     console.log(JSON.stringify({ ok: false, error: `invalid JSON payload: ${error.message}` }));
     process.exitCode = 2;
@@ -1182,15 +1248,15 @@ async function handleIssueCapability(args) {
 }
 
 async function handleVerifySignedCapability(args) {
-  const jsonIndex = args.indexOf('--json');
-  if (jsonIndex === -1 || !args[jsonIndex + 1]) {
-    console.log(JSON.stringify({ ok: false, status: 'INVALID', reason: 'missing --json payload' }));
+  const input = readCapabilityPayloadArg(args);
+  if (!input.ok) {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', reason: input.reason }));
     process.exitCode = 2;
     return;
   }
   let payload;
   try {
-    payload = JSON.parse(args[jsonIndex + 1]);
+    payload = JSON.parse(input.text);
   } catch (error) {
     console.log(JSON.stringify({ ok: false, status: 'INVALID', reason: `invalid JSON payload: ${error.message}` }));
     process.exitCode = 2;
@@ -1300,12 +1366,36 @@ async function handleMakePushPayload(args) {
   const remote = getOption(args, '--remote');
   const branch = getOption(args, '--branch');
   const keyId = getOption(args, '--key-id');
+  const outPath = getOption(args, '--out');
   const expiresMinutesRaw = getOption(args, '--expires-minutes');
   const expiresMinutes = Number(expiresMinutesRaw);
   const built = await buildPushPayload(remote, branch, keyId, expiresMinutes);
   if (built.ok !== true) {
     console.log(JSON.stringify(built));
     process.exitCode = 2;
+    return;
+  }
+  if (outPath) {
+    let resolved;
+    try {
+      resolved = resolveLocalFile(outPath);
+    } catch (error) {
+      console.log(JSON.stringify({ ok: false, status: 'INVALID', error: error.message }));
+      process.exitCode = 2;
+      return;
+    }
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    fs.writeFileSync(resolved, JSON.stringify(built.payload) + '\n', 'utf8');
+    console.log(JSON.stringify({
+      ok: true,
+      status: 'PAYLOAD_WRITTEN',
+      read_only: false,
+      payload_path: rel(resolved),
+      capability_id: built.payload.capability_id,
+      head: built.payload.head,
+      ledger_head_hash: built.payload.ledger_head_hash,
+      private_key_required: false
+    }));
     return;
   }
   console.log(JSON.stringify(built.payload));
@@ -1509,6 +1599,7 @@ async function matchingConsumedCapability(remote, branch, head, options) {
   const reserve = options && options.reserve === true;
   const state = loadState();
   const events = readCapabilityEvents();
+  const eventsWithLocalSessions = events.concat(readLocalCapabilitySessions());
   const issues = new Map();
   for (const event of events) {
     if (event.type === 'capability_issue' && event.payload && event.payload.valid === true) {
@@ -1537,7 +1628,7 @@ async function matchingConsumedCapability(remote, branch, head, options) {
     if (consumes.length !== 1) {
       return { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED', capability_id: id };
     }
-    if (validCapabilitySessions(events, id).length > 0) {
+    if (validCapabilitySessions(eventsWithLocalSessions, id).length > 0) {
       return { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED', capability_id: id };
     }
     if (!issue) {
@@ -1565,7 +1656,7 @@ async function matchingConsumedCapability(remote, branch, head, options) {
         requested.one_use === true &&
         !isExpired(requested.expires_at)) {
       if (reserve) {
-        const session = appendCapabilityEvent('capability_session', {
+        const session = appendLocalCapabilitySession({
           capability_id: id,
           remote,
           branch,
@@ -1763,6 +1854,106 @@ async function handlePrepushCheck(args) {
   if (!ok) {
     process.exitCode = 1;
   }
+}
+
+async function hookPathStatus() {
+  const result = await runCommand(['git', 'config', '--get', 'core.hooksPath'], {});
+  const value = result.exit_code === 0 && !result.error ? result.stdout.trim() : null;
+  return {
+    configured: value || null,
+    expected: '.githooks',
+    ok: value === '.githooks',
+    pre_push_exists: fs.existsSync(PRE_PUSH_PATH)
+  };
+}
+
+function nextGateAction(checks, capability) {
+  if (!checks.verifier_pass) {
+    return 'RUN_VERIFIER_AND_FIX_ISSUES';
+  }
+  if (!checks.verifier_no_warnings) {
+    return 'RESOLVE_VERIFIER_WARNINGS_OR_RECORD_CLOSEOUT';
+  }
+  if (!checks.clean_ledger || !checks.validation_fresh) {
+    return 'RUN_VALIDATE_CHECKPOINT_CLOSEOUT';
+  }
+  if (!checks.rollback_recorded) {
+    return 'RUN_ROLLBACK_DRILL_OR_VALIDATE';
+  }
+  if (!checks.checkpoint_recorded) {
+    return 'RUN_CHECKPOINT';
+  }
+  if (!checks.closeout_current) {
+    return 'RUN_CLOSEOUT_RECORD';
+  }
+  if (!checks.clean_git_status) {
+    return 'COMMIT_OR_REMOVE_UNVERIFIED_WORKTREE_CHANGES';
+  }
+  if (!checks.valid_consumed_capability || !checks.matching_run_id_remote_branch_head) {
+    return capability && capability.reason === 'CAPABILITY_REPLAY_DETECTED'
+      ? 'ISSUE_AND_CONSUME_A_NEW_SIGNED_GIT_PUSH_CAPABILITY'
+      : 'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY';
+  }
+  return 'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH';
+}
+
+async function gateStatus(remote, branch) {
+  const head = await currentHead();
+  const status = await gitStatusShort();
+  const verify = await verifierResult();
+  const state = loadState();
+  const ledger = readJsonl(LEDGER_PATH);
+  const evidence = prepushEvidenceGates(state, ledger, verify);
+  const capability = remote && branch && head
+    ? await matchingConsumedCapability(remote, branch, head, { reserve: false })
+    : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
+  const checks = {
+    verifier_pass: evidence.gates.verifier_pass,
+    verifier_no_warnings: evidence.gates.verifier_no_warnings,
+    clean_ledger: evidence.gates.ledger_state_match,
+    validation_fresh: evidence.gates.validation_fresh,
+    rollback_recorded: evidence.gates.rollback_recorded,
+    checkpoint_recorded: evidence.gates.checkpoint_recorded,
+    closeout_current: evidence.gates.closeout_current,
+    valid_consumed_capability: capability.ok === true,
+    matching_run_id_remote_branch_head: capability.ok === true,
+    clean_git_status: status.ok === true && (status.clean === true || authorizedRuntimeDirty(status.stdout))
+  };
+  return {
+    ok: Object.values(checks).every(Boolean),
+    status: Object.values(checks).every(Boolean) ? 'READY' : 'BLOCKED',
+    read_only: true,
+    remote: remote || 'UNKNOWN',
+    branch: branch || 'UNKNOWN',
+    head: head || 'UNKNOWN',
+    checks,
+    evidence_gates: evidence.gates,
+    capability,
+    hook: await hookPathStatus(),
+    git_status: {
+      ok: status.ok,
+      clean: status.clean,
+      authorized_runtime_dirty: status.ok === true && status.clean !== true ? authorizedRuntimeDirty(status.stdout) : false,
+      short: status.stdout.trim() || 'CLEAN'
+    },
+    post_push_evidence_strategy: {
+      tracked_evidence: ['.bha/capabilities.jsonl issue/consume events', '.bha/ledger.jsonl', '.bha/state.json'],
+      local_only_evidence: ['.bha/local/capability-sessions.jsonl push hook USED sessions'],
+      reason: 'push hook replay guard sessions are local-only to avoid recursive evidence commits'
+    },
+    next_action: nextGateAction(checks, capability)
+  };
+}
+
+async function handleGateStatus(args) {
+  if (getOption(args, '--format') !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const remote = getOption(args, '--remote') || 'origin';
+  const branch = getOption(args, '--branch') || await currentBranch();
+  console.log(JSON.stringify(await gateStatus(remote, branch)));
 }
 
 async function runCapabilityIssue(payload) {
@@ -2415,6 +2606,8 @@ async function main() {
       await handleCapabilitySelftest(args);
     } else if (command === 'prepush-check') {
       await handlePrepushCheck(args);
+    } else if (command === 'gate-status') {
+      await handleGateStatus(args);
     } else {
       console.log(JSON.stringify({ ok: false, error: `unknown subcommand: ${command || 'NONE'}` }));
       process.exitCode = 2;

@@ -11,6 +11,7 @@
     "allowed": [
       "BHA_DESIGN.md",
       "AGENTS.md",
+      ".gitignore",
       ".bha/mission.yaml",
       ".bha/policy.yaml",
       ".bha/state.json",
@@ -200,10 +201,70 @@
         "command": "node",
         "args_prefix": [
           "scripts/bha-run.js",
+          "make-push-payload",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--expires-minutes",
+          "20",
+          "--key-id",
+          "owner-main-pkcs8",
+          "--out"
+        ],
+        "reason": "local unsigned git_push capability payload file write"
+      },
+      {
+        "command": "node",
+        "args_prefix": [
+          "scripts/bha-run.js",
           "verify-signed-capability",
           "--json"
         ],
         "reason": "read-only signed capability validation"
+      },
+      {
+        "command": "node",
+        "args_prefix": [
+          "scripts/bha-run.js",
+          "verify-signed-capability",
+          "--file"
+        ],
+        "reason": "read-only signed capability file validation"
+      },
+      {
+        "command": "node",
+        "args_prefix": [
+          "scripts/bha-run.js",
+          "issue-capability",
+          "--file"
+        ],
+        "reason": "local signed capability file issue"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "gate-status",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only BHA gate status"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "prepush-check",
+          "--preflight",
+          "--internal-git-hook",
+          "origin"
+        ],
+        "reason": "read-only prepush preflight check"
       },
       {
         "command": "node",

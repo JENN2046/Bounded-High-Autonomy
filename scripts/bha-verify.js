@@ -23,11 +23,13 @@ const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
 const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
 const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
+const GITIGNORE_PATH = path.join(ROOT, '.gitignore');
 const ROOT_REAL = fs.realpathSync.native(ROOT);
 
 const VALIDATION_INPUTS = [
   DESIGN_PATH,
   AGENTS_PATH,
+  GITIGNORE_PATH,
   MISSION_PATH,
   POLICY_PATH,
   VALIDATION_PATH,
@@ -180,6 +182,15 @@ function capabilityRevoked(capabilities, id) {
   });
 }
 
+function capabilityConsumed(capabilities, id) {
+  return capabilities.some((event) => {
+    return event.type === 'capability_consume' &&
+      event.payload &&
+      event.payload.capability_id === id &&
+      event.payload.valid === true;
+  });
+}
+
 function capabilityUsed(capabilities, id) {
   return capabilities.some((event) => {
     return event.type === 'capability_session' &&
@@ -188,6 +199,10 @@ function capabilityUsed(capabilities, id) {
       event.payload.valid === true &&
       event.payload.status === 'USED';
   });
+}
+
+function capabilityHistorical(capabilities, id) {
+  return capabilityConsumed(capabilities, id) || capabilityUsed(capabilities, id);
 }
 
 function capabilityTypeFromRequest(requested) {
@@ -642,14 +657,15 @@ function verifyCapabilityIssue(event, policy, state, capabilities, ledger, issue
   if (key && key.public_key_pem && !capabilitySignatureValid(requested, key)) {
     issues.push({ code: 'CAPABILITY_SIGNATURE_INVALID', severity: 'FAIL', message: 'capability signature is invalid', event_hash: event.event_hash });
   }
-  if (state && requested.run_id !== state.run_id) {
+  const historical = capabilityHistorical(capabilities, payload.capability_id);
+  if (!historical && state && requested.run_id !== state.run_id) {
     issues.push({ code: 'CAPABILITY_RUN_ID_MISMATCH', severity: 'FAIL', message: 'valid capability run_id does not match state', event_hash: event.event_hash });
   }
   if (requested.schema === 'bha.capability.v1') {
-    if (requested.policy_hash !== policyHash(policy)) {
+    if (!historical && requested.policy_hash !== policyHash(policy)) {
       issues.push({ code: 'CAPABILITY_POLICY_HASH_MISMATCH', severity: 'FAIL', message: 'valid capability policy_hash does not match current policy', event_hash: event.event_hash });
     }
-    if (requested.mission_hash !== missionHash()) {
+    if (!historical && requested.mission_hash !== missionHash()) {
       issues.push({ code: 'CAPABILITY_MISSION_HASH_MISMATCH', severity: 'FAIL', message: 'valid capability mission_hash does not match current mission', event_hash: event.event_hash });
     }
     if (requested.algorithm !== 'ed25519') {
@@ -676,7 +692,7 @@ function verifyCapabilityIssue(event, policy, state, capabilities, ledger, issue
   if (requested.one_use !== true) {
     issues.push({ code: 'CAPABILITY_ONE_USE_REQUIRED', severity: 'FAIL', message: 'valid capability is not one_use', event_hash: event.event_hash });
   }
-  if (isExpired(requested.expires_at) && !capabilityUsed(capabilities, payload.capability_id)) {
+  if (isExpired(requested.expires_at) && !historical) {
     issues.push({ code: 'CAPABILITY_EXPIRED', severity: 'FAIL', message: 'valid capability is expired', event_hash: event.event_hash });
   }
   if (capabilityRevoked(capabilities, payload.capability_id)) {

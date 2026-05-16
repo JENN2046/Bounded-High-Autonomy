@@ -464,6 +464,29 @@
       }
     },
     {
+      "id": "gate_status_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "gate-status",
+        "--remote",
+        "origin",
+        "--branch",
+        "master",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "read_only": true,
+        "has_keys": [
+          "checks",
+          "next_action",
+          "post_push_evidence_strategy"
+        ]
+      }
+    },
+    {
       "id": "prepush_check_fail_closed_readonly",
       "argv": [
         "node",
@@ -476,6 +499,29 @@
         "exit_code": 1,
         "read_only": true,
         "recorded": false,
+        "has_keys": [
+          "reason",
+          "checks",
+          "evidence_gates",
+          "capability"
+        ]
+      }
+    },
+    {
+      "id": "prepush_check_preflight_fail_closed_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "prepush-check",
+        "--preflight",
+        "--internal-git-hook",
+        "origin"
+      ],
+      "expect": {
+        "exit_code": 1,
+        "read_only": true,
+        "recorded": false,
+        "preflight": true,
         "has_keys": [
           "reason",
           "checks",
