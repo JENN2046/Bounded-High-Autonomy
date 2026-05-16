@@ -84,6 +84,10 @@ function readText(file) {
   return fs.readFileSync(file, 'utf8');
 }
 
+function canonicalValidationText(file) {
+  return readText(file).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
 function readJsonStrict(file) {
   return JSON.parse(readText(file));
 }
@@ -496,7 +500,7 @@ function validationInputsHash() {
     if (!fs.existsSync(file)) {
       return { path: rel(file), status: 'MISSING', sha256: null };
     }
-    return { path: rel(file), status: 'PRESENT', sha256: sha256(readText(file)) };
+    return { path: rel(file), status: 'PRESENT', sha256: sha256(canonicalValidationText(file)) };
   });
   return sha256(stable(entries));
 }

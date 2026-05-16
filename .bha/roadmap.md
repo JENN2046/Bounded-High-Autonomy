@@ -51,6 +51,7 @@ Implemented:
 - `git_push`-only capability flow with signed payload verification, issue, consume, replay checks, and fail-closed prepush integration.
 - Checkpoint and closeout evidence bound to verifier and ledger state.
 - V1.1 local-only push authorization strategy: tracked evidence records verifier-ready repository state; `.bha/local/capabilities.jsonl` records `git_push` issue/consume events and `.bha/local/capability-sessions.jsonl` records hook USED sessions for local replay protection.
+- Validation input hashing normalizes text line endings to LF so fresh clones with different Git `core.autocrlf` settings can restore verifier trust.
 
 Explicitly not implemented:
 - Provider-call automation, memory-write automation, deploy/release/tag control, package publishing, database, web UI, CI platform, remote attestation, private key custody, multi-agent scheduling, or OS-level sandboxing.

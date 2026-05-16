@@ -22,6 +22,8 @@ V1.1 operator and post-push evidence addendum:
 - Repository-tracked evidence proves the HEAD is ready to push: policy, mission, validation,
   checkpoint, closeout, ledger, state, and verifier consistency. Git reality proves the remote branch
   reached the pushed HEAD.
+- Validation input hashes normalize text line endings to LF before hashing so trust recovery does not
+  depend on a clone's `core.autocrlf` setting.
 
 ## 1. BHA Design Rhythm and Roadmap
 
