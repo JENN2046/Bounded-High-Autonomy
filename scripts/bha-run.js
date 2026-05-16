@@ -2073,6 +2073,153 @@ function nextGateCommands(action, remote, branch) {
   return commands[action] || [];
 }
 
+function readLocalJsonFileSummary(localPath) {
+  let resolved;
+  try {
+    resolved = resolveLocalFile(localPath);
+  } catch (error) {
+    return {
+      path: localPath,
+      exists: false,
+      json_valid: false,
+      error: error.message
+    };
+  }
+  if (!fs.existsSync(resolved)) {
+    return {
+      path: localPath,
+      exists: false,
+      json_valid: false
+    };
+  }
+  try {
+    return {
+      path: rel(resolved),
+      exists: true,
+      json_valid: true,
+      value: JSON.parse(readText(resolved))
+    };
+  } catch (error) {
+    return {
+      path: rel(resolved),
+      exists: true,
+      json_valid: false,
+      error: error.message
+    };
+  }
+}
+
+function capabilityFileSummary(localPath, remote, branch, head, signed) {
+  const file = readLocalJsonFileSummary(localPath);
+  const payload = file.value && typeof file.value === 'object' && !Array.isArray(file.value)
+    ? file.value
+    : null;
+  const summary = {
+    path: file.path,
+    exists: file.exists,
+    json_valid: file.json_valid
+  };
+  if (file.error) {
+    summary.error = file.error;
+  }
+  if (!payload) {
+    return summary;
+  }
+  summary.capability_id = payload.capability_id || payload.id || null;
+  summary.remote = payload.remote || null;
+  summary.branch = payload.branch || null;
+  summary.head = payload.head || null;
+  summary.ledger_head_hash = payload.ledger_head_hash || null;
+  summary.expires_at = payload.expires_at || null;
+  summary.signing_key_id = payload.signing_key_id || null;
+  summary.signature_present = Boolean(payload.signature);
+  summary.payload_hash_present = Boolean(payload.payload_hash);
+  summary.matches_current_context = payload.remote === remote &&
+    payload.branch === branch &&
+    payload.head === head;
+  if (signed === true) {
+    summary.safe_to_print = 'signature and private key material are not included in this summary';
+  }
+  return summary;
+}
+
+async function signedCapabilityFileSummary(localPath, remote, branch, head) {
+  const summary = capabilityFileSummary(localPath, remote, branch, head, true);
+  if (!summary.exists || !summary.json_valid) {
+    return summary;
+  }
+  const file = readLocalJsonFileSummary(localPath);
+  const result = await verifySignedCapability(file.value);
+  summary.verification = {
+    ok: result.ok === true,
+    status: result.status,
+    reason: result.reason,
+    capability_id: result.capability_id,
+    key_id: result.key_id,
+    head: result.head,
+    ledger_head_hash: result.ledger_head_hash
+  };
+  return summary;
+}
+
+async function operatorPushHandoff(action, remote, branch, head, capability, immediateCommands) {
+  const payloadPath = '.bha/local/push-payload.json';
+  const signedPath = '.bha/local/signed-push-capability.json';
+  const unsigned = capabilityFileSummary(payloadPath, remote, branch, head, false);
+  const signed = await signedCapabilityFileSummary(signedPath, remote, branch, head);
+  const canUseExistingPayload = action === 'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY' &&
+    unsigned.matches_current_context &&
+    unsigned.capability_id;
+  const capabilityId = canUseExistingPayload
+    ? unsigned.capability_id
+    : (action === 'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH' && capability && capability.capability_id
+      ? capability.capability_id
+      : '<capability_id from make-push-payload output>');
+  const capabilityActions = new Set([
+    'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY',
+    'ISSUE_AND_CONSUME_A_NEW_SIGNED_GIT_PUSH_CAPABILITY',
+    'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH'
+  ]);
+  const capabilityCommands = [
+    `node scripts/bha-run.js make-push-payload --remote ${remote || 'origin'} --branch ${branch || 'master'} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadPath}`,
+    `operator signs ${payloadPath} outside BHA and writes ${signedPath}`,
+    `$cap = "${signedPath}"`,
+    `$id = "${capabilityId}"`,
+    'node scripts/bha-run.js verify-signed-capability --file $cap',
+    'node scripts/bha-run.js issue-capability --file $cap',
+    `node scripts/bha-run.js consume-capability --id $id --for git_push --remote ${remote || 'origin'} --branch ${branch || 'master'}`,
+    `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${remote || 'origin'}`
+  ];
+  const blockedBeforeCapability = !capabilityActions.has(action);
+  const singleLineCommands = blockedBeforeCapability ? immediateCommands : capabilityCommands;
+  return {
+    purpose: 'Prepare a git_push capability without BHA reading private key material.',
+    action,
+    blocked_before_capability: blockedBeforeCapability,
+    signer_boundary: {
+      operator_controls_signer: true,
+      bha_private_key_access: false,
+      bha_handles_only: ['unsigned payload file under .bha/local/', 'signed payload file under .bha/local/']
+    },
+    local_files: {
+      unsigned_payload: unsigned,
+      signed_payload: signed
+    },
+    powershell_safety: 'Run each command as one complete line; do not split paths, --flags, or arguments across prompts.',
+    command_variables: {
+      cap: signedPath,
+      id: capabilityId
+    },
+    single_line_commands: singleLineCommands,
+    capability_commands_when_unblocked: capabilityCommands,
+    notes: [
+      'Do not paste private key material into BHA commands.',
+      'The signed capability file may contain a signature, but gate-status never prints the signature value.',
+      'A capability already marked USED must not be replayed; generate and sign a fresh payload for the next push.'
+    ]
+  };
+}
+
 async function gateStatus(remote, branch) {
   const head = await currentHead();
   const status = await gitStatusShort();
@@ -2096,6 +2243,7 @@ async function gateStatus(remote, branch) {
     clean_git_status: status.ok === true && status.clean === true
   };
   const action = nextGateAction(checks, capability);
+  const nextCommands = nextGateCommands(action, remote, branch);
   return {
     ok: Object.values(checks).every(Boolean),
     status: Object.values(checks).every(Boolean) ? 'READY' : 'BLOCKED',
@@ -2124,7 +2272,8 @@ async function gateStatus(remote, branch) {
       bha_handles_only: ['unsigned payload file under .bha/local/', 'signed payload file under .bha/local/']
     },
     next_action: action,
-    next_commands: nextGateCommands(action, remote, branch)
+    next_commands: nextCommands,
+    operator_handoff: await operatorPushHandoff(action, remote, branch, head, capability, nextCommands)
   };
 }
 
@@ -2296,6 +2445,9 @@ async function handleAuditV12(args) {
     Boolean(inspectCommand &&
       fileContains(RUN_SCRIPT, 'async function handleInspect') &&
       fileContains(RUN_SCRIPT, 'next_commands') &&
+      fileContains(RUN_SCRIPT, 'operator_handoff') &&
+      fileContains(RUN_SCRIPT, 'single_line_commands') &&
+      fileContains(RUN_SCRIPT, 'do not split paths') &&
       fileContains(RUN_SCRIPT, 'operator_controls_signer') &&
       fileContains(RUN_SCRIPT, 'bha_private_key_access: false') &&
       fileContains(RUN_SCRIPT, 'private_key_required: false') &&
