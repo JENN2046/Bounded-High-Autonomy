@@ -13,6 +13,7 @@ There is no package manager setup for v1; use Node.js built-in modules only.
 - `node scripts/bha-verify.js --self-test` runs the verifier negative-test matrix.
 - `node scripts/bha-run.js validate` runs configured validation and records evidence.
 - `node scripts/bha-run.js verify` runs verifier through the runtime wrapper.
+- `node scripts/bha-run.js audit-v12 --format json` checks V1.2 requirement coverage against repository artifacts and recorded evidence.
 - `node scripts/bha-run.js closeout --format json` previews generated closeout evidence.
 - `node scripts/bha-run.js prepush-check` exercises the fail-closed local push gate.
 
@@ -23,6 +24,12 @@ Write CommonJS JavaScript with `'use strict'`, 2-space indentation, semicolons, 
 ## Testing Guidelines
 
 Prefer focused verifier and validation checks over broad ad hoc scripts. Add or update self-test cases in `scripts/bha-verify.js` when changing policy, ledger, capability, validation, checkpoint, or closeout behavior. Validation evidence must be recorded in `.bha/ledger.jsonl` through `bha-run`, not claimed only in prose.
+
+## Codex Trusted Shell Flow
+
+For day-to-day local work, prefer the BHA shell commands before claiming trusted state: `node scripts/bha-run.js inspect --format json`, `node scripts/bha-run.js validate`, `node scripts/bha-verify.js`, `node scripts/bha-run.js audit-v12 --format json`, `node scripts/bha-run.js checkpoint --format json`, `node scripts/bha-run.js closeout --format json`, and `node scripts/bha-run.js gate-status --remote origin --branch master --format json`. Use `closeout --record --format json` only when verifier and validation evidence support recording a final local closeout.
+
+`AGENTS.md` is behavior guidance, not proof. Proof still comes from repository reality, `.bha/ledger.jsonl`, `.bha/state.json`, verifier output, policy hash, mission hash, validation evidence, necessary `.bha/local/` gate evidence, and git reality.
 
 ## Commit & Pull Request Guidelines
 

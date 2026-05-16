@@ -49,6 +49,82 @@
       }
     },
     {
+      "id": "inspect_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "inspect",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "INSPECTED",
+        "recorded": false,
+        "read_only": true,
+        "has_keys": [
+          "workspace",
+          "branch",
+          "ledger",
+          "validation",
+          "verifier",
+          "shell_commands"
+        ]
+      }
+    },
+    {
+      "id": "v12_regression_selftest",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "regression-selftest",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "PASS",
+        "recorded": false,
+        "read_only": false,
+        "json": {
+          "local_only_writes": true,
+          "tracked_repo_write": false
+        },
+        "has_keys": [
+          "checks",
+          "denied_capabilities",
+          "fixture",
+          "hard_boundaries"
+        ]
+      }
+    },
+    {
+      "id": "v12_audit_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "audit-v12",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "PASS",
+        "recorded": false,
+        "read_only": true,
+        "has_keys": [
+          "checks",
+          "proof_sources",
+          "verifier",
+          "validation",
+          "limitations"
+        ]
+      }
+    },
+    {
       "id": "closeout_preview_readonly",
       "argv": [
         "node",

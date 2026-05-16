@@ -34,6 +34,15 @@ Current verified state:
 - `node scripts/bha-verify.js` is expected to pass.
 - `node scripts/bha-run.js closeout --record --format json` records the closeout event when verifier and validation are passing.
 
+## V1.2 Kernel Hardening
+
+Completed locally:
+- `regression-selftest` exercises V1.1 local-only push authorization invariants in an isolated `.bha/local/` fixture without reading or storing operator private keys.
+- Validation includes the V1.2 regression self-test so LF/CRLF hash stability, local-only `git_push` issue/consume evidence, preflight non-consumption, hook USED sessions, replay rejection, fresh clone verifier trust, and denied external capability classes are checked automatically.
+- `inspect`, `gate-status`, `checkpoint`, and `closeout` are the first local trusted-shell UX surfaces for Codex daily work.
+- `audit-v12` is a read-only artifact coverage audit that maps V1.2 requirements to repository files, recorded validation evidence, verifier status, and git reality.
+- Current local acceptance requires `node scripts/bha-run.js validate`, `node scripts/bha-verify.js`, `node scripts/bha-run.js checkpoint --format json`, and `node scripts/bha-run.js closeout --record --format json` to pass after any tracked change.
+
 ## V1 Handoff / Release Note
 
 Status:

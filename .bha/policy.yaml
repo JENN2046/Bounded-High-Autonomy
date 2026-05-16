@@ -128,10 +128,40 @@
       {
         "command": "node",
         "args": [
+          "scripts/bha-run.js",
+          "inspect",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only BHA repository inspection"
+      },
+      {
+        "command": "node",
+        "args": [
           "scripts/bha-verify.js",
           "--self-test"
         ],
         "reason": "read-only verifier self-test"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "audit-v12",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V1.2 artifact coverage audit"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "regression-selftest",
+          "--format",
+          "json"
+        ],
+        "reason": "local-only V1.2 regression self-test"
       },
       {
         "command": "node",

@@ -45,6 +45,26 @@ function rel(file) {
   return path.relative(ROOT, file).replace(/\\/g, '/');
 }
 
+function relFromRoot(root, file) {
+  return path.relative(root, file).replace(/\\/g, '/');
+}
+
+function validationInputsForRoot(root) {
+  return [
+    path.join(root, 'BHA_DESIGN.md'),
+    path.join(root, 'AGENTS.md'),
+    path.join(root, '.gitignore'),
+    path.join(root, '.bha', 'mission.yaml'),
+    path.join(root, '.bha', 'policy.yaml'),
+    path.join(root, '.bha', 'validation.yaml'),
+    path.join(root, '.bha', 'rollback.md'),
+    path.join(root, '.bha', 'roadmap.md'),
+    path.join(root, 'scripts', 'bha-run.js'),
+    path.join(root, 'scripts', 'bha-verify.js'),
+    path.join(root, '.githooks', 'pre-push')
+  ];
+}
+
 function stable(value) {
   if (Array.isArray(value)) {
     return '[' + value.map(stable).join(',') + ']';
@@ -59,6 +79,10 @@ function stable(value) {
 
 function sha256(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+function canonicalText(text) {
+  return String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
 function withoutHashFields(value) {
@@ -85,7 +109,7 @@ function readText(file) {
 }
 
 function canonicalValidationText(file) {
-  return readText(file).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  return canonicalText(readText(file));
 }
 
 function readJsonStrict(file) {
@@ -421,7 +445,7 @@ function runCommand(argv, options) {
     let child;
     try {
       child = spawn(argv[0], argv.slice(1), {
-        cwd: ROOT,
+        cwd: opts.cwd || ROOT,
         env: scrubbedEnv(),
         shell: false,
         stdio: opts.inherit ? ['ignore', 'inherit', 'inherit'] : ['pipe', 'pipe', 'pipe']
@@ -495,14 +519,18 @@ function parseJsonLine(stdout) {
   return null;
 }
 
-function validationInputsHash() {
-  const entries = VALIDATION_INPUTS.map((file) => {
+function validationInputsHashForRoot(root) {
+  const entries = validationInputsForRoot(root).map((file) => {
     if (!fs.existsSync(file)) {
-      return { path: rel(file), status: 'MISSING', sha256: null };
+      return { path: relFromRoot(root, file), status: 'MISSING', sha256: null };
     }
-    return { path: rel(file), status: 'PRESENT', sha256: sha256(canonicalValidationText(file)) };
+    return { path: relFromRoot(root, file), status: 'PRESENT', sha256: sha256(canonicalValidationText(file)) };
   });
   return sha256(stable(entries));
+}
+
+function validationInputsHash() {
+  return validationInputsHashForRoot(ROOT);
 }
 
 async function handleCheck(args) {
@@ -814,6 +842,72 @@ async function handleVerify() {
     console.error(result.error);
   }
   process.exitCode = result.exit_code || (result.error ? 1 : 0);
+}
+
+async function handleInspect(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const state = loadState();
+  const mission = loadMission();
+  const policy = loadPolicy();
+  const head = ledgerHead();
+  const branch = await currentBranch();
+  const current = await currentHead();
+  const gitStatus = await gitStatusShort();
+  const verify = await verifierResult();
+  console.log(JSON.stringify({
+    ok: true,
+    status: 'INSPECTED',
+    recorded: false,
+    read_only: true,
+    workspace: rel(ROOT) || '.',
+    branch: branch || 'UNKNOWN',
+    head: current || 'UNKNOWN',
+    mission: {
+      mission_id: mission.mission_id || 'UNKNOWN',
+      run_id: state.run_id || mission.run_id || 'UNKNOWN',
+      mission_hash: missionHash(mission)
+    },
+    policy: {
+      policy_id: policy.metadata ? policy.metadata.policy_id : 'UNKNOWN',
+      mode: policy.metadata ? policy.metadata.mode : 'UNKNOWN',
+      policy_hash: policyHash(policy)
+    },
+    ledger: {
+      events: head.count,
+      head_hash: head.hash || 'GENESIS',
+      state_matches_head: state.ledger_head_hash === head.hash
+    },
+    validation: state.validation ? {
+      status: state.validation.status,
+      inputs_fresh: state.validation.inputs_hash === validationInputsHash(),
+      ledger_event_hash: state.validation.ledger_event_hash || 'NOT_RECORDED'
+    } : 'NOT_RECORDED',
+    verifier: verify.parsed || {
+      ok: false,
+      status: 'UNKNOWN',
+      error: verify.error || truncate(verify.stderr) || 'UNKNOWN'
+    },
+    git_status: gitStatus.ok ? {
+      clean: gitStatus.clean,
+      short: gitStatus.stdout.trim() || 'CLEAN'
+    } : {
+      clean: 'UNKNOWN',
+      error: gitStatus.error || truncate(gitStatus.stderr) || 'UNKNOWN'
+    },
+    shell_commands: {
+      validate: 'node scripts/bha-run.js validate',
+      verify: 'node scripts/bha-verify.js',
+      checkpoint: 'node scripts/bha-run.js checkpoint --format json',
+      closeout_preview: 'node scripts/bha-run.js closeout --format json',
+      gate_status: `node scripts/bha-run.js gate-status --remote origin --branch ${branch || 'master'} --format json`
+    },
+    proof_boundary: 'AGENTS.md, prompts, approvals, hooks, and closeout prose are behavior guidance, not proof.'
+  }));
 }
 
 function capabilityType(payload) {
@@ -1929,7 +2023,7 @@ function nextGateAction(checks, capability) {
     return 'RUN_CLOSEOUT_RECORD';
   }
   if (!checks.clean_git_status) {
-    return 'COMMIT_OR_REMOVE_UNVERIFIED_WORKTREE_CHANGES';
+    return 'COMMIT_OR_RESOLVE_UNVERIFIED_WORKTREE_CHANGES';
   }
   if (!checks.valid_consumed_capability || !checks.matching_run_id_remote_branch_head) {
     return capability && capability.reason === 'CAPABILITY_REPLAY_DETECTED'
@@ -1937,6 +2031,46 @@ function nextGateAction(checks, capability) {
       : 'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY';
   }
   return 'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH';
+}
+
+function nextGateCommands(action, remote, branch) {
+  const targetRemote = remote || 'origin';
+  const targetBranch = branch || 'master';
+  const payloadPath = '.bha/local/push-payload.json';
+  const signedPath = '.bha/local/signed-push-capability.json';
+  const commands = {
+    RUN_VERIFIER_AND_FIX_ISSUES: ['node scripts/bha-verify.js'],
+    RESOLVE_VERIFIER_WARNINGS_OR_RECORD_CLOSEOUT: ['node scripts/bha-run.js closeout --record --format json'],
+    RUN_VALIDATE_CHECKPOINT_CLOSEOUT: [
+      'node scripts/bha-run.js validate',
+      'node scripts/bha-run.js checkpoint --format json',
+      'node scripts/bha-run.js closeout --record --format json'
+    ],
+    RUN_ROLLBACK_DRILL_OR_VALIDATE: ['node scripts/bha-run.js rollback-drill --format json', 'node scripts/bha-run.js validate'],
+    RUN_CHECKPOINT: ['node scripts/bha-run.js checkpoint --format json'],
+    RUN_CLOSEOUT_RECORD: ['node scripts/bha-run.js closeout --record --format json'],
+    COMMIT_OR_RESOLVE_UNVERIFIED_WORKTREE_CHANGES: ['git status --short'],
+    MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY: [
+      `node scripts/bha-run.js make-push-payload --remote ${targetRemote} --branch ${targetBranch} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadPath}`,
+      `operator signs ${payloadPath} outside BHA and writes ${signedPath}`,
+      `node scripts/bha-run.js verify-signed-capability --file ${signedPath}`,
+      `node scripts/bha-run.js issue-capability --file ${signedPath}`,
+      `node scripts/bha-run.js consume-capability --id <capability_id> --for git_push --remote ${targetRemote} --branch ${targetBranch}`,
+      `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${targetRemote}`
+    ],
+    ISSUE_AND_CONSUME_A_NEW_SIGNED_GIT_PUSH_CAPABILITY: [
+      `node scripts/bha-run.js make-push-payload --remote ${targetRemote} --branch ${targetBranch} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadPath}`,
+      `operator signs ${payloadPath} outside BHA and writes ${signedPath}`,
+      `node scripts/bha-run.js verify-signed-capability --file ${signedPath}`,
+      `node scripts/bha-run.js issue-capability --file ${signedPath}`,
+      `node scripts/bha-run.js consume-capability --id <capability_id> --for git_push --remote ${targetRemote} --branch ${targetBranch}`
+    ],
+    READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH: [
+      `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${targetRemote}`,
+      `git push ${targetRemote} ${targetBranch}`
+    ]
+  };
+  return commands[action] || [];
 }
 
 async function gateStatus(remote, branch) {
@@ -1961,6 +2095,7 @@ async function gateStatus(remote, branch) {
     matching_run_id_remote_branch_head: capability.ok === true,
     clean_git_status: status.ok === true && status.clean === true
   };
+  const action = nextGateAction(checks, capability);
   return {
     ok: Object.values(checks).every(Boolean),
     status: Object.values(checks).every(Boolean) ? 'READY' : 'BLOCKED',
@@ -1983,7 +2118,13 @@ async function gateStatus(remote, branch) {
       local_only_evidence: ['.bha/local/capabilities.jsonl git_push issue/consume events', '.bha/local/capability-sessions.jsonl push hook USED sessions'],
       reason: 'git_push authorization is local-only so push does not create tracked evidence commits'
     },
-    next_action: nextGateAction(checks, capability)
+    signer_boundary: {
+      operator_controls_signer: true,
+      bha_private_key_access: false,
+      bha_handles_only: ['unsigned payload file under .bha/local/', 'signed payload file under .bha/local/']
+    },
+    next_action: action,
+    next_commands: nextGateCommands(action, remote, branch)
   };
 }
 
@@ -1996,6 +2137,848 @@ async function handleGateStatus(args) {
   const remote = getOption(args, '--remote') || 'origin';
   const branch = getOption(args, '--branch') || await currentBranch();
   console.log(JSON.stringify(await gateStatus(remote, branch)));
+}
+
+function fileContains(file, pattern) {
+  if (!fs.existsSync(file)) {
+    return false;
+  }
+  const text = readText(file);
+  if (pattern instanceof RegExp) {
+    return pattern.test(text);
+  }
+  return text.includes(String(pattern));
+}
+
+function validationCommandById(validation, id) {
+  const commands = validation && Array.isArray(validation.required_commands)
+    ? validation.required_commands
+    : [];
+  return commands.find((command) => command.id === id) || null;
+}
+
+function recordedValidationCommand(state, id) {
+  const commands = state && state.validation && Array.isArray(state.validation.commands)
+    ? state.validation.commands
+    : [];
+  return commands.find((command) => command.id === id) || null;
+}
+
+function policyAllowsArgv(policy, argv) {
+  const allowRules = policy && policy.action_rules && Array.isArray(policy.action_rules.allow)
+    ? policy.action_rules.allow
+    : [];
+  const args = argv.slice(1);
+  return allowRules.some((rule) => {
+    return commandName(rule.command) === commandName(argv[0]) &&
+      ((rule.args && argsMatch(args, rule.args)) ||
+      (rule.args_prefix && argsPrefixMatch(args, rule.args_prefix)));
+  });
+}
+
+function auditCheck(id, requirement, pass, evidence, files) {
+  return {
+    id,
+    requirement,
+    status: pass ? 'PASS' : 'FAIL',
+    evidence: evidence || {},
+    files: files || []
+  };
+}
+
+async function handleAuditV12(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const state = loadState();
+  const policy = loadPolicy();
+  const validation = readJsonStrict(VALIDATION_PATH);
+  const verify = await verifierResult();
+  const gitStatus = await gitStatusShort();
+  const checks = [];
+  const v12Command = validationCommandById(validation, 'v12_regression_selftest');
+  const v12Recorded = recordedValidationCommand(state, 'v12_regression_selftest');
+  const inspectCommand = validationCommandById(validation, 'inspect_readonly');
+  const auditArgv = ['node', 'scripts/bha-run.js', 'audit-v12', '--format', 'json'];
+
+  const regressionIds = [
+    'validation_input_hash_lf_crlf_stable',
+    'missing_local_consumed_capability_fail_closed',
+    'git_push_issue_consume_write_only_bha_local',
+    'issue_consume_leave_tracked_worktree_unchanged',
+    'preflight_read_only_does_not_consume_one_use_capability',
+    'real_hook_reserve_writes_used_session',
+    'replayed_local_capability_rejected',
+    'fresh_clone_without_bha_local_verifier_passes',
+    'provider_call_denied',
+    'memory_write_denied',
+    'deploy_denied',
+    'release_denied',
+    'tag_denied',
+    'package_publish_denied',
+    'production_write_denied',
+    'force_push_denied',
+    'destructive_external_action_denied'
+  ];
+  const missingRegressionIds = regressionIds.filter((id) => !fileContains(RUN_SCRIPT, id));
+  checks.push(auditCheck(
+    'regression_selftest_cases_present',
+    'V1.2 regression self-test contains each named V1.1 safety invariant.',
+    missingRegressionIds.length === 0,
+    { missing_case_ids: missingRegressionIds, case_count: regressionIds.length },
+    ['scripts/bha-run.js']
+  ));
+  checks.push(auditCheck(
+    'regression_selftest_validation_recorded',
+    'Regression self-test is wired into validation and recorded validation evidence includes a passing matching command.',
+    Boolean(v12Command &&
+      v12Recorded &&
+      v12Recorded.status === 'PASS' &&
+      stable(v12Recorded.argv) === stable(v12Command.argv)),
+    {
+      validation_command_present: Boolean(v12Command),
+      recorded_status: v12Recorded ? v12Recorded.status : 'MISSING',
+      validation_status: state.validation ? state.validation.status : 'NOT_RECORDED',
+      validation_inputs_fresh: state.validation ? state.validation.inputs_hash === validationInputsHash() : false
+    },
+    ['.bha/validation.yaml', '.bha/state.json']
+  ));
+  checks.push(auditCheck(
+    'regression_selftest_policy_allowed',
+    'Policy allowlist permits the local-only regression self-test command.',
+    Boolean(v12Command && policyAllowsArgv(policy, v12Command.argv)),
+    { argv: v12Command ? v12Command.argv : null },
+    ['.bha/policy.yaml', '.bha/validation.yaml']
+  ));
+  checks.push(auditCheck(
+    'validation_and_verifier_observable',
+    'Audit captures current verifier and validation state for the operator; final trust still comes from validate plus verifier.',
+    Boolean(verify.parsed &&
+      state.validation &&
+      state.validation.status &&
+      state.validation.ledger_event_hash),
+    {
+      verifier_status: verify.parsed ? verify.parsed.status : 'UNKNOWN',
+      issues: verify.parsed && Array.isArray(verify.parsed.issues) ? verify.parsed.issues.length : 'UNKNOWN',
+      warnings: verify.parsed && Array.isArray(verify.parsed.warnings) ? verify.parsed.warnings.length : 'UNKNOWN',
+      validation_inputs_fresh: state.validation ? state.validation.inputs_hash === validationInputsHash() : false
+    },
+    ['.bha/state.json', '.bha/ledger.jsonl', 'scripts/bha-verify.js']
+  ));
+  checks.push(auditCheck(
+    'current_trust_state_passes_when_fresh',
+    'When the repository is not mid-change, verifier should pass with fresh validation and no warnings.',
+    Boolean((state.validation && state.validation.inputs_hash !== validationInputsHash()) ||
+      (verify.ok &&
+      verify.parsed &&
+      verify.parsed.status === 'PASS' &&
+      Array.isArray(verify.parsed.issues) &&
+      verify.parsed.issues.length === 0 &&
+      Array.isArray(verify.parsed.warnings) &&
+      verify.parsed.warnings.length === 0 &&
+      state.validation &&
+      state.validation.status === 'PASS' &&
+      state.validation.inputs_hash === validationInputsHash())),
+    {
+      verifier_status: verify.parsed ? verify.parsed.status : 'UNKNOWN',
+      issues: verify.parsed && Array.isArray(verify.parsed.issues) ? verify.parsed.issues.length : 'UNKNOWN',
+      warnings: verify.parsed && Array.isArray(verify.parsed.warnings) ? verify.parsed.warnings.length : 'UNKNOWN',
+      validation_inputs_fresh: state.validation ? state.validation.inputs_hash === validationInputsHash() : false
+    },
+    ['.bha/state.json', '.bha/ledger.jsonl', 'scripts/bha-verify.js']
+  ));
+  checks.push(auditCheck(
+    'operator_ux_commands_present',
+    'Codex shell UX exposes inspect, gate-status next commands, signer boundary, and file-based payload handling without private-key custody.',
+    Boolean(inspectCommand &&
+      fileContains(RUN_SCRIPT, 'async function handleInspect') &&
+      fileContains(RUN_SCRIPT, 'next_commands') &&
+      fileContains(RUN_SCRIPT, 'operator_controls_signer') &&
+      fileContains(RUN_SCRIPT, 'bha_private_key_access: false') &&
+      fileContains(RUN_SCRIPT, 'private_key_required: false') &&
+      fileContains(RUN_SCRIPT, 'resolveLocalFile(outPath)')),
+    {
+      inspect_validation_command_present: Boolean(inspectCommand),
+      inspect_recorded_status: recordedValidationCommand(state, 'inspect_readonly') ? recordedValidationCommand(state, 'inspect_readonly').status : 'MISSING'
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml', '.bha/state.json']
+  ));
+  checks.push(auditCheck(
+    'codex_shell_rules_documented',
+    'AGENTS.md tells Codex to prefer BHA shell commands and states AGENTS/prompts are not proof.',
+    fileContains(AGENTS_PATH, 'Codex Trusted Shell Flow') &&
+      fileContains(AGENTS_PATH, 'inspect --format json') &&
+      fileContains(AGENTS_PATH, 'gate-status') &&
+      fileContains(AGENTS_PATH, 'behavior guidance, not proof'),
+    {},
+    ['AGENTS.md']
+  ));
+  checks.push(auditCheck(
+    'resume_and_closeout_fact_boundaries_present',
+    'Checkpoint and closeout expose resume commands, fresh-clone recovery, tracked verifier facts, local-only facts, git reality, skipped validation, risks, and next gates.',
+    fileContains(CHECKPOINT_PATH, 'next_session_commands') &&
+      fileContains(CHECKPOINT_PATH, 'fresh_clone_path') &&
+      fileContains(RUN_SCRIPT, 'fact_groups') &&
+      fileContains(RUN_SCRIPT, 'tracked_verifier_facts') &&
+      fileContains(RUN_SCRIPT, 'local_only_capability_facts') &&
+      fileContains(RUN_SCRIPT, 'git_reality') &&
+      fileContains(RUN_SCRIPT, 'skipped_validation') &&
+      fileContains(RUN_SCRIPT, 'remaining_risks') &&
+      fileContains(RUN_SCRIPT, 'fresh_clone_recovery'),
+    {},
+    ['scripts/bha-run.js', '.bha/checkpoint.json']
+  ));
+  checks.push(auditCheck(
+    'hard_denied_capabilities_policy_present',
+    'Policy continues to deny provider, memory, deploy, release, tag, package publish, production write, force push, and destructive classes.',
+    ['provider_call', 'memory_write', 'deploy', 'release', 'tag', 'package_publish', 'production_write', 'force_push', 'destructive_fs']
+      .every((item) => ((policy.capability_rules || {}).always_denied_v1 || []).includes(item)),
+    { always_denied_v1: (policy.capability_rules || {}).always_denied_v1 || [] },
+    ['.bha/policy.yaml']
+  ));
+  checks.push(auditCheck(
+    'audit_command_policy_and_validation_wired',
+    'The audit command is read-only, allowed by policy, and wired into validation.',
+    Boolean(validationCommandById(validation, 'v12_audit_readonly') &&
+      policyAllowsArgv(policy, auditArgv)),
+    {
+      validation_command_present: Boolean(validationCommandById(validation, 'v12_audit_readonly')),
+      policy_allowed: policyAllowsArgv(policy, auditArgv)
+    },
+    ['.bha/policy.yaml', '.bha/validation.yaml']
+  ));
+
+  const failed = checks.filter((check) => check.status !== 'PASS');
+  const report = {
+    ok: failed.length === 0,
+    status: failed.length === 0 ? 'PASS' : 'FAIL',
+    schema: 'bha.audit.v12.v1',
+    recorded: false,
+    read_only: true,
+    objective: 'BHA V1.2 regression self-test and Codex trusted local shell integration',
+    proof_sources: [
+      '.bha/policy.yaml',
+      '.bha/validation.yaml',
+      '.bha/state.json',
+      '.bha/ledger.jsonl',
+      '.bha/checkpoint.json',
+      'scripts/bha-run.js',
+      'scripts/bha-verify.js',
+      'AGENTS.md',
+      'git status'
+    ],
+    checks,
+    failed: failed.map((check) => check.id),
+    verifier: verify.parsed || { status: 'UNKNOWN' },
+    validation: state.validation ? {
+      status: state.validation.status,
+      inputs_fresh: state.validation.inputs_hash === validationInputsHash(),
+      ledger_event_hash: state.validation.ledger_event_hash || 'NOT_RECORDED'
+    } : 'NOT_RECORDED',
+    git_status: gitStatus.ok ? {
+      clean: gitStatus.clean,
+      short: gitStatus.stdout.trim() || 'CLEAN'
+    } : {
+      clean: 'UNKNOWN',
+      error: gitStatus.error || truncate(gitStatus.stderr) || 'UNKNOWN'
+    },
+    limitations: [
+      'audit-v12 is a read-only evidence index; it does not replace validation or verifier execution',
+      'local-only .bha/local/ push authorization evidence is intentionally not required for fresh-clone verifier trust',
+      'real remote push remains blocked without explicit operator authorization and a fresh signed consumed git_push capability'
+    ]
+  };
+  console.log(JSON.stringify(report));
+  if (!report.ok) {
+    process.exitCode = 1;
+  }
+}
+
+function writeTextFile(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text, 'utf8');
+}
+
+function regressionMission() {
+  return {
+    schema: 'bha.mission.v1',
+    version: '1.0.0',
+    mission_id: 'bha-regression-selftest',
+    run_id: 'bha-regression-selftest',
+    mode: 'dry-run',
+    name: 'BHA regression self-test fixture',
+    objective: 'Verify V1.2 local trust and gate invariants in an isolated local fixture.',
+    denied_paths: ['coverage'],
+    hard_stop_conditions: [
+      'no_remote_side_effects',
+      'no_private_key_access',
+      'no_secret_access'
+    ]
+  };
+}
+
+function regressionPolicy(keyId, publicKeyPem) {
+  return {
+    schema: 'bha.policy.v1',
+    metadata: {
+      policy_id: 'bha-regression-selftest-policy',
+      version: '1.0.0',
+      created_at: '2026-05-16T00:00:00.000Z',
+      mode: 'dry-run',
+      deny_rules_run_before_allow_rules: true
+    },
+    paths: {
+      allowed: [
+        'BHA_DESIGN.md',
+        'AGENTS.md',
+        '.gitignore',
+        '.bha/mission.yaml',
+        '.bha/policy.yaml',
+        '.bha/state.json',
+        '.bha/capabilities.jsonl',
+        '.bha/checkpoint.json',
+        '.bha/ledger.jsonl',
+        '.bha/validation.yaml',
+        '.bha/rollback.md',
+        '.bha/roadmap.md',
+        'scripts/bha-run.js',
+        'scripts/bha-verify.js',
+        '.githooks/pre-push'
+      ],
+      denied: ['coverage'],
+      protected: ['.git', '.codex', '.agents']
+    },
+    actors: {},
+    trusted_public_keys: [{
+      id: keyId,
+      purpose: 'regression-selftest-only',
+      public_key_pem: publicKeyPem
+    }],
+    action_rules: {
+      deny_commands: {
+        network_commands: ['curl', 'wget', 'Invoke-WebRequest', 'Invoke-RestMethod'],
+        provider_commands: ['openai', 'anthropic', 'gemini'],
+        memory_commands: ['codex-memory', 'DailyNote'],
+        git_remote_subcommands: ['push', 'pull', 'fetch', 'clone', 'ls-remote', 'submodule'],
+        destructive_commands: ['rm', 'rmdir', 'del']
+      },
+      allow: [
+        { command: 'git', args: ['diff', '--check'], reason: 'local whitespace validation' },
+        { command: 'git', args: ['status'], reason: 'local repository status inspection' },
+        { command: 'node', args: ['scripts/bha-run.js', 'rollback-drill', '--format', 'json'], reason: 'read-only rollback drill' },
+        { command: 'node', args_prefix: ['scripts/bha-run.js', 'check', '--'], reason: 'nested dry-run policy check' }
+      ]
+    },
+    validation_rules: {},
+    capability_rules: {
+      capability_possible_v1: ['git_push'],
+      always_denied_v1: [
+        'provider_call',
+        'memory_write',
+        'private_key_access',
+        'secret_access',
+        'deploy',
+        'release',
+        'tag',
+        'force_push',
+        'destructive_fs',
+        'production_write',
+        'package_publish'
+      ]
+    },
+    unattended_rules: {},
+    stop_conditions: [
+      'unverified_worktree_change',
+      'stale_validation',
+      'invalid_capability',
+      'denied_path_touched'
+    ]
+  };
+}
+
+function regressionRollbackText() {
+  return [
+    '# Regression Fixture Rollback',
+    '',
+    'This rollback guidance is for local dry-run recovery only.',
+    'Use version control or a known-good local copy to restore .bha/state.json, .bha/ledger.jsonl, and .bha/capabilities.jsonl.',
+    'To stop relying on the local pre-push hook, unset core.hooksPath or remove the pre-push hook path from local git config.',
+    'Do not run `git reset --hard`.',
+    'Do not run `git clean -fd` or `git clean -fdx`.',
+    'Do not run `Remove-Item -Recurse`.',
+    'Do not push, do not tag, do not release, do not deploy, and do not publish.',
+    'Do not read private key material or secrets.'
+  ].join('\n') + '\n';
+}
+
+function buildFixtureLedgerEvent(mission, policy, state, type, payload, prevHash) {
+  const event = {
+    schema: 'bha.ledger.event.v1',
+    run_id: state.run_id || mission.run_id,
+    mission_id: mission.mission_id || null,
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
+    event_id: crypto.randomUUID(),
+    ts: new Date().toISOString(),
+    type,
+    actor: 'bha-regression-selftest',
+    prev_hash: prevHash || 'GENESIS',
+    payload: JSON.parse(JSON.stringify(payload))
+  };
+  event.event_hash = eventHash(event);
+  return event;
+}
+
+function falseExternalEffects() {
+  return {
+    real_git_push_executed: false,
+    git_tag_executed: false,
+    release_executed: false,
+    deploy_executed: false,
+    provider_call_executed: false,
+    memory_write_executed: false,
+    network_call_executed: false,
+    package_install_executed: false,
+    git_directory_write: false,
+    private_key_repo_write: false
+  };
+}
+
+function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem) {
+  const mission = regressionMission();
+  const policy = regressionPolicy(keyId, publicKeyPem);
+  const validation = {
+    schema: 'bha.validation.v1',
+    version: '1.2.0-regression-fixture',
+    required_commands: [{
+      id: 'rollback_drill_readonly',
+      argv: ['node', 'scripts/bha-run.js', 'rollback-drill', '--format', 'json'],
+      expect: { exit_code: 0, ok: true, status: 'PASS' }
+    }]
+  };
+  writeTextFile(path.join(fixtureRoot, '.gitignore'), '.bha/local/\n');
+  writeTextFile(path.join(fixtureRoot, 'AGENTS.md'), '# Regression Fixture\n\nAGENTS.md guides behavior and is not proof.\n');
+  writeTextFile(path.join(fixtureRoot, 'BHA_DESIGN.md'), '# Regression Fixture Design\n\nLocal deterministic evidence fixture.\n');
+  writeTextFile(path.join(fixtureRoot, '.bha', 'roadmap.md'), '# Regression Fixture Roadmap\n\nKeep proof local and deterministic.\n');
+  writeTextFile(path.join(fixtureRoot, '.bha', 'rollback.md'), regressionRollbackText());
+  writeTextFile(path.join(fixtureRoot, '.githooks', 'pre-push'), '#!/bin/sh\nnode scripts/bha-run.js prepush-check --internal-git-hook "$@"\n');
+  fs.mkdirSync(path.join(fixtureRoot, 'scripts'), { recursive: true });
+  fs.copyFileSync(RUN_SCRIPT, path.join(fixtureRoot, 'scripts', 'bha-run.js'));
+  fs.copyFileSync(VERIFY_SCRIPT, path.join(fixtureRoot, 'scripts', 'bha-verify.js'));
+  writeJson(path.join(fixtureRoot, '.bha', 'mission.yaml'), mission);
+  writeJson(path.join(fixtureRoot, '.bha', 'policy.yaml'), policy);
+  writeJson(path.join(fixtureRoot, '.bha', 'validation.yaml'), validation);
+  writeTextFile(path.join(fixtureRoot, '.bha', 'capabilities.jsonl'), '');
+
+  const validationInputs = validationInputsHashForRoot(fixtureRoot);
+  const commandRecord = {
+    id: 'rollback_drill_readonly',
+    argv: ['node', 'scripts/bha-run.js', 'rollback-drill', '--format', 'json'],
+    expect: { exit_code: 0, ok: true, status: 'PASS' },
+    decision: 'ALLOW',
+    allowed: true,
+    rule: 'ALLOW_EXACT',
+    category: 'local',
+    reason: 'read-only rollback drill',
+    spawned: true,
+    status: 'PASS',
+    problems: [],
+    exit_code: 0,
+    signal: null,
+    error: null
+  };
+  const state = {
+    schema: 'bha.state.v1',
+    version: '1.0.0',
+    run_id: mission.run_id,
+    updated_at: new Date().toISOString(),
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
+    ledger_head_hash: 'GENESIS',
+    ledger_event_count: 0,
+    validation: {
+      status: 'PASS',
+      completed_at: new Date().toISOString(),
+      inputs_hash: validationInputs,
+      policy_hash: policyHash(policy),
+      mission_hash: missionHash(mission),
+      ledger_event_hash: 'PENDING',
+      commands: [commandRecord]
+    },
+    capability_selftest: {
+      status: 'PASS',
+      completed_at: new Date().toISOString(),
+      mode: 'regression-fixture',
+      key_id: keyId,
+      public_key_recorded: true,
+      private_key_repo_write: false,
+      capability_positive_path: { status: 'PASS' },
+      prepush_authorized_simulation: { status: 'PASS', real_git_push_executed: false },
+      negative_capability_tests: {},
+      external_effects: falseExternalEffects()
+    }
+  };
+  const validationEvent = buildFixtureLedgerEvent(mission, policy, state, 'validation_completed', {
+    status: 'PASS',
+    completed_at: state.validation.completed_at,
+    inputs_hash: validationInputs,
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
+    commands: [commandRecord]
+  }, 'GENESIS');
+  state.validation.ledger_event_hash = validationEvent.event_hash;
+
+  const checkpoint = {
+    schema: 'bha.checkpoint.v1',
+    checkpoint_id: `checkpoint-${crypto.randomUUID()}`,
+    created_at: new Date().toISOString(),
+    run_id: state.run_id,
+    actor_id: 'bha-regression-selftest',
+    goal: {
+      mission_id: mission.mission_id,
+      name: mission.name,
+      objective: mission.objective,
+      mission_hash: missionHash(mission)
+    },
+    phase: 'checkpoint',
+    workspace: '.',
+    branch: 'UNKNOWN',
+    head: 'UNKNOWN',
+    ledger_head_hash: validationEvent.event_hash,
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
+    completed: ['rollback_drill_readonly'],
+    changed_files: [],
+    validation_run: {
+      status: 'PASS',
+      completed_at: state.validation.completed_at,
+      ledger_event_hash: validationEvent.event_hash,
+      command_count: 1
+    },
+    validation_not_run: [],
+    verifier_status: 'PASS',
+    verifier_ledger_head_hash: validationEvent.event_hash,
+    blockers: [],
+    risks: ['regression fixture is local-only'],
+    next_safe_action: 'Run verifier or gate-status in the fixture.',
+    resume: {
+      next_session_commands: ['node scripts/bha-run.js inspect --format json', 'node scripts/bha-verify.js'],
+      fresh_clone_path: ['node scripts/bha-verify.js'],
+      local_only_gate_evidence: '.bha/local/ is intentionally absent in fresh clones.'
+    },
+    stop_conditions: mission.hard_stop_conditions,
+    checkpoint_binding: {
+      verified_ledger_head_hash: validationEvent.event_hash,
+      checkpoint_event_hash: 'SELF_EVENT_HASH',
+      final_ledger_head_hash: 'SELF_EVENT_HASH'
+    },
+    ledger_event_hash: 'PENDING'
+  };
+  const checkpointEvent = buildFixtureLedgerEvent(mission, policy, state, 'checkpoint_written', checkpoint, validationEvent.event_hash);
+  checkpoint.ledger_event_hash = checkpointEvent.event_hash;
+  checkpoint.created_at = checkpointEvent.ts;
+  checkpoint.checkpoint_binding.checkpoint_event_hash = checkpointEvent.event_hash;
+  checkpoint.checkpoint_binding.final_ledger_head_hash = checkpointEvent.event_hash;
+
+  const closeoutPayload = {
+    schema: 'bha.closeout.v1',
+    status: 'PASS',
+    mode: 'recorded',
+    run_id: state.run_id,
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
+    verifier_status: 'PASS',
+    validation_status: 'PASS',
+    verifier_warnings: [],
+    validation_ledger_event_hash: validationEvent.event_hash,
+    unsupported_claims: [],
+    unknowns: [],
+    closeout_binding: {
+      verified_ledger_head_hash: checkpointEvent.event_hash,
+      closeout_event_hash: 'SELF_EVENT_HASH',
+      final_ledger_head_hash: 'SELF_EVENT_HASH',
+      verifier_status_applies_to: 'verified_ledger_head_hash'
+    },
+    changed_files: [],
+    external_effects: { source: 'regression_fixture', forbidden_spawned: false, denied_before_spawn_events: 0, forbidden_spawned_events: [], selftest: falseExternalEffects() },
+    capability_summary: { events: 0, local_only_events: 0 }
+  };
+  const closeoutEvent = buildFixtureLedgerEvent(mission, policy, state, 'closeout_completed', closeoutPayload, checkpointEvent.event_hash);
+  state.ledger_head_hash = closeoutEvent.event_hash;
+  state.ledger_event_count = 3;
+  state.updated_at = closeoutEvent.ts;
+  state.last_checkpoint = {
+    checkpoint_id: checkpoint.checkpoint_id,
+    created_at: checkpointEvent.ts,
+    ledger_event_hash: checkpointEvent.event_hash,
+    verified_ledger_head_hash: validationEvent.event_hash,
+    checkpoint_event_hash: checkpointEvent.event_hash,
+    final_ledger_head_hash: checkpointEvent.event_hash,
+    path: '.bha/checkpoint.json',
+    policy_hash: checkpointEvent.policy_hash,
+    mission_hash: checkpointEvent.mission_hash
+  };
+  state.last_checkpoint_id = checkpoint.checkpoint_id;
+  state.closeout = {
+    status: 'PASS',
+    completed_at: closeoutEvent.ts,
+    ledger_event_hash: closeoutEvent.event_hash,
+    verified_ledger_head_hash: checkpointEvent.event_hash,
+    closeout_event_hash: closeoutEvent.event_hash,
+    final_ledger_head_hash: closeoutEvent.event_hash,
+    validation_ledger_event_hash: validationEvent.event_hash,
+    policy_hash: closeoutEvent.policy_hash,
+    mission_hash: closeoutEvent.mission_hash
+  };
+
+  writeTextFile(path.join(fixtureRoot, '.bha', 'ledger.jsonl'), [validationEvent, checkpointEvent, closeoutEvent].map(stable).join('\n') + '\n');
+  writeJson(path.join(fixtureRoot, '.bha', 'state.json'), state);
+  writeJson(path.join(fixtureRoot, '.bha', 'checkpoint.json'), checkpoint);
+}
+
+async function regressionGitStatus(root) {
+  const result = await runCommand(['git', 'status', '--short', '--untracked-files=no'], { cwd: root });
+  return result.exit_code === 0 && !result.error ? result.stdout.trim() : `ERROR:${result.error || result.stderr.trim()}`;
+}
+
+function localSessionEvents(root) {
+  const file = path.join(root, '.bha', 'local', 'capability-sessions.jsonl');
+  if (!fs.existsSync(file)) {
+    return [];
+  }
+  return readText(file).split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line));
+}
+
+async function runFixtureBha(root, args) {
+  const result = await runCommand([process.execPath, 'scripts/bha-run.js'].concat(args), { cwd: root });
+  return Object.assign({}, result, { parsed: parseJsonLine(result.stdout) });
+}
+
+function regressionCheck(id, pass, evidence) {
+  return {
+    id,
+    status: pass ? 'PASS' : 'FAIL',
+    evidence: evidence || {}
+  };
+}
+
+async function handleRegressionSelftest(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const mainTrackedBefore = await regressionGitStatus(ROOT);
+  const keyId = `regression-selftest-${crypto.randomUUID()}`;
+  const keypair = crypto.generateKeyPairSync('ed25519');
+  const publicKeyPem = keypair.publicKey.export({ type: 'spki', format: 'pem' });
+  const scratchParent = path.join(BHA_LOCAL_DIR, 'regression-selftest');
+  const fixtureRoot = path.join(scratchParent, new Date().toISOString().replace(/[:.]/g, '-') + '-' + crypto.randomUUID());
+  fs.mkdirSync(fixtureRoot, { recursive: true });
+  writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem);
+
+  const checks = [];
+  const lf = 'alpha\nbeta\n';
+  const crlf = 'alpha\r\nbeta\r\n';
+  checks.push(regressionCheck('validation_input_hash_lf_crlf_stable', sha256(canonicalText(lf)) === sha256(canonicalText(crlf)), {
+    lf_hash: sha256(canonicalText(lf)),
+    crlf_hash: sha256(canonicalText(crlf))
+  }));
+
+  const gitInit = await runCommand(['git', 'init'], { cwd: fixtureRoot });
+  const gitConfigEmail = await runCommand(['git', 'config', 'user.email', 'bha-regression@example.invalid'], { cwd: fixtureRoot });
+  const gitConfigName = await runCommand(['git', 'config', 'user.name', 'BHA Regression'], { cwd: fixtureRoot });
+  const gitAdd = await runCommand(['git', 'add', '.'], { cwd: fixtureRoot });
+  const gitCommit = await runCommand(['git', 'commit', '-m', 'regression fixture'], { cwd: fixtureRoot });
+  const gitRemote = await runCommand(['git', 'remote', 'add', 'origin', 'https://example.invalid/bha-regression.git'], { cwd: fixtureRoot });
+  checks.push(regressionCheck('fixture_git_repository_ready', [gitInit, gitConfigEmail, gitConfigName, gitAdd, gitCommit, gitRemote].every((item) => item.exit_code === 0 && !item.error), {
+    init: gitInit.exit_code,
+    commit: gitCommit.exit_code,
+    remote: gitRemote.exit_code
+  }));
+
+  const branchResult = await runCommand(['git', 'branch', '--show-current'], { cwd: fixtureRoot });
+  const branch = branchResult.stdout.trim() || 'master';
+  const verifyFixture = await runCommand([process.execPath, 'scripts/bha-verify.js'], { cwd: fixtureRoot });
+  const verifyParsed = parseJsonLine(verifyFixture.stdout);
+  checks.push(regressionCheck('fixture_verifier_passes_before_gate_flow', verifyFixture.exit_code === 0 && verifyParsed && verifyParsed.status === 'PASS', {
+    status: verifyParsed ? verifyParsed.status : 'NO_JSON',
+    exit_code: verifyFixture.exit_code
+  }));
+
+  const missingCapabilityPreflight = await runFixtureBha(fixtureRoot, ['prepush-check', '--preflight', '--internal-git-hook', 'origin']);
+  checks.push(regressionCheck('missing_local_consumed_capability_fail_closed', missingCapabilityPreflight.exit_code === 1 &&
+    missingCapabilityPreflight.parsed &&
+    missingCapabilityPreflight.parsed.status === 'FAIL_CLOSED' &&
+    missingCapabilityPreflight.parsed.reason === 'NO_VALID_CONSUMED_GIT_PUSH_CAPABILITY', {
+    reason: missingCapabilityPreflight.parsed ? missingCapabilityPreflight.parsed.reason : 'NO_JSON'
+  }));
+
+  const makePayload = await runFixtureBha(fixtureRoot, [
+    'make-push-payload',
+    '--remote',
+    'origin',
+    '--branch',
+    branch,
+    '--expires-minutes',
+    '20',
+    '--key-id',
+    keyId,
+    '--out',
+    '.bha/local/push-payload.json'
+  ]);
+  const payloadPath = path.join(fixtureRoot, '.bha', 'local', 'push-payload.json');
+  const unsignedPayload = readJsonStrict(payloadPath);
+  const signedPayload = signCapabilityPayload(unsignedPayload, keypair.privateKey);
+  const signedPath = path.join(fixtureRoot, '.bha', 'local', 'signed-push-capability.json');
+  writeTextFile(signedPath, JSON.stringify(signedPayload) + '\n');
+  checks.push(regressionCheck('unsigned_payload_written_local_only', makePayload.exit_code === 0 &&
+    makePayload.parsed &&
+    makePayload.parsed.payload_path === '.bha/local/push-payload.json', {
+    payload_path: makePayload.parsed ? makePayload.parsed.payload_path : 'NO_JSON'
+  }));
+
+  const trackedBeforeIssue = await regressionGitStatus(fixtureRoot);
+  const verifySigned = await runFixtureBha(fixtureRoot, ['verify-signed-capability', '--file', '.bha/local/signed-push-capability.json']);
+  const issue = await runFixtureBha(fixtureRoot, ['issue-capability', '--file', '.bha/local/signed-push-capability.json']);
+  const trackedAfterIssue = await regressionGitStatus(fixtureRoot);
+  const consume = await runFixtureBha(fixtureRoot, [
+    'consume-capability',
+    '--id',
+    signedPayload.capability_id,
+    '--for',
+    'git_push',
+    '--remote',
+    'origin',
+    '--branch',
+    branch
+  ]);
+  const trackedAfterConsume = await regressionGitStatus(fixtureRoot);
+  checks.push(regressionCheck('git_push_issue_consume_write_only_bha_local', verifySigned.exit_code === 0 &&
+    issue.exit_code === 0 &&
+    consume.exit_code === 0 &&
+    issue.parsed &&
+    consume.parsed &&
+    issue.parsed.local_only === true &&
+    consume.parsed.local_only === true &&
+    issue.parsed.capability_store === '.bha/local/capabilities.jsonl' &&
+    consume.parsed.capability_store === '.bha/local/capabilities.jsonl', {
+    issue_store: issue.parsed ? issue.parsed.capability_store : 'NO_JSON',
+    consume_store: consume.parsed ? consume.parsed.capability_store : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('issue_consume_leave_tracked_worktree_unchanged', trackedBeforeIssue === trackedAfterIssue && trackedAfterIssue === trackedAfterConsume, {
+    before: trackedBeforeIssue || 'CLEAN',
+    after_issue: trackedAfterIssue || 'CLEAN',
+    after_consume: trackedAfterConsume || 'CLEAN'
+  }));
+
+  const sessionsBeforePreflight = localSessionEvents(fixtureRoot).length;
+  const preflight = await runFixtureBha(fixtureRoot, ['prepush-check', '--preflight', '--internal-git-hook', 'origin']);
+  const sessionsAfterPreflight = localSessionEvents(fixtureRoot).length;
+  checks.push(regressionCheck('preflight_read_only_does_not_consume_one_use_capability', preflight.exit_code === 0 &&
+    preflight.parsed &&
+    preflight.parsed.status === 'ALLOW' &&
+    preflight.parsed.preflight === true &&
+    preflight.parsed.read_only === true &&
+    sessionsBeforePreflight === sessionsAfterPreflight, {
+    sessions_before: sessionsBeforePreflight,
+    sessions_after: sessionsAfterPreflight
+  }));
+
+  const hookReserve = await runFixtureBha(fixtureRoot, ['prepush-check', '--internal-git-hook', 'origin']);
+  const sessionsAfterReserve = localSessionEvents(fixtureRoot);
+  const usedSession = sessionsAfterReserve.find((event) => event.payload && event.payload.status === 'USED' && event.payload.capability_id === signedPayload.capability_id);
+  checks.push(regressionCheck('real_hook_reserve_writes_used_session', hookReserve.exit_code === 0 &&
+    hookReserve.parsed &&
+    hookReserve.parsed.status === 'ALLOW' &&
+    usedSession &&
+    usedSession.local_only === true, {
+    sessions_after: sessionsAfterReserve.length,
+    used_capability_id: usedSession && usedSession.payload ? usedSession.payload.capability_id : null
+  }));
+
+  const replay = await runFixtureBha(fixtureRoot, ['prepush-check', '--preflight', '--internal-git-hook', 'origin']);
+  checks.push(regressionCheck('replayed_local_capability_rejected', replay.exit_code === 1 &&
+    replay.parsed &&
+    replay.parsed.status === 'FAIL_CLOSED' &&
+    replay.parsed.reason === 'CAPABILITY_REPLAY_DETECTED', {
+    reason: replay.parsed ? replay.parsed.reason : 'NO_JSON'
+  }));
+
+  const cloneRoot = path.join(scratchParent, `fresh-clone-${crypto.randomUUID()}`);
+  const clone = await runCommand(['git', 'clone', fixtureRoot, cloneRoot], { cwd: scratchParent });
+  const cloneVerify = await runCommand([process.execPath, 'scripts/bha-verify.js'], { cwd: cloneRoot });
+  const cloneVerifyParsed = parseJsonLine(cloneVerify.stdout);
+  checks.push(regressionCheck('fresh_clone_without_bha_local_verifier_passes', clone.exit_code === 0 &&
+    cloneVerify.exit_code === 0 &&
+    cloneVerifyParsed &&
+    cloneVerifyParsed.status === 'PASS' &&
+    !fs.existsSync(path.join(cloneRoot, '.bha', 'local')), {
+    clone_exit_code: clone.exit_code,
+    verifier_status: cloneVerifyParsed ? cloneVerifyParsed.status : 'NO_JSON',
+    bha_local_exists: fs.existsSync(path.join(cloneRoot, '.bha', 'local'))
+  }));
+
+  const deniedCases = [
+    ['provider_call_denied', ['openai', 'models', 'list']],
+    ['memory_write_denied', ['codex-memory', 'write']],
+    ['deploy_denied', ['kubectl', 'apply', '-f', 'production.yaml']],
+    ['release_denied', ['gh', 'release', 'create']],
+    ['tag_denied', ['git', 'tag', 'v0.0.0']],
+    ['package_publish_denied', ['npm', 'publish']],
+    ['production_write_denied', ['psql', 'production', '-c', 'update']],
+    ['force_push_denied', ['git', 'push', '--force', 'origin', branch]],
+    ['destructive_external_action_denied', ['rm', '-rf', 'external']]
+  ];
+  const deniedResults = [];
+  for (const [id, argv] of deniedCases) {
+    const result = await runFixtureBha(fixtureRoot, ['check', '--'].concat(argv));
+    const pass = result.exit_code === 0 &&
+      result.parsed &&
+      result.parsed.decision === 'DENY' &&
+      result.parsed.spawned === false;
+    deniedResults.push({
+      id,
+      argv,
+      status: pass ? 'PASS' : 'FAIL',
+      decision: result.parsed ? result.parsed.decision : 'NO_JSON',
+      rule: result.parsed ? result.parsed.rule : null
+    });
+    checks.push(regressionCheck(id, pass, deniedResults[deniedResults.length - 1]));
+  }
+
+  const mainTrackedAfter = await regressionGitStatus(ROOT);
+  const ok = checks.every((check) => check.status === 'PASS');
+  const report = {
+    ok,
+    status: ok ? 'PASS' : 'FAIL',
+    schema: 'bha.regression_selftest.v1',
+    recorded: false,
+    read_only: false,
+    local_only_writes: true,
+    tracked_repo_write: mainTrackedBefore !== mainTrackedAfter,
+    fixture: {
+      root: rel(fixtureRoot),
+      fresh_clone: rel(cloneRoot),
+      private_key_repo_write: false,
+      signer: 'ephemeral in-memory self-test keypair; BHA does not read operator private keys'
+    },
+    checks,
+    denied_capabilities: deniedResults,
+    hard_boundaries: [
+      'regression-selftest writes only under .bha/local/ in the real repository',
+      'fixture git operations are local-only and do not push, fetch, deploy, release, tag, publish, call providers, or write production',
+      'private key material is generated in memory for the isolated fixture and is not printed, stored, or recorded'
+    ]
+  };
+  console.log(JSON.stringify(report));
+  if (!ok) {
+    process.exitCode = 1;
+  }
 }
 
 async function runCapabilityIssue(payload) {
@@ -2381,6 +3364,21 @@ async function handleCheckpoint(args) {
       'checkpoint is resumable evidence, not proof of external-world side effects'
     ],
     next_safe_action: 'Continue local v1 kernel hardening; do not perform remote writes without explicit authorization and a valid consumed git_push capability.',
+    resume: {
+      next_session_commands: [
+        'node scripts/bha-run.js inspect --format json',
+        'node scripts/bha-verify.js',
+        `node scripts/bha-run.js gate-status --remote origin --branch ${branch || 'master'} --format json`
+      ],
+      fresh_clone_path: [
+        'node scripts/bha-verify.js',
+        'if verifier is not PASS because tracked evidence is stale: node scripts/bha-run.js validate',
+        'node scripts/bha-run.js checkpoint --format json',
+        'node scripts/bha-run.js closeout --record --format json',
+        'node scripts/bha-verify.js'
+      ],
+      local_only_gate_evidence: '.bha/local/ is intentionally not required for tracked verifier trust and is required only for a real git_push gate'
+    },
     stop_conditions: mission.hard_stop_conditions || [],
     checkpoint_binding: {
       verified_ledger_head_hash: head.hash || 'GENESIS',
@@ -2534,6 +3532,54 @@ async function handleCloseout(args) {
       status: 'UNKNOWN',
       error: verify.error || truncate(verify.stderr) || 'UNKNOWN'
     },
+    fact_groups: {
+      tracked_verifier_facts: {
+        source: ['.bha/ledger.jsonl', '.bha/state.json', '.bha/policy.yaml', '.bha/mission.yaml', '.bha/validation.yaml', 'scripts/bha-verify.js'],
+        verifier_status: verify.parsed ? verify.parsed.status : 'UNKNOWN',
+        verifier_ledger_head_hash: verifiedLedgerHeadHash,
+        validation_status: validationStatus || 'NOT_RECORDED'
+      },
+      local_only_capability_facts: {
+        source: ['.bha/local/capabilities.jsonl', '.bha/local/capability-sessions.jsonl'],
+        required_for_tracked_verifier_pass: false,
+        summary: capabilitySummary
+      },
+      git_reality: gitStatus.ok ? {
+        branch: await currentBranch() || 'UNKNOWN',
+        head: await currentHead() || 'UNKNOWN',
+        clean: gitStatus.clean,
+        short: gitStatus.stdout.trim() || 'CLEAN'
+      } : {
+        branch: 'UNKNOWN',
+        head: 'UNKNOWN',
+        clean: 'UNKNOWN'
+      },
+      skipped_validation: state && state.validation && Array.isArray(state.validation.commands)
+        ? state.validation.commands.filter((command) => command.status !== 'PASS').map((command) => command.id)
+        : ['VALIDATION_NOT_RECORDED'],
+      remaining_risks: [
+        'local-only git_push authorization evidence is not present in fresh clones',
+        'remote push still requires explicit operator action and a valid one-use consumed capability',
+        'BHA local evidence is not a remote attestation or OS-level sandbox'
+      ],
+      next_gates: [
+        'node scripts/bha-run.js validate',
+        'node scripts/bha-verify.js',
+        'node scripts/bha-run.js checkpoint --format json',
+        'node scripts/bha-run.js closeout --record --format json',
+        'node scripts/bha-run.js gate-status --remote origin --branch master --format json'
+      ]
+    },
+    fresh_clone_recovery: {
+      tracked_trust_without_local_gate_evidence: 'node scripts/bha-verify.js',
+      if_tracked_evidence_is_stale: [
+        'node scripts/bha-run.js validate',
+        'node scripts/bha-run.js checkpoint --format json',
+        'node scripts/bha-run.js closeout --record --format json',
+        'node scripts/bha-verify.js'
+      ],
+      note: '.bha/local/ is intentionally absent in a fresh clone and is not required for verifier PASS.'
+    },
     unknowns,
     unsupported_claims: unsupportedClaims,
     verifier_warnings: verifierWarnings,
@@ -2595,7 +3641,9 @@ async function handleCloseout(args) {
       },
       changed_files: changedFiles,
       external_effects: report.external_effects,
-      capability_summary: capabilitySummary
+      capability_summary: capabilitySummary,
+      fact_groups: report.fact_groups,
+      fresh_clone_recovery: report.fresh_clone_recovery
     };
     const event = appendLedger('closeout_completed', closeoutPayload, (nextState, closeoutEvent) => {
       nextState.closeout = {
@@ -2639,6 +3687,8 @@ async function main() {
       await handleCheck(args);
     } else if (command === 'exec') {
       await handleExec(args);
+    } else if (command === 'inspect') {
+      await handleInspect(args);
     } else if (command === 'validate') {
       await handleValidate();
     } else if (command === 'verify') {
@@ -2665,6 +3715,10 @@ async function main() {
       await handlePrepushCheck(args);
     } else if (command === 'gate-status') {
       await handleGateStatus(args);
+    } else if (command === 'audit-v12') {
+      await handleAuditV12(args);
+    } else if (command === 'regression-selftest') {
+      await handleRegressionSelftest(args);
     } else {
       console.log(JSON.stringify({ ok: false, error: `unknown subcommand: ${command || 'NONE'}` }));
       process.exitCode = 2;
