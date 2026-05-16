@@ -180,6 +180,16 @@ function capabilityRevoked(capabilities, id) {
   });
 }
 
+function capabilityUsed(capabilities, id) {
+  return capabilities.some((event) => {
+    return event.type === 'capability_session' &&
+      event.payload &&
+      event.payload.capability_id === id &&
+      event.payload.valid === true &&
+      event.payload.status === 'USED';
+  });
+}
+
 function capabilityTypeFromRequest(requested) {
   return String((requested || {}).type || (requested || {}).for || (requested || {}).capability || '').trim();
 }
@@ -666,7 +676,7 @@ function verifyCapabilityIssue(event, policy, state, capabilities, ledger, issue
   if (requested.one_use !== true) {
     issues.push({ code: 'CAPABILITY_ONE_USE_REQUIRED', severity: 'FAIL', message: 'valid capability is not one_use', event_hash: event.event_hash });
   }
-  if (isExpired(requested.expires_at)) {
+  if (isExpired(requested.expires_at) && !capabilityUsed(capabilities, payload.capability_id)) {
     issues.push({ code: 'CAPABILITY_EXPIRED', severity: 'FAIL', message: 'valid capability is expired', event_hash: event.event_hash });
   }
   if (capabilityRevoked(capabilities, payload.capability_id)) {
