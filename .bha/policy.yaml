@@ -23,6 +23,11 @@
         "purpose": "owner",
         "public_key_ssh": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJTg5qkSnODbPROQRoG5cN9IvWzGMNA7b7n1lNRUEe40 bha-owner-main",
         "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAlODmqRKc4Ns9E5BGgblw30i9bMYw0DtvufWU1FQR7jQ=\n-----END PUBLIC KEY-----\n"
+      },
+      {
+        "id": "owner-main-pkcs8",
+        "purpose": "owner",
+        "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXpOUyByOzjciCDCYRwej8t0ZB6P8S5oTKmBpiZndSZc=\n-----END PUBLIC KEY-----\n"
       }
     ],
     "disallowed_types": [
