@@ -14,6 +14,7 @@ const POLICY_PATH = path.join(BHA_DIR, 'policy.yaml');
 const STATE_PATH = path.join(BHA_DIR, 'state.json');
 const LEDGER_PATH = path.join(BHA_DIR, 'ledger.jsonl');
 const CAPABILITIES_PATH = path.join(BHA_DIR, 'capabilities.jsonl');
+const LOCAL_CAPABILITIES_PATH = path.join(BHA_LOCAL_DIR, 'capabilities.jsonl');
 const LOCAL_CAPABILITY_SESSIONS_PATH = path.join(BHA_LOCAL_DIR, 'capability-sessions.jsonl');
 const VALIDATION_PATH = path.join(BHA_DIR, 'validation.yaml');
 const ROLLBACK_PATH = path.join(BHA_DIR, 'rollback.md');
@@ -1074,7 +1075,7 @@ function capabilityHash(event) {
   return sha256(stable(copy));
 }
 
-function appendCapabilityEvent(type, payload) {
+function buildCapabilityEvent(type, payload, localOnly) {
   const mission = loadMission();
   const policy = loadPolicy();
   const event = {
@@ -1088,7 +1089,15 @@ function appendCapabilityEvent(type, payload) {
     type,
     payload
   };
+  if (localOnly) {
+    event.local_only = true;
+  }
   event.event_hash = capabilityHash(event);
+  return event;
+}
+
+function appendCapabilityEvent(type, payload) {
+  const event = buildCapabilityEvent(type, payload, false);
   fs.appendFileSync(CAPABILITIES_PATH, stable(event) + '\n', 'utf8');
   appendLedger(`capability_${type}`, {
     capability_event_hash: event.event_hash,
@@ -1100,22 +1109,15 @@ function appendCapabilityEvent(type, payload) {
   return event;
 }
 
+function appendLocalCapabilityEvent(type, payload) {
+  const event = buildCapabilityEvent(type, payload, true);
+  fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
+  fs.appendFileSync(LOCAL_CAPABILITIES_PATH, stable(event) + '\n', 'utf8');
+  return event;
+}
+
 function appendLocalCapabilitySession(payload) {
-  const mission = loadMission();
-  const policy = loadPolicy();
-  const event = {
-    schema: 'bha.capability.event.v1',
-    run_id: loadState().run_id,
-    mission_id: mission.mission_id || null,
-    policy_hash: policyHash(policy),
-    mission_hash: missionHash(mission),
-    event_id: crypto.randomUUID(),
-    ts: new Date().toISOString(),
-    type: 'capability_session',
-    local_only: true,
-    payload
-  };
-  event.event_hash = capabilityHash(event);
+  const event = buildCapabilityEvent('capability_session', payload, true);
   fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
   fs.appendFileSync(LOCAL_CAPABILITY_SESSIONS_PATH, stable(event) + '\n', 'utf8');
   return event;
@@ -1129,8 +1131,12 @@ function readLocalCapabilitySessions() {
   return readJsonl(LOCAL_CAPABILITY_SESSIONS_PATH);
 }
 
+function readLocalCapabilityEvents() {
+  return readJsonl(LOCAL_CAPABILITIES_PATH);
+}
+
 function readCapabilityEventsWithLocalSessions() {
-  return readCapabilityEvents().concat(readLocalCapabilitySessions());
+  return readCapabilityEvents().concat(readLocalCapabilityEvents()).concat(readLocalCapabilitySessions());
 }
 
 function findCapabilityIssue(events, id) {
@@ -1208,6 +1214,8 @@ async function handleIssueCapability(args) {
   const valid = validation.valid === true;
   const status = valid ? 'VALID' : 'INVALID';
   const reason = validation.reason;
+  const localOnly = type === 'git_push';
+  const capabilityStore = localOnly ? '.bha/local/capabilities.jsonl' : '.bha/capabilities.jsonl';
   if (!valid) {
     console.log(JSON.stringify({
       ok: false,
@@ -1220,12 +1228,20 @@ async function handleIssueCapability(args) {
       head: validation.head,
       ledger_head_hash: validation.ledger_head_hash,
       recorded: false,
-      capability_store: '.bha/capabilities.jsonl'
+      capability_store: capabilityStore,
+      local_only: localOnly
     }));
     process.exitCode = 2;
     return;
   }
-  const event = appendCapabilityEvent('capability_issue', {
+  const event = localOnly ? appendLocalCapabilityEvent('capability_issue', {
+    capability_id: id,
+    requested: payload,
+    capability_type: type || 'UNKNOWN',
+    valid,
+    status,
+    reason
+  }) : appendCapabilityEvent('capability_issue', {
     capability_id: id,
     requested: payload,
     capability_type: type || 'UNKNOWN',
@@ -1239,7 +1255,8 @@ async function handleIssueCapability(args) {
     valid,
     status,
     reason,
-    capability_store: '.bha/capabilities.jsonl',
+    capability_store: capabilityStore,
+    local_only: localOnly,
     event_hash: event.event_hash
   }));
   if (!valid) {
@@ -1318,7 +1335,7 @@ async function buildPushPayload(remote, branch, keyId, expiresMinutes) {
   const policy = loadPolicy();
   const mission = loadMission();
   const capabilityPrefix = `push-${remote}-${branch}-${head.slice(0, 7)}`;
-  const existingSerials = readCapabilityEvents()
+  const existingSerials = readCapabilityEventsWithLocalSessions()
     .map((event) => event && event.payload ? String(event.payload.capability_id || '') : '')
     .filter((id) => id.startsWith(`${capabilityPrefix}-`))
     .map((id) => Number(id.slice(capabilityPrefix.length + 1)))
@@ -1448,11 +1465,13 @@ async function handleGitPushCapabilityFlow(args) {
       {
         id: 'issue_capability',
         status: 'WAITING_FOR_SIGNED_PAYLOAD',
+        evidence_store: '.bha/local/capabilities.jsonl',
         argv_prefix: ['node', 'scripts/bha-run.js', 'issue-capability', '--json']
       },
       {
         id: 'consume_capability',
         status: 'WAITING_FOR_ISSUED_CAPABILITY',
+        evidence_store: '.bha/local/capabilities.jsonl',
         argv: ['node', 'scripts/bha-run.js', 'consume-capability', '--id', built.payload.capability_id, '--for', 'git_push', '--remote', remote, '--branch', branch]
       },
       {
@@ -1464,6 +1483,7 @@ async function handleGitPushCapabilityFlow(args) {
     hard_boundaries: [
       'private key material is never read, printed, stored, or written by BHA',
       'capability authorizes only git_push for the exact remote, branch, head, policy_hash, mission_hash, and ledger_head_hash',
+      'git_push issue, consume, and USED evidence are local-only so push does not dirty tracked repository files',
       'prepush-check remains fail-closed without a valid consumed capability',
       'force_push, tag, release, deploy, provider_call, memory_write, and package_publish remain denied'
     ],
@@ -1481,7 +1501,7 @@ async function handleConsumeCapability(args) {
     process.exitCode = 2;
     return;
   }
-  const events = readCapabilityEvents();
+  const events = readCapabilityEventsWithLocalSessions();
   const issue = findCapabilityIssue(events, id);
   let valid = false;
   let status = 'DENIED';
@@ -1519,7 +1539,20 @@ async function handleConsumeCapability(args) {
       reason = 'CAPABILITY_CONSUMED';
     }
   }
-  const event = appendCapabilityEvent('capability_consume', {
+  const localOnly = forAction === 'git_push';
+  const capabilityStore = localOnly ? '.bha/local/capabilities.jsonl' : '.bha/capabilities.jsonl';
+  const event = localOnly ? appendLocalCapabilityEvent('capability_consume', {
+    capability_id: id,
+    for: forAction,
+    remote,
+    branch,
+    head,
+    issue_event_hash: issue ? issue.event_hash : null,
+    one_use: true,
+    valid,
+    status,
+    reason
+  }) : appendCapabilityEvent('capability_consume', {
     capability_id: id,
     for: forAction,
     remote,
@@ -1537,7 +1570,8 @@ async function handleConsumeCapability(args) {
     valid,
     status,
     reason,
-    capability_store: '.bha/capabilities.jsonl',
+    capability_store: capabilityStore,
+    local_only: localOnly,
     event_hash: event.event_hash
   }));
   if (!valid) {
@@ -1598,8 +1632,12 @@ async function verifierResult() {
 async function matchingConsumedCapability(remote, branch, head, options) {
   const reserve = options && options.reserve === true;
   const state = loadState();
-  const events = readCapabilityEvents();
-  const eventsWithLocalSessions = events.concat(readLocalCapabilitySessions());
+  const events = readCapabilityEventsWithLocalSessions();
+  for (const event of events) {
+    if (!event || event.event_hash !== capabilityHash(event)) {
+      return { ok: false, reason: 'CAPABILITY_EVENT_HASH_MISMATCH', capability_id: event && event.payload ? event.payload.capability_id : null };
+    }
+  }
   const issues = new Map();
   for (const event of events) {
     if (event.type === 'capability_issue' && event.payload && event.payload.valid === true) {
@@ -1628,7 +1666,7 @@ async function matchingConsumedCapability(remote, branch, head, options) {
     if (consumes.length !== 1) {
       return { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED', capability_id: id };
     }
-    if (validCapabilitySessions(eventsWithLocalSessions, id).length > 0) {
+    if (validCapabilitySessions(events, id).length > 0) {
       return { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED', capability_id: id };
     }
     if (!issue) {
@@ -1805,7 +1843,7 @@ async function handlePrepushCheck(args) {
     closeout_current: evidence.gates.closeout_current,
     valid_consumed_capability: capability.ok === true,
     matching_run_id_remote_branch_head: capability.ok === true,
-    clean_git_status: status.ok === true && (status.clean === true || authorizedRuntimeDirty(status.stdout))
+    clean_git_status: status.ok === true && status.clean === true
   };
   let ok = Object.values(checks).every(Boolean);
   if (ok && !preflight) {
@@ -1917,7 +1955,7 @@ async function gateStatus(remote, branch) {
     closeout_current: evidence.gates.closeout_current,
     valid_consumed_capability: capability.ok === true,
     matching_run_id_remote_branch_head: capability.ok === true,
-    clean_git_status: status.ok === true && (status.clean === true || authorizedRuntimeDirty(status.stdout))
+    clean_git_status: status.ok === true && status.clean === true
   };
   return {
     ok: Object.values(checks).every(Boolean),
@@ -1937,9 +1975,9 @@ async function gateStatus(remote, branch) {
       short: status.stdout.trim() || 'CLEAN'
     },
     post_push_evidence_strategy: {
-      tracked_evidence: ['.bha/capabilities.jsonl issue/consume events', '.bha/ledger.jsonl', '.bha/state.json'],
-      local_only_evidence: ['.bha/local/capability-sessions.jsonl push hook USED sessions'],
-      reason: 'push hook replay guard sessions are local-only to avoid recursive evidence commits'
+      tracked_evidence: ['validation, checkpoint, closeout, policy, mission, ledger, and state before push'],
+      local_only_evidence: ['.bha/local/capabilities.jsonl git_push issue/consume events', '.bha/local/capability-sessions.jsonl push hook USED sessions'],
+      reason: 'git_push authorization is local-only so push does not create tracked evidence commits'
     },
     next_action: nextGateAction(checks, capability)
   };
@@ -2107,7 +2145,7 @@ async function handleCapabilitySelftest(args) {
   }));
   const remoteConsume = await runCapabilityConsume(remoteId, 'upstream', bindings.branch);
   if (remoteConsume.ok) {
-    appendCapabilityEvent('capability_session', {
+    appendLocalCapabilitySession({
       capability_id: remoteId,
       remote: 'upstream',
       branch: bindings.branch,
@@ -2132,7 +2170,7 @@ async function handleCapabilitySelftest(args) {
   }));
   const branchConsume = await runCapabilityConsume(branchId, bindings.remote, mismatchedBranch);
   if (branchConsume.ok) {
-    appendCapabilityEvent('capability_session', {
+    appendLocalCapabilitySession({
       capability_id: branchId,
       remote: bindings.remote,
       branch: mismatchedBranch,
@@ -2253,8 +2291,10 @@ function forbiddenLedgerEffects(ledger, policy) {
   return effects;
 }
 
-function capabilityCloseoutSummary(capabilities, state) {
+function capabilityCloseoutSummary(capabilities, state, localCapabilities, localSessions) {
   const validEvents = capabilities.filter((event) => event.payload && event.payload.valid === true);
+  const localEvents = (localCapabilities || []).concat(localSessions || []);
+  const validLocalEvents = localEvents.filter((event) => event.payload && event.payload.valid === true);
   const selftest = state && state.capability_selftest ? state.capability_selftest : null;
   return {
     events: capabilities.length,
@@ -2262,6 +2302,17 @@ function capabilityCloseoutSummary(capabilities, state) {
     issue_events: capabilities.filter((event) => event.type === 'capability_issue').length,
     consume_events: capabilities.filter((event) => event.type === 'capability_consume').length,
     session_events: capabilities.filter((event) => event.type === 'capability_session').length,
+    local_only_events: localEvents.length,
+    local_only_valid_events: validLocalEvents.length,
+    local_only_issue_events: (localCapabilities || []).filter((event) => event.type === 'capability_issue').length,
+    local_only_consume_events: (localCapabilities || []).filter((event) => event.type === 'capability_consume').length,
+    local_only_session_events: (localSessions || []).filter((event) => event.type === 'capability_session').length,
+    git_push_authorization_evidence: {
+      store: '.bha/local/capabilities.jsonl',
+      session_store: '.bha/local/capability-sessions.jsonl',
+      tracked: false,
+      reason: 'git_push authorization occurs after the signed HEAD exists and must not dirty tracked evidence before push'
+    },
     capability_positive_path: selftest ? selftest.capability_positive_path : 'NOT_RECORDED',
     prepush_authorized_simulation: selftest ? selftest.prepush_authorized_simulation : 'NOT_RECORDED',
     negative_capability_tests: selftest ? selftest.negative_capability_tests : 'NOT_RECORDED'
@@ -2381,10 +2432,12 @@ async function handleCloseout(args) {
   const validation = fs.existsSync(VALIDATION_PATH) ? readJsonStrict(VALIDATION_PATH) : null;
   const ledger = fs.existsSync(LEDGER_PATH) ? readJsonl(LEDGER_PATH) : [];
   const capabilities = fs.existsSync(CAPABILITIES_PATH) ? readCapabilityEvents() : [];
+  const localCapabilities = readLocalCapabilityEvents();
+  const localSessions = readLocalCapabilitySessions();
   const gitStatus = await gitStatusShort();
   const verify = await verifierResult();
   const validationStatus = state && state.validation ? state.validation.status : 'NOT_RECORDED';
-  const capabilitySummary = capabilityCloseoutSummary(capabilities, state);
+  const capabilitySummary = capabilityCloseoutSummary(capabilities, state, localCapabilities, localSessions);
   const changedFiles = gitStatus.ok ? changedFilesFromStatus(gitStatus.stdout) : [];
   const effects = forbiddenLedgerEffects(ledger, policy);
   const selftest = state && state.capability_selftest ? state.capability_selftest : null;

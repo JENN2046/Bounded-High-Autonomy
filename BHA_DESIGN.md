@@ -16,11 +16,12 @@ V1.1 operator and post-push evidence addendum:
 - Capability signing remains external to BHA. Runtime helpers may prepare unsigned payloads or verify
   signed JSON from `.bha/local/` files, but they must not read, print, store, or request private key
   material.
-- Push hook USED session evidence is local-only under `.bha/local/` and ignored by Git. This keeps
-  replay protection local while avoiding an infinite loop where every push creates another required
-  evidence commit.
-- Repository-tracked capability evidence remains the signed issue and consume records plus ledger,
-  state, validation, checkpoint, and closeout evidence.
+- `git_push` issue, consume, and hook USED evidence are local-only under `.bha/local/` and ignored by
+  Git. This keeps the signed authorization bound to the already-created HEAD without making push
+  produce another required evidence commit.
+- Repository-tracked evidence proves the HEAD is ready to push: policy, mission, validation,
+  checkpoint, closeout, ledger, state, and verifier consistency. Git reality proves the remote branch
+  reached the pushed HEAD.
 
 ## 1. BHA Design Rhythm and Roadmap
 
@@ -2303,10 +2304,10 @@ Lifecycle:
 1. `make-payload`: produce unsigned canonical payload from current repository reality.
 2. `sign-offline`: human signs outside the repository.
 3. `verify-signed`: BHA verifies signature and payload shape without writing.
-4. `issue`: BHA records valid capability.
-5. `consume`: BHA marks one-use capability consumed for exact action context.
+4. `issue`: BHA records valid capability in the action's configured evidence store.
+5. `consume`: BHA marks one-use capability consumed for exact action context in that store.
 6. `execute`: adapter may proceed only if the action still matches consumed capability.
-7. `closeout`: verifier records final state and consumed capability status.
+7. `closeout`: verifier records final tracked state; local-only capability state is reported as local gate evidence.
 
 Capability payload must bind:
 
@@ -3767,8 +3768,8 @@ remote writes outside BHA runtime unless explicitly authorized.
 | `make-push-payload` | `gate` | yes | no | no | generate unsigned canonical git push capability payload |
 | `git-push-capability-flow` | `gate` | yes | no | no | explain the read-only git_push capability path from unsigned payload to prepush gate |
 | `verify-signed-capability` | `gate` | yes | no | no | verify signed capability shape, hash, and signature |
-| `issue-capability` | `gate` | no | yes | yes | record a verified capability as issued |
-| `consume-capability` | `gate` | no | yes | yes | consume one-use capability for exact action context |
+| `issue-capability` | `gate` | no | no for `git_push` | no for `git_push` | record a verified `git_push` capability as local-only gate evidence |
+| `consume-capability` | `gate` | no | no for `git_push` | no for `git_push` | consume one-use `git_push` capability as local-only gate evidence |
 | `prepush-check` | `gate` | yes by default | no by default | no by default | fail closed unless a valid consumed capability exists |
 | `rollback-drill` | `recover` | yes | no | no | verify that rollback guidance is local, non-destructive, and evidence-based |
 | `validate` | `validate` | no | yes | yes | run configured validation and record result |
@@ -3847,10 +3848,11 @@ Gate command rules:
 
 - `make-push-payload` is read-only and unsigned.
 - `verify-signed-capability` is read-only and must reject non-canonical payloads.
-- `issue-capability` verifies before writing.
+- `issue-capability` verifies before writing local-only `git_push` authorization evidence.
 - `consume-capability` requires issued, unexpired, unconsumed capability.
 - consumed capability must match exact action context.
-- capability consume should record ledger and update state.
+- `git_push` capability consume should not record tracked ledger or update tracked state; it should
+  update only local gate evidence.
 - replay must fail closed.
 
 Gate commands must not execute the high-risk action. They only prepare or record authority.
@@ -4302,8 +4304,8 @@ Command mapping:
 - `make-push-payload`: outputs unsigned `Capability` payload; writes nothing.
 - `git-push-capability-flow`: outputs unsigned payload plus operator steps; writes nothing.
 - `verify-signed-capability`: outputs `VerifierResult`-like capability verification; writes nothing.
-- `issue-capability`: writes `LedgerEvent`, updates `StateSnapshot`, appends capability issue record.
-- `consume-capability`: writes `LedgerEvent`, updates `StateSnapshot`, appends consume record.
+- `issue-capability`: for v1 `git_push`, appends a local-only capability issue record under `.bha/local/`.
+- `consume-capability`: for v1 `git_push`, appends a local-only consume record under `.bha/local/`.
 - `prepush-check`: reads capability consume state and repository facts; writes nothing by default.
 
 `closeout` may also run as a read-only preview. Recording requires explicit `--record`.

@@ -27,7 +27,7 @@ Completed:
 - `checkpoint` writes `.bha/checkpoint.json`, appends `checkpoint_written`, and updates `state.last_checkpoint`.
 - `prepush-check` reports verifier-backed evidence gates and fails closed unless validation, rollback, checkpoint, closeout, git status, and consumed `git_push` capability all pass.
 - `gate-status` reports the current read-only gate state and next action for operators.
-- Push hook one-use session evidence is local-only under `.bha/local/` to prevent recursive evidence commits.
+- `git_push` issue, consume, and hook USED evidence are local-only under `.bha/local/` to prevent recursive evidence commits.
 
 Current verified state:
 - `node scripts/bha-run.js validate` is expected to pass.
@@ -50,7 +50,7 @@ Implemented:
 - Validation evidence with policy-gated command execution, freshness checks, and recorded `decision`, `allowed`, and `spawned` fields.
 - `git_push`-only capability flow with signed payload verification, issue, consume, replay checks, and fail-closed prepush integration.
 - Checkpoint and closeout evidence bound to verifier and ledger state.
-- V1.1 local-only push session evidence strategy: tracked evidence records issue/consume and verifier state; `.bha/local/capability-sessions.jsonl` records hook USED sessions for local replay protection and is ignored by Git.
+- V1.1 local-only push authorization strategy: tracked evidence records verifier-ready repository state; `.bha/local/capabilities.jsonl` records `git_push` issue/consume events and `.bha/local/capability-sessions.jsonl` records hook USED sessions for local replay protection.
 
 Explicitly not implemented:
 - Provider-call automation, memory-write automation, deploy/release/tag control, package publishing, database, web UI, CI platform, remote attestation, private key custody, multi-agent scheduling, or OS-level sandboxing.
@@ -74,13 +74,13 @@ Minimal local loop:
 3. Run `node scripts/bha-verify.js` and require `PASS` before trusting state.
 4. Run `node scripts/bha-run.js checkpoint --format json` when work should be resumable from files.
 5. Run `node scripts/bha-run.js closeout --format json --record` to record final evidence.
-6. For push, run `node scripts/bha-run.js make-push-payload --remote origin --branch master --expires-minutes 20 --key-id owner-main-pkcs8 --out .bha/local/push-payload.json`, sign the flat JSON outside BHA, write the signed JSON under `.bha/local/`, then run `verify-signed-capability --file`, `issue-capability --file`, and `consume-capability`.
+6. For push, run `node scripts/bha-run.js make-push-payload --remote origin --branch master --expires-minutes 20 --key-id owner-main-pkcs8 --out .bha/local/push-payload.json`, sign the flat JSON outside BHA, write the signed JSON under `.bha/local/`, then run `verify-signed-capability --file`, `issue-capability --file`, and `consume-capability`. For `git_push`, issue/consume evidence is local-only.
 7. Run `node scripts/bha-run.js prepush-check --preflight --internal-git-hook origin` before `git push origin master`.
 
 Fresh clone note:
 - A fresh clone of the current remote can restore verifier trust by running `validate`, `checkpoint`, `closeout --record`, and `verify`.
-- A fresh clone may not start at verifier `PASS` if local post-push evidence has not been pushed yet.
-- This is expected until post-push tracked evidence is intentionally synchronized.
+- A fresh clone should be able to restore tracked verifier trust from repository files without local push authorization evidence.
+- Local push authorization evidence is intentionally not synchronized through the protected branch.
 
 Operator status:
 - `node scripts/bha-run.js gate-status --remote origin --branch master --format json` is read-only and reports verifier gates, hook configuration, capability status, post-push evidence strategy, and the next action.
@@ -89,8 +89,8 @@ Operator status:
 ## Next Tasks
 
 1. Post-push evidence strategy
-   - Keep push hook USED session evidence local-only under `.bha/local/`.
-   - Commit issue/consume evidence only when it is intentionally part of the repository history.
+   - Keep `git_push` issue, consume, and USED session evidence local-only under `.bha/local/`.
+   - Keep tracked evidence focused on verifier-ready repository state before push.
    - Avoid an infinite loop where every pushed evidence commit creates another evidence-only commit.
 
 2. Capability UX hardening
