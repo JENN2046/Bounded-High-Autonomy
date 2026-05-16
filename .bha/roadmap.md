@@ -63,14 +63,43 @@ Expected final gate:
 - Closeout: `PASS`.
 - Prepush: `FAIL_CLOSED` unless a signed, consumed `git_push` capability matches the current run, remote, branch, HEAD, policy hash, mission hash, and ledger head.
 
+## V1 Operator Flow
+
+Minimal local loop:
+1. Inspect repository reality with `git status --short`, `git branch --show-current`, and the `.bha/` files.
+2. Run `node scripts/bha-run.js validate` to execute policy-gated validation and record evidence.
+3. Run `node scripts/bha-verify.js` and require `PASS` before trusting state.
+4. Run `node scripts/bha-run.js checkpoint --format json` when work should be resumable from files.
+5. Run `node scripts/bha-run.js closeout --format json --record` to record final evidence.
+6. For push, run `node scripts/bha-run.js make-push-payload --remote origin --branch master --expires-minutes 20 --key-id owner-main-pkcs8`, sign the flat JSON outside the repository, then run `verify-signed-capability`, `issue-capability`, and `consume-capability`.
+7. Run `node scripts/bha-run.js prepush-check --preflight --internal-git-hook origin` before `git push origin master`.
+
+Fresh clone note:
+- A fresh clone of the current remote can restore verifier trust by running `validate`, `checkpoint`, `closeout --record`, and `verify`.
+- A fresh clone may not start at verifier `PASS` if local post-push evidence has not been pushed yet.
+- This is expected until the post-push evidence strategy is finalized.
+
 ## Next Tasks
 
-1. Prepush capability UX hardening
-   - Keep the happy path clear: generate payload, sign externally, issue capability, consume capability, prepush-check.
-   - Keep private key material out of the repository and logs.
-   - Extend operator-facing docs only after the local command flow stays stable.
+1. Post-push evidence strategy
+   - Decide whether push hook evidence should be committed in a follow-up local commit, kept as local-only session evidence, or summarized in a separate handoff artifact.
+   - Avoid an infinite loop where every pushed evidence commit creates another evidence-only commit.
 
-2. Roadmap hygiene
+2. Capability UX hardening
+   - Keep the happy path clear: generate payload, sign externally, issue capability, consume capability, preflight, push.
+   - Add a local helper that prepares unsigned payloads and validates signed JSON without reading private keys.
+   - Keep private key material out of the repository and logs.
+
+3. Preflight and hook semantics
+   - Keep `--preflight` read-only and non-consuming.
+   - Keep the actual hook as the only path that consumes a one-use session.
+   - Add self-test coverage for this distinction.
+
+4. Hook install detection
+   - Add a local command that reports whether `core.hooksPath` points at `.githooks`.
+   - Keep hook installation local-only and never treat it as proof by itself.
+
+5. Roadmap hygiene
    - Keep this roadmap short and update it only when the kernel state changes.
    - Keep the next safe action aligned with verifier-backed evidence.
 
