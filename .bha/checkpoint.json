@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-16T14-11-16-735Z",
-  "created_at": "2026-05-16T14:11:16.748Z",
+  "checkpoint_id": "checkpoint-2026-05-16T14-15-32-172Z",
+  "created_at": "2026-05-16T14:15:32.184Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,8 +13,8 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "master",
-  "head": "1870e1841a3bea7953d2a011b38db18f9648f66f",
-  "ledger_head_hash": "5f004a6ad77b7d877723b2c785db8562bc64a083aedd41bbc2e9a9ac1a45876c",
+  "head": "0ffcb79bbce3dc30ea0f987e5787116d12faa9e1",
+  "ledger_head_hash": "d49c1606b31adcba84713d2abc5d23c9a9d62daa75292ffdf52bea01ae3e242e",
   "policy_hash": "a5d69fd75647a7dfd1228dabdd69dd805b020b6990c0dfdbbdf02144c185a2ce",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
@@ -51,7 +51,7 @@
   "changed_files": [
     {
       "status": "M",
-      "path": ".bha/checkpoint.json"
+      "path": ".bha/capabilities.jsonl"
     },
     {
       "status": "M",
@@ -59,35 +59,7 @@
     },
     {
       "status": "M",
-      "path": ".bha/policy.yaml"
-    },
-    {
-      "status": "M",
-      "path": ".bha/roadmap.md"
-    },
-    {
-      "status": "M",
       "path": ".bha/state.json"
-    },
-    {
-      "status": "M",
-      "path": ".bha/validation.yaml"
-    },
-    {
-      "status": "M",
-      "path": "BHA_DESIGN.md"
-    },
-    {
-      "status": "M",
-      "path": "scripts/bha-run.js"
-    },
-    {
-      "status": "M",
-      "path": "scripts/bha-verify.js"
-    },
-    {
-      "status": "??",
-      "path": ".gitignore"
     }
   ],
   "validation_run": {
@@ -98,7 +70,7 @@
   },
   "validation_not_run": [],
   "verifier_status": "PASS",
-  "verifier_ledger_head_hash": "5f004a6ad77b7d877723b2c785db8562bc64a083aedd41bbc2e9a9ac1a45876c",
+  "verifier_ledger_head_hash": "d49c1606b31adcba84713d2abc5d23c9a9d62daa75292ffdf52bea01ae3e242e",
   "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
@@ -116,9 +88,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "5f004a6ad77b7d877723b2c785db8562bc64a083aedd41bbc2e9a9ac1a45876c",
-    "checkpoint_event_hash": "0a29e642b86825903761d85493fa38b643a18f9fae6baf300d29aff0d627af05",
-    "final_ledger_head_hash": "0a29e642b86825903761d85493fa38b643a18f9fae6baf300d29aff0d627af05"
+    "verified_ledger_head_hash": "d49c1606b31adcba84713d2abc5d23c9a9d62daa75292ffdf52bea01ae3e242e",
+    "checkpoint_event_hash": "37011267f8862659ab7c0654e5ac625a11727c174cc050ed5f7045ff346832fd",
+    "final_ledger_head_hash": "37011267f8862659ab7c0654e5ac625a11727c174cc050ed5f7045ff346832fd"
   },
-  "ledger_event_hash": "0a29e642b86825903761d85493fa38b643a18f9fae6baf300d29aff0d627af05"
+  "ledger_event_hash": "37011267f8862659ab7c0654e5ac625a11727c174cc050ed5f7045ff346832fd"
 }
