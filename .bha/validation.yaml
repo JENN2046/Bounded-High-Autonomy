@@ -64,6 +64,7 @@
         "recorded": false,
         "read_only": true,
         "has_keys": [
+          "schema",
           "workspace",
           "branch",
           "ledger",

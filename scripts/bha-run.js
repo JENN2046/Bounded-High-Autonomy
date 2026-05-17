@@ -976,6 +976,7 @@ async function handleInspect(args) {
   const gitStatus = await gitStatusShort();
   const verify = await verifierResult();
   console.log(JSON.stringify({
+    schema: 'bha.inspect.v1',
     ok: true,
     status: 'INSPECTED',
     recorded: false,
@@ -4392,6 +4393,9 @@ async function handleAuditV12(args) {
     'Codex shell UX exposes inspect, gate-status next commands, signer boundary, and file-based payload handling without private-key custody.',
     Boolean(inspectCommand &&
       hookCommand &&
+      inspectCommand.expect &&
+      Array.isArray(inspectCommand.expect.has_keys) &&
+      inspectCommand.expect.has_keys.includes('schema') &&
       fileContains(RUN_SCRIPT, 'async function handleInspect') &&
       fileContains(RUN_SCRIPT, 'async function handleHookStatus') &&
       fileContains(RUN_SCRIPT, 'next_commands') &&
@@ -4421,6 +4425,7 @@ async function handleAuditV12(args) {
       fileContains(RUN_SCRIPT, 'resolveLocalFile(outPath)')),
     {
       inspect_validation_command_present: Boolean(inspectCommand),
+      inspect_schema_required: Boolean(inspectCommand && inspectCommand.expect && Array.isArray(inspectCommand.expect.has_keys) && inspectCommand.expect.has_keys.includes('schema')),
       hook_status_validation_command_present: Boolean(hookCommand),
       push_prep_validation_command_present: Boolean(pushPrepCommand),
       signed_payload_status_validation_command_present: Boolean(signedPayloadStatusCommand),
