@@ -3760,7 +3760,19 @@ async function handleStableExitStatus(args) {
       production_capability_types: framework.production_capability_types,
       default_decision: framework.default_decision,
       unknown_capability_policy: framework.unknown_capability_policy,
+      capability_enablement_allowed: framework.enablement_gate
+        ? framework.enablement_gate.new_production_capability_allowed === true
+        : null,
+      capability_requires_new_explicit_objective: framework.enablement_gate
+        ? framework.enablement_gate.requires_new_explicit_objective === true
+        : null,
       council_runtime_state: council.runtime_state,
+      council_activation_allowed: council.activation_gate
+        ? council.activation_gate.runtime_activation_allowed === true
+        : null,
+      council_requires_new_explicit_objective: council.activation_gate
+        ? council.activation_gate.requires_new_explicit_objective === true
+        : null,
       automated_agent_spawn_allowed: council.automated_agent_spawn_allowed,
       provider_calls_allowed: council.provider_calls_allowed,
       memory_writes_allowed: council.memory_writes_allowed

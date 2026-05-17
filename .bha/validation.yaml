@@ -259,6 +259,10 @@
           "signer_boundary.bha_private_key_access": false,
           "v2_hold_line.default_decision": "DENY",
           "v2_hold_line.unknown_capability_policy": "DENY",
+          "v2_hold_line.capability_enablement_allowed": false,
+          "v2_hold_line.capability_requires_new_explicit_objective": true,
+          "v2_hold_line.council_activation_allowed": false,
+          "v2_hold_line.council_requires_new_explicit_objective": true,
           "v2_hold_line.automated_agent_spawn_allowed": false,
           "v2_hold_line.provider_calls_allowed": false,
           "v2_hold_line.memory_writes_allowed": false
