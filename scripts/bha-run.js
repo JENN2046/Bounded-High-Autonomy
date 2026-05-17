@@ -5278,6 +5278,11 @@ async function handleAuditV1Stable(args) {
       fileContains(ROADMAP_PATH, 'V1.4 recovery and resume freeze') &&
       fileContains(ROADMAP_PATH, 'V2 capability framework hold line') &&
       fileContains(ROADMAP_PATH, 'V2+ Council Runtime hold line') &&
+      fileContains(ROADMAP_PATH, 'Stage transition rule') &&
+      fileContains(ROADMAP_PATH, '`stable-exit-review` reports `PASS`') &&
+      fileContains(ROADMAP_PATH, '`next-local-plan-status` reports `NEXT_LOCAL_PLAN_READY`') &&
+      fileContains(ROADMAP_PATH, '`push_required_now=false`') &&
+      fileContains(ROADMAP_PATH, 'does not authorize push, complete the long-term goal, or enable V2 capability/council runtime work') &&
       fileContains(ROADMAP_PATH, 'Only if the operator separately chooses a real push') &&
       fileContains(ROADMAP_PATH, "push-prep --remote 'origin' --branch 'master'") &&
       fileContains(ROADMAP_PATH, "gate-status --remote 'origin' --branch 'master'") &&
@@ -5301,6 +5306,11 @@ async function handleAuditV1Stable(args) {
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V1 production capability scope remains `git_push` only') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V2 capability framework remains preview/default deny') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V2+ Council Runtime remains read-only preview/status') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'Entering the next local planning stage requires') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, '`next-local-plan-status` to report `NEXT_LOCAL_PLAN_READY`') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'does not mean the long-term goal is complete') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'does not authorize push') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'does not enable V2 capability or council runtime activation') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'No push unless the operator separately authorizes a real push') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'No private key read'),
     { path: rel(LONG_TERM_GOAL_AUDIT_PATH) },
