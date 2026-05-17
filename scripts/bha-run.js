@@ -2581,6 +2581,26 @@ function nextGateCommands(action, remote, branch) {
   return commands[action] || [];
 }
 
+function gateNextActionContext(action) {
+  const conditionalPushActions = new Set([
+    'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY',
+    'ISSUE_AND_CONSUME_A_NEW_SIGNED_GIT_PUSH_CAPABILITY',
+    'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH'
+  ]);
+  if (conditionalPushActions.has(action)) {
+    return {
+      next_action_required_now: false,
+      next_action_condition: 'Only required if the operator chooses to perform a real git push.',
+      next_action_scope: 'operator_chosen_git_push'
+    };
+  }
+  return {
+    next_action_required_now: true,
+    next_action_condition: 'Required to restore local BHA evidence or gate readiness before any real git push.',
+    next_action_scope: 'local_trust_repair'
+  };
+}
+
 function readLocalJsonFileSummary(localPath) {
   let resolved;
   try {
@@ -3089,6 +3109,7 @@ async function gateStatus(remote, branch) {
     clean_git_status: status.ok === true && status.clean === true
   };
   const action = nextGateAction(checks, capability);
+  const actionContext = gateNextActionContext(action);
   const nextCommands = nextGateCommands(action, remote, branch);
   const currentContext = currentPayloadContext(remote, branch, head, verify.parsed ? verify.parsed.ledger_head_hash : null);
   const pushStatus = await postPushStatus(remote, branch, head, capability, checks);
@@ -3129,6 +3150,9 @@ async function gateStatus(remote, branch) {
     },
     tracked_git_reality: gitRealityBinding,
     next_action: action,
+    next_action_required_now: actionContext.next_action_required_now,
+    next_action_condition: actionContext.next_action_condition,
+    next_action_scope: actionContext.next_action_scope,
     next_commands: nextCommands,
     operator_handoff: await operatorPushHandoff(action, remote, branch, head, capability, nextCommands, currentContext)
   };
@@ -3453,6 +3477,7 @@ async function handleAuditV12(args) {
     'gate_status_reports_push_requirement_boundary',
     'gate_status_operator_meaning_is_conditional',
     'operator_handoff_capability_flow_is_conditional',
+    'gate_status_next_action_context_is_conditional',
     'local_git_push_replay_fail_closed_after_used_session',
     'gate_status_missing_local_payload_requests_generation',
     'gate_status_flags_stale_local_payload_files',
@@ -4335,6 +4360,16 @@ async function handleRegressionSelftest(args) {
     capability_flow_condition: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.operator_handoff
       ? missingPayloadGateStatus.parsed.operator_handoff.capability_flow_condition
       : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('gate_status_next_action_context_is_conditional', missingPayloadGateStatus.exit_code === 0 &&
+    missingPayloadGateStatus.parsed &&
+    missingPayloadGateStatus.parsed.next_action === 'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY' &&
+    missingPayloadGateStatus.parsed.next_action_required_now === false &&
+    missingPayloadGateStatus.parsed.next_action_scope === 'operator_chosen_git_push' &&
+    String(missingPayloadGateStatus.parsed.next_action_condition || '').includes('operator chooses'), {
+    next_action: missingPayloadGateStatus.parsed ? missingPayloadGateStatus.parsed.next_action : 'NO_JSON',
+    next_action_required_now: missingPayloadGateStatus.parsed ? missingPayloadGateStatus.parsed.next_action_required_now : 'NO_JSON',
+    next_action_scope: missingPayloadGateStatus.parsed ? missingPayloadGateStatus.parsed.next_action_scope : 'NO_JSON'
   }));
   checks.push(regressionCheck('signed_payload_status_readonly_reports_missing', missingSignedPayloadStatus.exit_code === 0 &&
     missingSignedPayloadStatus.parsed &&

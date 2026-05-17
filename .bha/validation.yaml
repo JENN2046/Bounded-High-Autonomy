@@ -778,6 +778,9 @@
         "has_keys": [
           "checks",
           "next_action",
+          "next_action_required_now",
+          "next_action_condition",
+          "next_action_scope",
           "post_push_evidence_strategy",
           "post_push_status",
           "push_requirement",
