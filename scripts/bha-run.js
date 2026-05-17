@@ -3524,6 +3524,11 @@ function authorizedRuntimeDirty(stdout) {
   });
 }
 
+function gitStatusAllowedForLocalTrustRepair(status) {
+  return status && status.ok === true &&
+    (status.clean === true || authorizedRuntimeDirty(status.stdout));
+}
+
 async function currentBranch() {
   const result = await runCommand(['git', 'branch', '--show-current'], {});
   if (result.exit_code !== 0 || result.error) {
@@ -3882,7 +3887,7 @@ async function handlePrepushCheck(args) {
     closeout_current: evidence.gates.closeout_current,
     valid_consumed_capability: capability.ok === true,
     matching_run_id_remote_branch_head: capability.ok === true,
-    clean_git_status: status.ok === true && status.clean === true
+    clean_git_status: gitStatusAllowedForLocalTrustRepair(status)
   };
   let ok = Object.values(checks).every(Boolean);
   if (ok && !preflight) {
@@ -4651,7 +4656,7 @@ async function gateStatus(remote, branch) {
     closeout_current: evidence.gates.closeout_current,
     valid_consumed_capability: capability.ok === true,
     matching_run_id_remote_branch_head: capability.ok === true,
-    clean_git_status: status.ok === true && status.clean === true
+    clean_git_status: gitStatusAllowedForLocalTrustRepair(status)
   };
   const action = nextGateAction(checks, capability);
   const actionContext = gateNextActionContext(action);
@@ -4726,6 +4731,10 @@ function fileContains(file, pattern) {
     return pattern.test(text);
   }
   return text.includes(String(pattern));
+}
+
+function countSubstring(text, pattern) {
+  return String(text || '').split(String(pattern)).length - 1;
 }
 
 function requireModuleAudit(files) {
@@ -8448,6 +8457,12 @@ async function handleRegressionSelftest(args) {
     authorized_runtime_dirty_gate_present: fileContains(RUN_SCRIPT, 'authorizedRuntimeEvidenceDirty'),
     status_field_present: fileContains(RUN_SCRIPT, 'authorized_runtime_evidence_dirty'),
     local_trust_repair_scope_present: fileContains(RUN_SCRIPT, "gate.next_action_scope === 'local_trust_repair'")
+  }));
+  checks.push(regressionCheck('push_gate_allows_authorized_runtime_evidence_dirty',
+    fileContains(RUN_SCRIPT, 'gitStatusAllowedForLocalTrustRepair(status)') &&
+    countSubstring(readText(RUN_SCRIPT), 'clean_git_status: gitStatusAllowedForLocalTrustRepair(status)') >= 2, {
+    shared_gate_function_present: fileContains(RUN_SCRIPT, 'function gitStatusAllowedForLocalTrustRepair(status)'),
+    gate_and_prepush_use_shared_function: countSubstring(readText(RUN_SCRIPT), 'clean_git_status: gitStatusAllowedForLocalTrustRepair(status)')
   }));
   checks.push(regressionCheck('roadmap_current_state_is_procedural_not_snapshot',
     fileContains(ROADMAP_PATH, 'Current repository state is intentionally not embedded') &&
