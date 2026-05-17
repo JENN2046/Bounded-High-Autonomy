@@ -77,6 +77,8 @@ node scripts/bha-run.js gate-status --remote origin --branch master --format jso
 
 `gate-status` is expected to fail closed when no valid current consumed git_push capability exists. That is not a request to push. It means a git_push capability is needed only if the operator separately chooses a real push.
 
+`node scripts/bha-run.js audit-v1-stable --format json` is the strict operator audit path. Operators should use the strict command, and its output should report `validation_in_progress_override=false` for stable local trust. The `--allow-validation-in-progress` flag is validation bootstrap only: it exists so `validate` can run the stable audit while validation inputs are being refreshed, and it must not be treated as the normal operator proof command.
+
 Fresh clone recovery starts with tracked trust:
 
 ```powershell

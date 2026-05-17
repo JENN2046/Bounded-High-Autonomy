@@ -3280,6 +3280,7 @@ async function handleAuditV1Stable(args) {
     'VALIDATION_STALE_INPUTS',
     'VALIDATION_POLICY_HASH_MISMATCH',
     'VALIDATION_COMMAND_STALE',
+    'VALIDATION_EXPECTATION_STALE',
     'VALIDATION_COMMAND_FAILED',
     'CHECKPOINT_POLICY_HASH_MISMATCH',
     'UNVERIFIED_WORKTREE_CHANGE'
@@ -3527,6 +3528,22 @@ async function handleAuditV1Stable(args) {
     ['BHA_V1_STABILITY.md']
   ));
   checks.push(auditCheck(
+    'stable_audit_bootstrap_boundary_documented',
+    'The validation-in-progress stable audit flag is documented as validation bootstrap only, not the operator strict audit path.',
+    fileContains(STABILITY_PATH, '--allow-validation-in-progress') &&
+      fileContains(STABILITY_PATH, 'validation bootstrap only') &&
+      fileContains(STABILITY_PATH, 'Operators should use the strict command') &&
+      fileContains(STABILITY_PATH, 'validation_in_progress_override=false') &&
+      fileContains(RUN_SCRIPT, 'validation_in_progress_override: verifierValidationBootstrapPass'),
+    {
+      validation_command_uses_bootstrap_flag: validationCommand && Array.isArray(validationCommand.argv)
+        ? validationCommand.argv.includes('--allow-validation-in-progress')
+        : false,
+      strict_audit_policy_allowed: policyAllowsArgv(policy, auditArgv)
+    },
+    ['BHA_V1_STABILITY.md', 'scripts/bha-run.js', '.bha/validation.yaml']
+  ));
+  checks.push(auditCheck(
     'roadmap_stable_candidate_aligned',
     'The roadmap names the V1 Stable Candidate freeze and keeps operator UX, recovery, and V2 work on hold-line boundaries.',
     fs.existsSync(ROADMAP_PATH) &&
@@ -3550,6 +3567,9 @@ async function handleAuditV1Stable(args) {
     schema: 'bha.audit.v1_stable.v1',
     recorded: false,
     read_only: true,
+    validation_in_progress_allowed: allowValidationInProgress,
+    validation_in_progress_override: verifierValidationBootstrapPass,
+    strict_verifier_pass: verifierStrictPass,
     objective: 'BHA V1 stable local-first proof and boundary audit',
     proof_sources: [
       'BHA_V1_STABILITY.md',
