@@ -44,8 +44,8 @@ node scripts/bha-run.js closeout --record --format json
 node scripts/bha-verify.js
 node scripts/bha-run.js audit-v12 --format json
 node scripts/bha-run.js audit-v1-stable --format json
-node scripts/bha-run.js recover-status --remote origin --branch master --format json
-node scripts/bha-run.js gate-status --remote origin --branch master --format json
+node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json
+node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json
 ```
 
 ## Hold Lines

@@ -80,8 +80,8 @@ Stable candidate local acceptance commands:
 - `node scripts/bha-verify.js`
 - `node scripts/bha-run.js audit-v12 --format json`
 - `node scripts/bha-run.js audit-v1-stable --format json`
-- `node scripts/bha-run.js recover-status --remote origin --branch master --format json`
-- `node scripts/bha-run.js gate-status --remote origin --branch master --format json`
+- `node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json`
+- `node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json`
 
 Expected final gate:
 - Verifier: `PASS` with no issues or warnings.
@@ -97,8 +97,8 @@ Minimal local loop:
 3. Run `node scripts/bha-verify.js` and require `PASS` before trusting state.
 4. Run `node scripts/bha-run.js checkpoint --format json` when work should be resumable from files.
 5. Run `node scripts/bha-run.js closeout --format json --record` to record final evidence.
-6. Only if the operator separately chooses a real push, run `node scripts/bha-run.js push-prep --remote origin --branch master --expires-minutes 20 --key-id owner-main-pkcs8 --format json`, sign the flat JSON outside BHA, write the signed JSON under `.bha/local/`, then run `verify-signed-capability --file`, `issue-capability --file`, and `consume-capability`. For `git_push`, issue/consume evidence is local-only.
-7. Only before an operator-authorized real push, run `node scripts/bha-run.js prepush-check --preflight --internal-git-hook origin`; the actual `git push origin master` remains outside BHA and requires separate operator intent.
+6. Only if the operator separately chooses a real push, run `node scripts/bha-run.js push-prep --remote 'origin' --branch 'master' --expires-minutes 20 --key-id owner-main-pkcs8 --format json`, sign the flat JSON outside BHA, write the signed JSON under `.bha/local/`, then run `verify-signed-capability --file`, `issue-capability --file`, and `consume-capability`. For `git_push`, issue/consume evidence is local-only.
+7. Only before an operator-authorized real push, run `node scripts/bha-run.js prepush-check --preflight --internal-git-hook 'origin'`; the actual `git push origin master` remains outside BHA and requires separate operator intent.
 
 Fresh clone note:
 - A fresh clone of the current remote can restore verifier trust by running `validate`, `checkpoint`, `closeout --record`, and `verify`.
@@ -106,9 +106,9 @@ Fresh clone note:
 - Local push authorization evidence is intentionally not synchronized through the protected branch.
 
 Operator status:
-- `node scripts/bha-run.js gate-status --remote origin --branch master --format json` is read-only and reports verifier gates, hook configuration, capability status, post-push evidence strategy, and the next action.
+- `node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json` is read-only and reports verifier gates, hook configuration, capability status, post-push evidence strategy, and the next action.
 - `node scripts/bha-run.js hook-status --format json` is read-only and reports whether local `core.hooksPath` points at `.githooks` and whether `.githooks/pre-push` exists. Hook installation remains local setup, not proof.
-- `node scripts/bha-run.js recover-status --remote origin --branch master --format json` is read-only and explains tracked verifier trust, missing `.bha/local/`, and how to regenerate local-only push capability evidence.
+- `node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json` is read-only and explains tracked verifier trust, missing `.bha/local/`, and how to regenerate local-only push capability evidence.
 - `node scripts/bha-run.js capability-framework-status --format json` is read-only and keeps unknown capability types default-denied unless schema, policy, evidence, deny tests, and replay tests exist.
 - `node scripts/bha-run.js council-status --format json` is read-only and reports the Commander / Domain Leads / Worker / Verifier workflow contract without spawning agents, writing memory, or calling providers.
 - `make-push-payload --out`, `verify-signed-capability --file`, and `issue-capability --file` use `.bha/local/` paths so operators do not need to paste long signed JSON on the command line.

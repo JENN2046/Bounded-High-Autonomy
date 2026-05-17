@@ -85,8 +85,8 @@ node scripts/bha-run.js closeout --record --format json
 node scripts/bha-verify.js
 node scripts/bha-run.js audit-v12 --format json
 node scripts/bha-run.js audit-v1-stable --format json
-node scripts/bha-run.js recover-status --remote origin --branch master --format json
-node scripts/bha-run.js gate-status --remote origin --branch master --format json
+node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json
+node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json
 ```
 
 `gate-status` is expected to fail closed when no valid current consumed git_push capability exists. That is not a request to push. It means a git_push capability is needed only if the operator separately chooses a real push.
@@ -97,7 +97,7 @@ Fresh clone recovery starts with tracked trust:
 
 ```powershell
 node scripts/bha-verify.js
-node scripts/bha-run.js recover-status --remote origin --branch master --format json
+node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json
 ```
 
 If tracked evidence is stale, regenerate local evidence with `validate`, `checkpoint`, and `closeout --record`, then rerun the verifier. If `.bha/local/` is missing or stale, regenerate local push payload files only before an operator-chosen real git push.

@@ -4027,8 +4027,8 @@ async function handleAuditV1Stable(args) {
       fileContains(STABILITY_PATH, 'node scripts/bha-verify.js') &&
       fileContains(STABILITY_PATH, 'node scripts/bha-run.js audit-v12 --format json') &&
       fileContains(STABILITY_PATH, 'node scripts/bha-run.js audit-v1-stable --format json') &&
-      fileContains(STABILITY_PATH, 'node scripts/bha-run.js recover-status --remote origin --branch master --format json') &&
-      fileContains(STABILITY_PATH, 'node scripts/bha-run.js gate-status --remote origin --branch master --format json') &&
+      fileContains(STABILITY_PATH, "node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json") &&
+      fileContains(STABILITY_PATH, "node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json") &&
       fileContains(STABILITY_PATH, 'not a request to push') &&
       fileContains(STABILITY_PATH, 'operator-chosen real git push'),
     {},
@@ -4091,6 +4091,9 @@ async function handleAuditV1Stable(args) {
       fileContains(ROADMAP_PATH, 'V2 capability framework hold line') &&
       fileContains(ROADMAP_PATH, 'V2+ Council Runtime hold line') &&
       fileContains(ROADMAP_PATH, 'Only if the operator separately chooses a real push') &&
+      fileContains(ROADMAP_PATH, "push-prep --remote 'origin' --branch 'master'") &&
+      fileContains(ROADMAP_PATH, "gate-status --remote 'origin' --branch 'master'") &&
+      fileContains(ROADMAP_PATH, "recover-status --remote 'origin' --branch 'master'") &&
       fileContains(ROADMAP_PATH, 'requires separate operator intent'),
     { path: rel(ROADMAP_PATH) },
     ['.bha/roadmap.md']
@@ -4102,6 +4105,8 @@ async function handleAuditV1Stable(args) {
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'Status: local Commander audit, not proof') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'Prompt-to-Artifact Checklist') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'Proof still comes from repository reality') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, "recover-status --remote 'origin' --branch 'master'") &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, "gate-status --remote 'origin' --branch 'master'") &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V1 stable local-first kernel is reliable') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V1.3 operator UX reduces signing') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V1.4 recovery/resume handles fresh clone') &&
