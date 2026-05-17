@@ -4355,6 +4355,13 @@ async function handleLongTermGoalStatus(args) {
       id: 'v2_capability_framework_enablement',
       status: 'FUTURE_REQUIRES_NEW_EXPLICIT_OBJECTIVE',
       required_before_enablement: framework.extension_policy ? framework.extension_policy.required_before_enablement : [],
+      coverage_complete: framework.test_requirements &&
+        framework.test_requirements.current_coverage
+        ? framework.test_requirements.current_coverage.enablement_coverage_complete === true
+        : false,
+      missing_before_enablement: framework.test_requirements
+        ? framework.test_requirements.missing_before_enablement || []
+        : [],
       allowed_now: false
     },
     {
@@ -4366,6 +4373,13 @@ async function handleLongTermGoalStatus(args) {
         'role_boundary_tests',
         'validation_wiring'
       ],
+      coverage_complete: council.test_requirements &&
+        council.test_requirements.current_coverage
+        ? council.test_requirements.current_coverage.activation_coverage_complete === true
+        : false,
+      missing_before_activation: council.test_requirements
+        ? council.test_requirements.missing_before_activation || []
+        : [],
       allowed_now: false
     }
   ];
@@ -4933,6 +4947,8 @@ async function handleAuditV1Stable(args) {
       longTermGoalCommand.expect.json_paths['completion_boundary.long_term_goal_complete'] === false &&
       longTermGoalCommand.expect.json_paths['current_local_state.v1_stable_candidate_ready'] === true &&
       longTermGoalCommand.expect.json_paths['future_work.0.status'] === 'FUTURE_REQUIRES_NEW_EXPLICIT_OBJECTIVE' &&
+      longTermGoalCommand.expect.json_paths['future_work.0.coverage_complete'] === false &&
+      longTermGoalCommand.expect.json_paths['future_work.1.coverage_complete'] === false &&
       longTermGoalCommand.expect.json_paths['hard_boundaries.push_allowed'] === false &&
       longTermGoalCommand.expect.json_paths['v2_hold_line.new_production_capability_allowed'] === false &&
       longTermGoalCommand.expect.json_paths['v2_hold_line.council_runtime_activation_allowed'] === false &&
