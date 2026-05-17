@@ -41,6 +41,11 @@ Completed locally:
 - Validation includes the V1.2 regression self-test so LF/CRLF hash stability, local-only `git_push` issue/consume evidence, preflight non-consumption, hook USED sessions, replay rejection, fresh clone verifier trust, and denied external capability classes are checked automatically.
 - `inspect`, `gate-status`, `checkpoint`, and `closeout` are the first local trusted-shell UX surfaces for Codex daily work.
 - `audit-v12` is a read-only artifact coverage audit that maps V1.2 requirements to repository files, recorded validation evidence, verifier status, and git reality.
+- `push-prep`, `signed-payload-status`, and `operator-signer-preflight` guide the operator through current-HEAD unsigned payload generation and signed payload checks without BHA reading private key material.
+- `recover-status` explains fresh clone and missing `.bha/local/` recovery without treating local push capability evidence as tracked trust.
+- `capability-framework-status` reports the default-deny V2 capability preview and the deny/replay test gate for any future capability type.
+- `council-status` reports the V2+ Council Runtime preview contract as read-only, local-only coordination context, not proof.
+- Ledger writes are guarded by a local `.bha/local/ledger.lock` so concurrent local evidence writers fail closed instead of corrupting the hash chain.
 - Current local acceptance requires `node scripts/bha-run.js validate`, `node scripts/bha-verify.js`, `node scripts/bha-run.js checkpoint --format json`, and `node scripts/bha-run.js closeout --record --format json` to pass after any tracked change.
 
 ## V1 Handoff / Release Note
@@ -63,7 +68,7 @@ Implemented:
 - Validation input hashing normalizes text line endings to LF so fresh clones with different Git `core.autocrlf` settings can restore verifier trust.
 
 Explicitly not implemented:
-- Provider-call automation, memory-write automation, deploy/release/tag control, package publishing, database, web UI, CI platform, remote attestation, private key custody, multi-agent scheduling, or OS-level sandboxing.
+- Provider-call automation, memory-write automation, deploy/release/tag control, package publishing, database, web UI, CI platform, remote attestation, private key custody, automated multi-agent scheduling, or OS-level sandboxing.
 
 Final local acceptance commands:
 - `node scripts/bha-run.js validate`
@@ -95,33 +100,38 @@ Fresh clone note:
 Operator status:
 - `node scripts/bha-run.js gate-status --remote origin --branch master --format json` is read-only and reports verifier gates, hook configuration, capability status, post-push evidence strategy, and the next action.
 - `node scripts/bha-run.js hook-status --format json` is read-only and reports whether local `core.hooksPath` points at `.githooks` and whether `.githooks/pre-push` exists. Hook installation remains local setup, not proof.
+- `node scripts/bha-run.js recover-status --remote origin --branch master --format json` is read-only and explains tracked verifier trust, missing `.bha/local/`, and how to regenerate local-only push capability evidence.
+- `node scripts/bha-run.js capability-framework-status --format json` is read-only and keeps unknown capability types default-denied unless schema, policy, evidence, deny tests, and replay tests exist.
+- `node scripts/bha-run.js council-status --format json` is read-only and reports the Commander / Domain Leads / Worker / Verifier workflow contract without spawning agents, writing memory, or calling providers.
 - `make-push-payload --out`, `verify-signed-capability --file`, and `issue-capability --file` use `.bha/local/` paths so operators do not need to paste long signed JSON on the command line.
 - `gate-status` includes an `operator_handoff` block with local payload/signed-file status, the current capability id when it can be derived from `.bha/local/push-payload.json`, and PowerShell-safe single-line gate commands. It does not print signatures or private key material.
 
 ## Next Tasks
 
-1. Post-push evidence strategy
-   - Keep `git_push` issue, consume, and USED session evidence local-only under `.bha/local/`.
-   - Keep tracked evidence focused on verifier-ready repository state before push.
-   - Avoid an infinite loop where every pushed evidence commit creates another evidence-only commit.
+1. V1 stabilization
+   - Keep verifier, validation, checkpoint, closeout, audit, and gate-status passing from a clean worktree.
+   - Keep post-commit evidence-time HEAD mismatch explicit so operator knows when a fresh capability is needed.
+   - Keep all proof claims tied to repository reality, ledger/state evidence, verifier, policy/mission hash, local-only capability evidence, and git reality.
 
-2. Capability UX hardening
-   - Keep the happy path clear: generate payload, sign externally, issue capability, consume capability, preflight, push.
-   - Add or refine local helpers that prepare unsigned payloads and validate signed JSON without reading private keys.
-   - Keep private key material out of the repository and logs.
+2. V1.3 operator UX hardening
+   - Continue reducing stale payload and command-splitting mistakes.
+   - Keep external signer ownership explicit and keep BHA limited to unsigned/signed payload files.
+   - Add more recovery hints only when they do not weaken the private key or remote-action boundary.
 
-3. Preflight and hook semantics
-   - Keep `--preflight` read-only and non-consuming.
-   - Keep the actual hook as the only path that consumes a one-use session.
-   - Add self-test coverage for this distinction.
+3. V1.4 recovery and resume
+   - Keep fresh clone flows self-explanatory without requiring `.bha/local/`.
+   - Keep local-only capability replay blocked after push and after USED sessions.
+   - Keep checkpoint and closeout resume facts separated from proof claims.
 
-4. Hook install detection
-   - Add a local command that reports whether `core.hooksPath` points at `.githooks`.
-   - Keep hook installation local-only and never treat it as proof by itself.
+4. V2 capability framework
+   - Keep `git_push` as the only production capability.
+   - Require schema, binding, allowed command, evidence policy, deny tests, and replay tests before considering any new capability.
+   - Keep provider, deploy, release, tag, package publish, memory write, and private key access denied by default.
 
-5. Roadmap hygiene
-   - Keep this roadmap short and update it only when the kernel state changes.
-   - Keep the next safe action aligned with verifier-backed evidence.
+5. V2+ Council Runtime
+   - Keep the current status command as a contract preview only.
+   - Do not add real automated scheduling until there is a local verifier-backed workflow model.
+   - Treat Commander / Domain Leads / Worker / Verifier output as coordination context, not proof.
 
 ## Deferred
 
