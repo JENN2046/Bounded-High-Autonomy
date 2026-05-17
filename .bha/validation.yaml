@@ -372,6 +372,10 @@
         "status": "PUSH_PREP_READY_FOR_OPERATOR_SIGNER",
         "recorded": false,
         "read_only": false,
+        "json_paths": {
+          "signer_boundary.operator_controls_signer": true,
+          "signer_boundary.bha_private_key_access": false
+        },
         "has_keys": [
           "payload_path",
           "head",
@@ -401,6 +405,10 @@
         "exit_code": 0,
         "recorded": false,
         "read_only": true,
+        "json_paths": {
+          "signer_boundary.operator_controls_signer": true,
+          "signer_boundary.bha_private_key_access": false
+        },
         "has_keys": [
           "signed_payload",
           "local_payload_status",
@@ -427,6 +435,12 @@
         "exit_code": 0,
         "recorded": false,
         "read_only": true,
+        "json_paths": {
+          "private_key_path.value_printed": false,
+          "private_key_path.file_read": false,
+          "signer_boundary.bha_private_key_access": false,
+          "signer_boundary.private_key_material_read": false
+        },
         "has_keys": [
           "private_key_path",
           "unsigned_payload",
@@ -453,6 +467,11 @@
         "exit_code": 0,
         "recorded": false,
         "read_only": true,
+        "json_paths": {
+          "local_state.required_for_tracked_verifier_pass": false,
+          "git_push_recovery.required_now": false,
+          "git_push_recovery.local_only": true
+        },
         "has_keys": [
           "tracked_trust",
           "local_state",
@@ -778,6 +797,12 @@
       "expect": {
         "exit_code": 0,
         "read_only": true,
+        "json_paths": {
+          "push_requirement.required_now": false,
+          "push_requirement.operator_controlled": true,
+          "operator_handoff.capability_flow_required_now": false,
+          "signer_boundary.bha_private_key_access": false
+        },
         "has_keys": [
           "checks",
           "next_action",

@@ -571,6 +571,18 @@ function parseJsonLine(stdout) {
   return null;
 }
 
+function getJsonPathValue(object, dottedPath) {
+  const parts = String(dottedPath || '').split('.').filter(Boolean);
+  let current = object;
+  for (const part of parts) {
+    if (current === null || typeof current !== 'object' || !Object.prototype.hasOwnProperty.call(current, part)) {
+      return { found: false, value: undefined };
+    }
+    current = current[part];
+  }
+  return { found: true, value: current };
+}
+
 function validationInputsHashForRoot(root) {
   const entries = validationInputsForRoot(root).map((file) => {
     if (!fs.existsSync(file)) {
@@ -649,7 +661,7 @@ function commandExpectationPassed(result, expect) {
   if (Object.prototype.hasOwnProperty.call(expect, 'exit_code') && result.exit_code !== expect.exit_code) {
     problems.push(`exit_code expected ${expect.exit_code} got ${result.exit_code}`);
   }
-  const expectsJson = ['decision', 'spawned', 'read_only', 'recorded', 'ok', 'status', 'reason', 'json', 'has_keys', 'missing_keys'].some((key) => {
+  const expectsJson = ['decision', 'spawned', 'read_only', 'recorded', 'ok', 'status', 'reason', 'json', 'json_paths', 'has_keys', 'missing_keys'].some((key) => {
     return Object.prototype.hasOwnProperty.call(expect, key);
   });
   if (expectsJson) {
@@ -691,6 +703,14 @@ function commandExpectationPassed(result, expect) {
       for (const [key, expectedValue] of Object.entries(expect.json || {})) {
         if (parsed[key] !== expectedValue) {
           problems.push(`${key} expected ${expectedValue} got ${parsed[key]}`);
+        }
+      }
+      for (const [jsonPath, expectedValue] of Object.entries(expect.json_paths || {})) {
+        const observed = getJsonPathValue(parsed, jsonPath);
+        if (!observed.found) {
+          problems.push(`expected JSON path ${jsonPath} was missing`);
+        } else if (observed.value !== expectedValue) {
+          problems.push(`${jsonPath} expected ${expectedValue} got ${observed.value}`);
         }
       }
     }
@@ -3421,6 +3441,11 @@ async function handleAuditV1Stable(args) {
   const pushPrepCommand = validationCommandById(validation, 'push_prep_current_head_payload');
   const signedPayloadStatusCommand = validationCommandById(validation, 'signed_payload_status_readonly');
   const operatorSignerPreflightCommand = validationCommandById(validation, 'operator_signer_preflight_readonly');
+  const gateStatusJsonPaths = gateStatusCommand && gateStatusCommand.expect ? (gateStatusCommand.expect.json_paths || {}) : {};
+  const recoverStatusJsonPaths = recoverStatusCommand && recoverStatusCommand.expect ? (recoverStatusCommand.expect.json_paths || {}) : {};
+  const pushPrepJsonPaths = pushPrepCommand && pushPrepCommand.expect ? (pushPrepCommand.expect.json_paths || {}) : {};
+  const signedPayloadStatusJsonPaths = signedPayloadStatusCommand && signedPayloadStatusCommand.expect ? (signedPayloadStatusCommand.expect.json_paths || {}) : {};
+  const operatorSignerPreflightJsonPaths = operatorSignerPreflightCommand && operatorSignerPreflightCommand.expect ? (operatorSignerPreflightCommand.expect.json_paths || {}) : {};
   const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const verifierSelftestCommand = validationCommandById(validation, 'verifier_selftest_negative_matrix');
@@ -3716,6 +3741,13 @@ async function handleAuditV1Stable(args) {
       Array.isArray(recoverStatusCommand.expect.has_keys) &&
       recoverStatusCommand.expect.has_keys.includes('local_payload_recovery') &&
       recoverStatusCommand.expect.has_keys.includes('git_push_recovery') &&
+      gateStatusJsonPaths['push_requirement.required_now'] === false &&
+      gateStatusJsonPaths['push_requirement.operator_controlled'] === true &&
+      gateStatusJsonPaths['operator_handoff.capability_flow_required_now'] === false &&
+      gateStatusJsonPaths['signer_boundary.bha_private_key_access'] === false &&
+      recoverStatusJsonPaths['local_state.required_for_tracked_verifier_pass'] === false &&
+      recoverStatusJsonPaths['git_push_recovery.required_now'] === false &&
+      recoverStatusJsonPaths['git_push_recovery.local_only'] === true &&
       fileContains(RUN_SCRIPT, 'push_requirement: {') &&
       fileContains(RUN_SCRIPT, 'required_now: false') &&
       fileContains(RUN_SCRIPT, 'operator_chosen_git_push') &&
@@ -3730,7 +3762,9 @@ async function handleAuditV1Stable(args) {
     {
       gate_status_validation_command_present: Boolean(gateStatusCommand),
       recover_status_validation_command_present: Boolean(recoverStatusCommand),
-      regression_selftest_validation_command_present: Boolean(regressionCommand)
+      regression_selftest_validation_command_present: Boolean(regressionCommand),
+      gate_status_json_paths: gateStatusJsonPaths,
+      recover_status_json_paths: recoverStatusJsonPaths
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
   ));
@@ -3741,6 +3775,14 @@ async function handleAuditV1Stable(args) {
       pushPrepCommand &&
       signedPayloadStatusCommand &&
       operatorSignerPreflightCommand &&
+      pushPrepJsonPaths['signer_boundary.operator_controls_signer'] === true &&
+      pushPrepJsonPaths['signer_boundary.bha_private_key_access'] === false &&
+      signedPayloadStatusJsonPaths['signer_boundary.operator_controls_signer'] === true &&
+      signedPayloadStatusJsonPaths['signer_boundary.bha_private_key_access'] === false &&
+      operatorSignerPreflightJsonPaths['private_key_path.value_printed'] === false &&
+      operatorSignerPreflightJsonPaths['private_key_path.file_read'] === false &&
+      operatorSignerPreflightJsonPaths['signer_boundary.bha_private_key_access'] === false &&
+      operatorSignerPreflightJsonPaths['signer_boundary.private_key_material_read'] === false &&
       missingOperatorUxRegressionIds.length === 0 &&
       fileContains(RUN_SCRIPT, 'command_has_newline') &&
       fileContains(RUN_SCRIPT, '--print-next-command') &&
@@ -3752,6 +3794,9 @@ async function handleAuditV1Stable(args) {
       push_prep_validation_command_present: Boolean(pushPrepCommand),
       signed_payload_status_validation_command_present: Boolean(signedPayloadStatusCommand),
       operator_signer_preflight_validation_command_present: Boolean(operatorSignerPreflightCommand),
+      push_prep_json_paths: pushPrepJsonPaths,
+      signed_payload_status_json_paths: signedPayloadStatusJsonPaths,
+      operator_signer_preflight_json_paths: operatorSignerPreflightJsonPaths,
       required_regression_ids: requiredOperatorUxRegressionIds,
       missing_regression_ids: missingOperatorUxRegressionIds
     },
