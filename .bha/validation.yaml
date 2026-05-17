@@ -184,6 +184,8 @@
           "enablement_gate.forbidden_without_new_objective.0": "provider_call",
           "draft_artifacts.status": "NON_ENABLING_DRAFTS_ONLY",
           "draft_artifacts.satisfies_enablement_requirement": false,
+          "draft_artifacts.items.5": "verifier_evidence_plan_sketch",
+          "draft_artifacts.non_enablement_reasons.5": "explicit_policy_change_missing",
           "test_requirements.current_coverage.enablement_coverage_complete": false,
           "test_requirements.current_coverage.validation_commands.0": "v12_regression_selftest",
           "test_requirements.missing_before_enablement.0": "future_capability_schema",

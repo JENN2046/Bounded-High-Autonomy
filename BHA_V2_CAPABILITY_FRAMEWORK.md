@@ -48,8 +48,19 @@ The current V2 draft shape is planning context only:
 - schema sketch: `type`, binding fields, allowed command or local action, one-use or session policy, evidence policy, signing key purpose, replay behavior
 - binding contract sketch: every capability binds to current policy hash, mission hash, run id, and the smallest git or local state needed for the requested action
 - evidence policy sketch: tracked evidence is allowed only when it cannot dirty the protected action path; local-only evidence is required for action authorization that would otherwise recurse into new tracked commits
+- deny test plan sketch: every future type starts with unknown, disallowed, incomplete, expired, overbroad, wrong-policy, wrong-mission, and wrong-binding fail-closed cases before any allow path is considered
+- replay test plan sketch: every future one-use or session policy needs issue, consume, USED-session, stale-session, and duplicate-consume fail-closed cases
+- verifier evidence plan sketch: every future type needs verifier-readable ledger or local-only evidence rules before it can affect a gate decision
 
 These sketches do not satisfy the enablement requirement by themselves. `capability-framework-status` must keep `draft_artifacts.satisfies_enablement_requirement=false` until a new explicit objective adds verifier-backed schema, deny tests, replay tests, validation wiring, and policy changes.
+
+The current draft explicitly does not provide:
+
+- a verifier-enforced schema for any future capability type
+- a policy allow entry for any future capability type
+- implemented future deny or replay tests beyond the existing `git_push` negative coverage
+- verifier evidence that can authorize any future capability type
+- an explicit policy change that would move any future type from default deny to allowed
 
 ## Test Gate
 

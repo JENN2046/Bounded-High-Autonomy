@@ -1091,7 +1091,18 @@ function capabilityFramework() {
       items: [
         'future_capability_schema_sketch',
         'binding_contract_sketch',
-        'evidence_policy_sketch'
+        'evidence_policy_sketch',
+        'deny_test_plan_sketch',
+        'replay_test_plan_sketch',
+        'verifier_evidence_plan_sketch'
+      ],
+      non_enablement_reasons: [
+        'schema_is_not_verifier_enforced',
+        'future_capability_types_not_policy_allowed',
+        'future_deny_tests_not_implemented',
+        'future_replay_tests_not_implemented',
+        'future_verifier_evidence_not_implemented',
+        'explicit_policy_change_missing'
       ]
     },
     test_requirements: {
@@ -4776,6 +4787,8 @@ async function handleAuditV1Stable(args) {
       capabilityFrameworkJsonPaths['enablement_gate.forbidden_without_new_objective.0'] === 'provider_call' &&
       capabilityFrameworkJsonPaths['draft_artifacts.status'] === 'NON_ENABLING_DRAFTS_ONLY' &&
       capabilityFrameworkJsonPaths['draft_artifacts.satisfies_enablement_requirement'] === false &&
+      capabilityFrameworkJsonPaths['draft_artifacts.items.5'] === 'verifier_evidence_plan_sketch' &&
+      capabilityFrameworkJsonPaths['draft_artifacts.non_enablement_reasons.5'] === 'explicit_policy_change_missing' &&
       capabilityFrameworkJsonPaths['test_requirements.current_coverage.enablement_coverage_complete'] === false &&
       capabilityFrameworkJsonPaths['test_requirements.missing_before_enablement.0'] === 'future_capability_schema' &&
       capabilityFrameworkJsonPaths['test_requirements.missing_before_enablement.7'] === 'explicit_policy_change' &&
@@ -4783,6 +4796,10 @@ async function handleAuditV1Stable(args) {
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'verifier evidence') &&
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'enablement coverage as incomplete') &&
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'Non-Enabling Draft') &&
+      fileContains(CAPABILITY_FRAMEWORK_PATH, 'deny test plan sketch') &&
+      fileContains(CAPABILITY_FRAMEWORK_PATH, 'replay test plan sketch') &&
+      fileContains(CAPABILITY_FRAMEWORK_PATH, 'verifier evidence plan sketch') &&
+      fileContains(CAPABILITY_FRAMEWORK_PATH, 'a policy allow entry for any future capability type') &&
       fileContains(ROADMAP_PATH, 'verifier evidence'),
     {
       validation_command_present: Boolean(capabilityFrameworkStatusCommand),
