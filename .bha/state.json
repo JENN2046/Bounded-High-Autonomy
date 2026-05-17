@@ -2,16 +2,16 @@
   "schema": "bha.state.v1",
   "version": "1.0.0",
   "run_id": "bha-dry-run-v1",
-  "updated_at": "2026-05-17T09:24:20.271Z",
-  "ledger_head_hash": "d7ab7e8f17f245ed0abc4d0ded46a3d1b07ea36985292a44a227b267841999a6",
-  "ledger_event_count": 7095,
+  "updated_at": "2026-05-17T09:26:17.987Z",
+  "ledger_head_hash": "d4edacee532a5c70ad78437063179a84e27c90af5e0b70f98b584f9b1bf7fe4d",
+  "ledger_event_count": 7154,
   "validation": {
     "status": "PASS",
-    "completed_at": "2026-05-17T09:24:08.293Z",
-    "inputs_hash": "2940ae130cbc4e3a8bb5926a500c80ba1b65658d8faff87c20c4d5edcd65eebe",
+    "completed_at": "2026-05-17T09:26:12.462Z",
+    "inputs_hash": "a3a49222d1eb82987c596a4cdf621ac1cb3cb55e44b6c1bf9e685b593568c63e",
     "policy_hash": "6bc0d5d0ce99f42e1a99584ca8e2775a5e341d9d4d485958732cb7b1f395d3b6",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
-    "ledger_event_hash": "57e685cc3221badc96231e93874d7c4d8ae1de749c8642b976b7e58c21f9c6ae",
+    "ledger_event_hash": "f85febd6cff750248229127873ec42b57ad5af4998e18505582e9febf5eb29dd",
     "commands": [
       {
         "id": "git_diff_check",
@@ -1249,6 +1249,7 @@
             "signer_boundary.bha_private_key_access": false
           },
           "has_keys": [
+            "schema",
             "checks",
             "next_action",
             "next_action_required_now",
@@ -1425,25 +1426,25 @@
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "closeout": {
     "status": "PASS",
-    "completed_at": "2026-05-17T09:24:20.271Z",
-    "ledger_event_hash": "d7ab7e8f17f245ed0abc4d0ded46a3d1b07ea36985292a44a227b267841999a6",
-    "verified_ledger_head_hash": "5532420a5ad2698a61c0f5bb872b8e61571f408277cbef8c2d659ed95550575c",
-    "closeout_event_hash": "d7ab7e8f17f245ed0abc4d0ded46a3d1b07ea36985292a44a227b267841999a6",
-    "final_ledger_head_hash": "d7ab7e8f17f245ed0abc4d0ded46a3d1b07ea36985292a44a227b267841999a6",
-    "validation_ledger_event_hash": "57e685cc3221badc96231e93874d7c4d8ae1de749c8642b976b7e58c21f9c6ae",
+    "completed_at": "2026-05-17T09:26:17.987Z",
+    "ledger_event_hash": "d4edacee532a5c70ad78437063179a84e27c90af5e0b70f98b584f9b1bf7fe4d",
+    "verified_ledger_head_hash": "e005c9ea0ae5cd82732e6b366036a26a11a629df88967afbb4a9d22ed23cd345",
+    "closeout_event_hash": "d4edacee532a5c70ad78437063179a84e27c90af5e0b70f98b584f9b1bf7fe4d",
+    "final_ledger_head_hash": "d4edacee532a5c70ad78437063179a84e27c90af5e0b70f98b584f9b1bf7fe4d",
+    "validation_ledger_event_hash": "f85febd6cff750248229127873ec42b57ad5af4998e18505582e9febf5eb29dd",
     "policy_hash": "6bc0d5d0ce99f42e1a99584ca8e2775a5e341d9d4d485958732cb7b1f395d3b6",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
   },
   "last_checkpoint": {
-    "checkpoint_id": "checkpoint-2026-05-17T09-24-13-891Z",
-    "created_at": "2026-05-17T09:24:13.944Z",
-    "ledger_event_hash": "5532420a5ad2698a61c0f5bb872b8e61571f408277cbef8c2d659ed95550575c",
-    "verified_ledger_head_hash": "57e685cc3221badc96231e93874d7c4d8ae1de749c8642b976b7e58c21f9c6ae",
-    "checkpoint_event_hash": "5532420a5ad2698a61c0f5bb872b8e61571f408277cbef8c2d659ed95550575c",
-    "final_ledger_head_hash": "5532420a5ad2698a61c0f5bb872b8e61571f408277cbef8c2d659ed95550575c",
+    "checkpoint_id": "checkpoint-2026-05-17T09-26-17-179Z",
+    "created_at": "2026-05-17T09:26:17.234Z",
+    "ledger_event_hash": "e005c9ea0ae5cd82732e6b366036a26a11a629df88967afbb4a9d22ed23cd345",
+    "verified_ledger_head_hash": "f85febd6cff750248229127873ec42b57ad5af4998e18505582e9febf5eb29dd",
+    "checkpoint_event_hash": "e005c9ea0ae5cd82732e6b366036a26a11a629df88967afbb4a9d22ed23cd345",
+    "final_ledger_head_hash": "e005c9ea0ae5cd82732e6b366036a26a11a629df88967afbb4a9d22ed23cd345",
     "path": ".bha/checkpoint.json",
     "policy_hash": "6bc0d5d0ce99f42e1a99584ca8e2775a5e341d9d4d485958732cb7b1f395d3b6",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
   },
-  "last_checkpoint_id": "checkpoint-2026-05-17T09-24-13-891Z"
+  "last_checkpoint_id": "checkpoint-2026-05-17T09-26-17-179Z"
 }

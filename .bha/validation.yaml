@@ -831,6 +831,7 @@
           "signer_boundary.bha_private_key_access": false
         },
         "has_keys": [
+          "schema",
           "checks",
           "next_action",
           "next_action_required_now",

@@ -3294,6 +3294,7 @@ async function gateStatus(remote, branch) {
   const nextCommands = operatorHandoff.blocked_before_capability ? immediateCommands : operatorHandoff.single_line_commands;
   const pushStatus = await postPushStatus(remote, branch, head, capability, checks);
   return {
+    schema: 'bha.gate_status.v1',
     ok: Object.values(checks).every(Boolean),
     status: Object.values(checks).every(Boolean) ? 'READY' : 'BLOCKED',
     read_only: true,
@@ -3932,6 +3933,7 @@ async function handleAuditV1Stable(args) {
       regressionCommand &&
       gateStatusCommand.expect &&
       Array.isArray(gateStatusCommand.expect.has_keys) &&
+      gateStatusCommand.expect.has_keys.includes('schema') &&
       gateStatusCommand.expect.has_keys.includes('next_action_required_now') &&
       gateStatusCommand.expect.has_keys.includes('next_action_condition') &&
       gateStatusCommand.expect.has_keys.includes('next_action_scope') &&
