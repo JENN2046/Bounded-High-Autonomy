@@ -5030,6 +5030,12 @@ async function handleAuditV1Stable(args) {
       longTermGoalCommand.expect.json_paths['future_work.0.status'] === 'FUTURE_REQUIRES_NEW_EXPLICIT_OBJECTIVE' &&
       longTermGoalCommand.expect.json_paths['future_work.0.coverage_complete'] === false &&
       longTermGoalCommand.expect.json_paths['future_work.1.coverage_complete'] === false &&
+      longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.id'] === 'next_stage_transition_boundary' &&
+      longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.status'] === 'PASS' &&
+      longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.evidence.push_required_now'] === false &&
+      longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.evidence.long_term_goal_complete'] === false &&
+      longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.evidence.new_production_capability_allowed'] === false &&
+      longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.evidence.council_runtime_activation_allowed'] === false &&
       longTermGoalCommand.expect.json_paths['hard_boundaries.push_allowed'] === false &&
       longTermGoalCommand.expect.json_paths['v2_hold_line.new_production_capability_allowed'] === false &&
       longTermGoalCommand.expect.json_paths['v2_hold_line.council_runtime_activation_allowed'] === false &&
@@ -5041,7 +5047,12 @@ async function handleAuditV1Stable(args) {
     {
       validation_command_present: Boolean(longTermGoalCommand),
       strict_policy_allowed: policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'long-term-goal-status', '--remote', 'origin', '--branch', 'master', '--format', 'json']),
-      validation_command_policy_allowed: longTermGoalCommand ? policyAllowsArgv(policy, longTermGoalCommand.argv || []) : false
+      validation_command_policy_allowed: longTermGoalCommand ? policyAllowsArgv(policy, longTermGoalCommand.argv || []) : false,
+      next_stage_transition_boundary_validation_wired: Boolean(longTermGoalCommand &&
+        longTermGoalCommand.expect &&
+        longTermGoalCommand.expect.json_paths &&
+        longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.id'] === 'next_stage_transition_boundary' &&
+        longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.status'] === 'PASS')
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js', '.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md']
   ));
