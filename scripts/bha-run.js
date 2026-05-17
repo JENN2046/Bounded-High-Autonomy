@@ -3420,6 +3420,7 @@ async function handleAuditV1Stable(args) {
   const recoverStatusCommand = validationCommandById(validation, 'recover_status_readonly');
   const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
+  const verifierSelftestCommand = validationCommandById(validation, 'verifier_selftest_negative_matrix');
   const requireAudit = requireModuleAudit([RUN_SCRIPT, VERIFY_SCRIPT]);
   const privateKeyAudit = operatorSignerPrivateKeyAudit();
   const requiredDenied = [
@@ -3448,6 +3449,23 @@ async function handleAuditV1Stable(args) {
   ];
   const missingDenyRegressionIds = requiredDenyRegressionIds
     .filter((id) => !fileContains(RUN_SCRIPT, `'${id}'`) && !fileContains(RUN_SCRIPT, `"${id}"`));
+  const requiredCapabilityRuntimeRegressionIds = [
+    'unknown_capability_type_rejected',
+    'disallowed_provider_capability_type_rejected',
+    'incomplete_git_push_capability_rejected',
+    'replayed_local_capability_rejected',
+    'local_git_push_replay_fail_closed_after_used_session'
+  ];
+  const requiredCapabilityVerifierSelftestIds = [
+    'unsupported_capability_type_rejected',
+    'disallowed_capability_type_rejected',
+    'incomplete_capability_binding_rejected',
+    'capability_replay_rejected'
+  ];
+  const missingCapabilityRuntimeRegressionIds = requiredCapabilityRuntimeRegressionIds
+    .filter((id) => !fileContains(RUN_SCRIPT, `'${id}'`) && !fileContains(RUN_SCRIPT, `"${id}"`));
+  const missingCapabilityVerifierSelftestIds = requiredCapabilityVerifierSelftestIds
+    .filter((id) => !fileContains(VERIFY_SCRIPT, `'${id}'`) && !fileContains(VERIFY_SCRIPT, `"${id}"`));
   const checks = [];
   checks.push(auditCheck(
     'stability_doc_present',
@@ -3518,6 +3536,28 @@ async function handleAuditV1Stable(args) {
       requiredDenied.every((item) => alwaysDenied.includes(item)),
     { capability_possible_v1: capabilityPossible, always_denied_v1: alwaysDenied },
     ['.bha/policy.yaml']
+  ));
+  checks.push(auditCheck(
+    'capability_scope_negative_tests_covered',
+    'V1 git_push-only capability scope is covered by runtime and verifier negative tests for unknown, disallowed, incomplete, and replayed capabilities.',
+    Boolean(regressionCommand &&
+      verifierSelftestCommand &&
+      missingCapabilityRuntimeRegressionIds.length === 0 &&
+      missingCapabilityVerifierSelftestIds.length === 0 &&
+      fileContains(RUN_SCRIPT, 'CAPABILITY_TYPE_NOT_SUPPORTED') &&
+      fileContains(RUN_SCRIPT, 'DISALLOWED_CAPABILITY_TYPE') &&
+      fileContains(VERIFY_SCRIPT, 'UNSUPPORTED_CAPABILITY_MARKED_VALID') &&
+      fileContains(VERIFY_SCRIPT, 'DISALLOWED_CAPABILITY_VALID') &&
+      fileContains(VERIFY_SCRIPT, 'CAPABILITY_REPLAY_DETECTED')),
+    {
+      regression_selftest_validation_command_present: Boolean(regressionCommand),
+      verifier_selftest_validation_command_present: Boolean(verifierSelftestCommand),
+      required_runtime_regression_ids: requiredCapabilityRuntimeRegressionIds,
+      missing_runtime_regression_ids: missingCapabilityRuntimeRegressionIds,
+      required_verifier_selftest_ids: requiredCapabilityVerifierSelftestIds,
+      missing_verifier_selftest_ids: missingCapabilityVerifierSelftestIds
+    },
+    ['scripts/bha-run.js', 'scripts/bha-verify.js', '.bha/validation.yaml']
   ));
   checks.push(auditCheck(
     'v2_capability_framework_preview_default_deny',
