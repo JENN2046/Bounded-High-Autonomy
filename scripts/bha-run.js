@@ -4975,6 +4975,9 @@ async function handleStableExitStatus(args) {
   const gitStatus = await gitStatusShort();
   const gate = await gateStatus(remote, branch);
   const recover = await recoverStatus(remote, branch);
+  const authorizedRuntimeEvidenceDirty = gitStatus.ok === true &&
+    gitStatus.clean !== true &&
+    authorizedRuntimeDirty(gitStatus.stdout);
   const framework = capabilityFramework();
   const council = councilRuntimeStatus();
   const strictVerifierPass = verifier.ok === true &&
@@ -4992,7 +4995,7 @@ async function handleStableExitStatus(args) {
     council.provider_calls_allowed === false &&
     council.memory_writes_allowed === false;
   const strictChecks = {
-    clean_worktree: gitStatus.clean === true,
+    clean_worktree: gitStatus.clean === true || authorizedRuntimeEvidenceDirty,
     verifier_pass: strictVerifierPass,
     audit_v1_stable_pass: stableAudit.ok === true && stableAudit.status === 'PASS',
     audit_v12_pass: v12Audit.ok === true && v12Audit.status === 'PASS',
@@ -5003,7 +5006,8 @@ async function handleStableExitStatus(args) {
       gate.push_requirement.required_now === false &&
       gate.push_requirement.operator_controlled === true &&
       gate.push_requirement.capability_required_for_real_push === true &&
-      gate.next_action_required_now === false,
+      (gate.next_action_required_now === false ||
+        (authorizedRuntimeEvidenceDirty && gate.next_action_scope === 'local_trust_repair')),
     signer_boundary_operator_controlled: gate.signer_boundary &&
       gate.signer_boundary.operator_controls_signer === true &&
       gate.signer_boundary.bha_private_key_access === false,
@@ -5064,6 +5068,7 @@ async function handleStableExitStatus(args) {
     },
     git_reality: {
       clean: gitStatus.clean,
+      authorized_runtime_evidence_dirty: authorizedRuntimeEvidenceDirty,
       short: gitStatus.stdout.trim() || 'CLEAN'
     },
     gate_summary: {
@@ -8435,6 +8440,14 @@ async function handleRegressionSelftest(args) {
     halt_status_present: fileContains(RUN_SCRIPT, 'HALT_GIT_STATUS_AFTER_UNAVAILABLE'),
     no_path_allowlist_claim_without_status: fileContains(RUN_SCRIPT, 'path_allowlist_enforced: false'),
     command_spawned_before_after_status_failure: fileContains(RUN_SCRIPT, 'spawned: true')
+  }));
+  checks.push(regressionCheck('stable_exit_allows_authorized_runtime_evidence_dirty',
+    fileContains(RUN_SCRIPT, 'authorizedRuntimeEvidenceDirty') &&
+    fileContains(RUN_SCRIPT, 'authorized_runtime_evidence_dirty') &&
+    fileContains(RUN_SCRIPT, "gate.next_action_scope === 'local_trust_repair'"), {
+    authorized_runtime_dirty_gate_present: fileContains(RUN_SCRIPT, 'authorizedRuntimeEvidenceDirty'),
+    status_field_present: fileContains(RUN_SCRIPT, 'authorized_runtime_evidence_dirty'),
+    local_trust_repair_scope_present: fileContains(RUN_SCRIPT, "gate.next_action_scope === 'local_trust_repair'")
   }));
   checks.push(regressionCheck('roadmap_current_state_is_procedural_not_snapshot',
     fileContains(ROADMAP_PATH, 'Current repository state is intentionally not embedded') &&

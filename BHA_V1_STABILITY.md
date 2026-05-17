@@ -148,7 +148,7 @@ V1 Stable means the local-first kernel is internally consistent, repeatable from
 
 Freeze completion requires all of these facts at the same repository `HEAD`:
 
-- verified: clean worktree
+- verified: clean worktree, or only authorized runtime evidence dirty files (`.bha/ledger.jsonl`, `.bha/state.json`, `.bha/checkpoint.json`) after validation/checkpoint/closeout repair
 - verified: `node scripts/bha-verify.js` reports `PASS` with no warnings
 - verified: latest validation status is `PASS`
 - verified: checkpoint and closeout bind to the current git `HEAD`
