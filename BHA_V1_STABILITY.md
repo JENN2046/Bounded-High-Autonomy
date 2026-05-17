@@ -58,6 +58,8 @@ After a local commit, git `HEAD` changes even when verifier, validation, checkpo
 
 The current commit identity comes from git reality and, before a real operator-chosen push, a freshly generated and signed git_push capability bound to the current `HEAD`, ledger head, policy hash, and mission hash. Existing `.bha/local/` payloads from an older commit must be reported as stale with machine-readable reasons such as `HEAD_MISMATCH` and `LEDGER_HEAD_MISMATCH`, plus human-readable `reason_details`.
 
+`gate-status` and `recover-status` must expose tracked git reality fields that separate current `HEAD` from checkpoint and closeout evidence-time heads.
+
 ## Not Proof
 
 These can guide workflow but are not proof:

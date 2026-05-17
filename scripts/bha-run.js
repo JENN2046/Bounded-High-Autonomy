@@ -2985,6 +2985,11 @@ async function recoverStatus(remote, branch) {
   const head = await currentHead();
   const verify = await verifierResult();
   const gitStatus = await gitStatusShort();
+  const state = loadState();
+  const ledger = readJsonl(LEDGER_PATH);
+  const checkpoint = readCheckpointFile();
+  const closeoutEvent = state && state.closeout ? ledgerEventByHash(ledger, state.closeout.ledger_event_hash, 'closeout_completed') : null;
+  const gitRealityBinding = trackedGitRealityBinding(head, checkpoint, closeoutEvent);
   const localDirExists = fs.existsSync(BHA_LOCAL_DIR);
   const unsignedPath = path.join(BHA_LOCAL_DIR, 'push-payload.json');
   const signedPath = path.join(BHA_LOCAL_DIR, 'signed-push-capability.json');
@@ -3036,6 +3041,7 @@ async function recoverStatus(remote, branch) {
       clean: gitStatus.clean,
       short: gitStatus.stdout.trim() || 'CLEAN'
     },
+    tracked_git_reality: gitRealityBinding,
     git_push_recovery: {
       requires_new_local_capability: needsLocalGitPushCapability,
       required_now: false,
@@ -4084,6 +4090,7 @@ async function handleAuditV1Stable(args) {
       fileContains(RUN_SCRIPT, 'tracked_git_reality') &&
       fileContains(RUN_SCRIPT, 'checkpoint_matches_current_head') &&
       fileContains(RUN_SCRIPT, 'closeout_matches_current_head') &&
+      fileContains(RUN_SCRIPT, 'recover_status_reports_evidence_time_git_heads') &&
       fileContains(RUN_SCRIPT, 'Payload is bound to a different git HEAD') &&
       fileContains(RUN_SCRIPT, 'Payload is bound to an older ledger head') &&
       fileContains(ROADMAP_PATH, 'post-commit evidence-time HEAD mismatch explicit'),
@@ -5750,6 +5757,18 @@ async function handleRegressionSelftest(args) {
     current_head: trackedGitReality ? trackedGitReality.current_head : 'NO_JSON',
     checkpoint_head: trackedGitReality ? trackedGitReality.checkpoint_head : 'NO_JSON',
     checkpoint_matches_current_head: trackedGitReality ? trackedGitReality.checkpoint_matches_current_head : 'NO_JSON'
+  }));
+  const recoverTrackedGitReality = staleRecoverStatus.parsed ? staleRecoverStatus.parsed.tracked_git_reality : null;
+  checks.push(regressionCheck('recover_status_reports_evidence_time_git_heads', staleRecoverStatus.exit_code === 0 &&
+    recoverTrackedGitReality &&
+    recoverTrackedGitReality.current_head &&
+    recoverTrackedGitReality.checkpoint_head &&
+    recoverTrackedGitReality.closeout_git_reality_head &&
+    recoverTrackedGitReality.proof_boundary &&
+    recoverTrackedGitReality.proof_boundary.includes('evidence-time facts'), {
+    current_head: recoverTrackedGitReality ? recoverTrackedGitReality.current_head : 'NO_JSON',
+    checkpoint_head: recoverTrackedGitReality ? recoverTrackedGitReality.checkpoint_head : 'NO_JSON',
+    checkpoint_matches_current_head: recoverTrackedGitReality ? recoverTrackedGitReality.checkpoint_matches_current_head : 'NO_JSON'
   }));
 
   const verifyFixture = await runCommand([process.execPath, 'scripts/bha-verify.js'], { cwd: fixtureRoot });
