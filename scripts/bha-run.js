@@ -1042,7 +1042,16 @@ function capabilityFramework() {
     unknown_capability_policy: 'DENY',
     extension_policy: {
       default_open: false,
-      required_before_enablement: ['schema', 'binding', 'allowed_command', 'one_use_or_session_policy', 'local_or_tracked_evidence_policy', 'deny_tests', 'replay_tests'],
+      required_before_enablement: [
+        'schema',
+        'binding',
+        'allowed_command',
+        'one_use_or_session_policy',
+        'local_or_tracked_evidence_policy',
+        'deny_tests',
+        'replay_tests',
+        'verifier_evidence'
+      ],
       provider_deploy_release_default: 'DENY'
     },
     test_requirements: {
@@ -3744,13 +3753,17 @@ async function handleAuditV1Stable(args) {
       capabilityFramework().production_capability_types[0] === 'git_push' &&
       capabilityFramework().test_requirements &&
       capabilityFramework().test_requirements.deny_tests_required_before_allow === true &&
-      capabilityFramework().test_requirements.replay_tests_required_before_allow === true,
+      capabilityFramework().test_requirements.replay_tests_required_before_allow === true &&
+      capabilityFramework().extension_policy.required_before_enablement.includes('verifier_evidence') &&
+      fileContains(CAPABILITY_FRAMEWORK_PATH, 'verifier evidence') &&
+      fileContains(ROADMAP_PATH, 'verifier evidence'),
     {
       framework_status_command: 'node scripts/bha-run.js capability-framework-status --format json',
       production_capability_types: capabilityFramework().production_capability_types,
+      required_before_enablement: capabilityFramework().extension_policy.required_before_enablement,
       test_requirements: capabilityFramework().test_requirements
     },
-    ['BHA_V2_CAPABILITY_FRAMEWORK.md', 'scripts/bha-run.js', '.bha/policy.yaml']
+    ['BHA_V2_CAPABILITY_FRAMEWORK.md', 'scripts/bha-run.js', '.bha/policy.yaml', '.bha/roadmap.md']
   ));
   checks.push(auditCheck(
     'v2_council_runtime_preview_no_automation',

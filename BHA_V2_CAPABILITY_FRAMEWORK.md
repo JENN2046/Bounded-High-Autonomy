@@ -37,6 +37,7 @@ Each future capability type must define:
 - replay behavior
 - deny tests
 - replay tests
+- verifier evidence
 
 No capability is enabled merely because it appears in a payload. Policy must explicitly list it, verifier must understand it, and regression tests must cover the deny path before any allow path exists.
 

@@ -136,7 +136,7 @@ Operator status:
 
 4. V2 capability framework hold line
    - Keep `git_push` as the only production capability.
-   - Require schema, binding, allowed command, evidence policy, deny tests, and replay tests before considering any new capability.
+   - Require schema, binding, allowed command, evidence policy, deny tests, replay tests, and verifier evidence before considering any new capability.
    - Keep provider, deploy, release, tag, package publish, memory write, and private key access denied by default.
 
 5. V2+ Council Runtime hold line
