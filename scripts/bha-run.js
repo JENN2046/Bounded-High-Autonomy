@@ -4155,6 +4155,12 @@ async function handleAuditV1Stable(args) {
   ];
   const missingOperatorUxRegressionIds = requiredOperatorUxRegressionIds
     .filter((id) => !fileContains(RUN_SCRIPT, `'${id}'`) && !fileContains(RUN_SCRIPT, `"${id}"`));
+  const requiredStableExitReviewRegressionIds = [
+    'stable_exit_review_validation_wired',
+    'stable_exit_review_boundary_readonly'
+  ];
+  const missingStableExitReviewRegressionIds = requiredStableExitReviewRegressionIds
+    .filter((id) => !fileContains(RUN_SCRIPT, `'${id}'`) && !fileContains(RUN_SCRIPT, `"${id}"`));
   const checks = [];
   checks.push(auditCheck(
     'stability_doc_present',
@@ -4430,6 +4436,7 @@ async function handleAuditV1Stable(args) {
       stableExitReviewCommand.expect.json_paths['v2_hold_line.council_activation_allowed'] === false &&
       policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'stable-exit-review', '--remote', 'origin', '--branch', 'master', '--format', 'json']) &&
       policyAllowsArgv(policy, stableExitReviewCommand.argv || []) &&
+      missingStableExitReviewRegressionIds.length === 0 &&
       fileContains(RUN_SCRIPT, 'async function handleStableExitReview') &&
       fileContains(STABILITY_PATH, '`stable-exit-review` is a read-only prompt-to-artifact exit review') &&
       fileContains(ROADMAP_PATH, '`stable-exit-review` turns the stable exit review') &&
@@ -4437,7 +4444,9 @@ async function handleAuditV1Stable(args) {
     {
       validation_command_present: Boolean(stableExitReviewCommand),
       strict_policy_allowed: policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'stable-exit-review', '--remote', 'origin', '--branch', 'master', '--format', 'json']),
-      validation_command_policy_allowed: stableExitReviewCommand ? policyAllowsArgv(policy, stableExitReviewCommand.argv || []) : false
+      validation_command_policy_allowed: stableExitReviewCommand ? policyAllowsArgv(policy, stableExitReviewCommand.argv || []) : false,
+      required_regression_ids: requiredStableExitReviewRegressionIds,
+      missing_regression_ids: missingStableExitReviewRegressionIds
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js', 'BHA_V1_STABILITY.md', '.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md']
   ));
@@ -5655,6 +5664,7 @@ async function handleRegressionSelftest(args) {
   const rootSignedPayloadStatusCommand = validationCommandById(rootValidation, 'signed_payload_status_readonly');
   const rootOperatorSignerPreflightCommand = validationCommandById(rootValidation, 'operator_signer_preflight_readonly');
   const rootRecoverStatusCommand = validationCommandById(rootValidation, 'recover_status_readonly');
+  const rootStableExitReviewCommand = validationCommandById(rootValidation, 'stable_exit_review_readonly');
   const hookExpect = rootHookCommand && rootHookCommand.expect ? rootHookCommand.expect : {};
   checks.push(regressionCheck('hook_status_validation_allows_blocked_local_setup', Boolean(rootHookCommand &&
     hookExpect.exit_code === 0 &&
@@ -5699,6 +5709,68 @@ async function handleRegressionSelftest(args) {
     rootRecoverStatusCommand.expect.recorded === false), {
     validation_command_present: Boolean(rootRecoverStatusCommand),
     read_only: rootRecoverStatusCommand && rootRecoverStatusCommand.expect ? rootRecoverStatusCommand.expect.read_only : 'MISSING'
+  }));
+  const stableExitReviewExpect = rootStableExitReviewCommand && rootStableExitReviewCommand.expect
+    ? rootStableExitReviewCommand.expect
+    : {};
+  const stableExitReviewJsonPaths = stableExitReviewExpect.json_paths || {};
+  checks.push(regressionCheck('stable_exit_review_validation_wired', Boolean(rootStableExitReviewCommand &&
+    stableExitReviewExpect.exit_code === 0 &&
+    stableExitReviewExpect.ok === true &&
+    stableExitReviewExpect.status === 'PASS' &&
+    stableExitReviewExpect.read_only === true &&
+    stableExitReviewExpect.recorded === false &&
+    stableExitReviewJsonPaths.decision === 'ENTER_NEXT_LOCAL_PLANNING' &&
+    stableExitReviewJsonPaths['completion_boundary.long_term_goal_complete'] === false &&
+    stableExitReviewJsonPaths['completion_boundary.push_performed'] === false &&
+    stableExitReviewJsonPaths['push_requirement.required_now'] === false &&
+    stableExitReviewJsonPaths['v2_hold_line.capability_enablement_allowed'] === false &&
+    stableExitReviewJsonPaths['v2_hold_line.council_activation_allowed'] === false &&
+    Array.isArray(stableExitReviewExpect.has_keys) &&
+    stableExitReviewExpect.has_keys.includes('stable_exit_status') &&
+    stableExitReviewExpect.has_keys.includes('prompt_to_artifact_checklist') &&
+    stableExitReviewExpect.has_keys.includes('proof_boundary')), {
+    validation_command_present: Boolean(rootStableExitReviewCommand),
+    read_only: stableExitReviewExpect.read_only,
+    json_paths: stableExitReviewJsonPaths
+  }));
+  const stableExitReviewBoundary = await runCommand([
+    process.execPath,
+    'scripts/bha-run.js',
+    'stable-exit-review',
+    '--remote',
+    'origin',
+    '--branch',
+    'master',
+    '--format',
+    'json',
+    '--allow-validation-in-progress'
+  ], { cwd: ROOT });
+  const stableExitReviewParsed = parseJsonLine(stableExitReviewBoundary.stdout);
+  checks.push(regressionCheck('stable_exit_review_boundary_readonly', stableExitReviewBoundary.exit_code === 0 &&
+    stableExitReviewParsed &&
+    stableExitReviewParsed.ok === true &&
+    stableExitReviewParsed.read_only === true &&
+    stableExitReviewParsed.recorded === false &&
+    stableExitReviewParsed.completion_boundary &&
+    stableExitReviewParsed.completion_boundary.long_term_goal_complete === false &&
+    stableExitReviewParsed.completion_boundary.push_performed === false &&
+    stableExitReviewParsed.push_requirement &&
+    stableExitReviewParsed.push_requirement.required_now === false &&
+    stableExitReviewParsed.v2_hold_line &&
+    stableExitReviewParsed.v2_hold_line.capability_enablement_allowed === false &&
+    stableExitReviewParsed.v2_hold_line.council_activation_allowed === false &&
+    String(stableExitReviewParsed.proof_boundary || '').includes('does not push'), {
+    exit_code: stableExitReviewBoundary.exit_code,
+    status: stableExitReviewParsed ? stableExitReviewParsed.status : 'NO_JSON',
+    read_only: stableExitReviewParsed ? stableExitReviewParsed.read_only : 'NO_JSON',
+    recorded: stableExitReviewParsed ? stableExitReviewParsed.recorded : 'NO_JSON',
+    long_term_goal_complete: stableExitReviewParsed && stableExitReviewParsed.completion_boundary
+      ? stableExitReviewParsed.completion_boundary.long_term_goal_complete
+      : 'NO_JSON',
+    push_required_now: stableExitReviewParsed && stableExitReviewParsed.push_requirement
+      ? stableExitReviewParsed.push_requirement.required_now
+      : 'NO_JSON'
   }));
   const obsoleteBootstrapIdGate = 'failedValidation' + 'IsBootstrapOnly';
   checks.push(regressionCheck('stable_audit_bootstrap_allows_prior_validation_failure_ids',
