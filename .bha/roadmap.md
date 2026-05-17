@@ -48,6 +48,7 @@ Completed locally:
 - `stable-exit-status` reports whether the V1 Stable Candidate is clean enough to enter the next local planning stage without implying that push is required.
 - `stable-exit-review` turns the stable exit review into a read-only prompt-to-artifact checklist over verifier, validation, audits, recovery, gate, docs, and V2 hold-line evidence.
 - `next-local-plan-status` reports the next local planning queue and hard boundaries without enabling remote actions, new production capabilities, or automated council runtime.
+- `next-local-plan-status` also surfaces incomplete V2 capability and council coverage in the local planning queue so missing future prerequisites are visible without enabling them.
 - `long-term-goal-status` reports the long-term prompt-to-artifact completion boundary, current V1 stable candidate state, future V2 work, and hard hold lines without marking future objectives complete.
 - `capability-framework-status` reports the default-deny V2 capability preview and the deny/replay test gate for any future capability type.
 - `council-status` reports the V2+ Council Runtime preview contract as read-only, local-only coordination context, not proof.

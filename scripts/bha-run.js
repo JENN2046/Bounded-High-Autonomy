@@ -4137,6 +4137,13 @@ async function handleNextLocalPlanStatus(args) {
       status: 'PREVIEW_HOLD_LINE',
       allowed_next_work: framework.enablement_gate ? framework.enablement_gate.allowed_next_work : [],
       blocked_actions: framework.enablement_gate ? framework.enablement_gate.forbidden_without_new_objective : [],
+      coverage_complete: framework.test_requirements &&
+        framework.test_requirements.current_coverage
+        ? framework.test_requirements.current_coverage.enablement_coverage_complete === true
+        : false,
+      missing_before_enablement: framework.test_requirements
+        ? framework.test_requirements.missing_before_enablement || []
+        : [],
       entry_gate: 'new explicit objective plus schema, binding, policy, deny tests, replay tests, and verifier evidence'
     },
     {
@@ -4144,6 +4151,13 @@ async function handleNextLocalPlanStatus(args) {
       status: 'PREVIEW_HOLD_LINE',
       allowed_next_work: council.activation_gate ? council.activation_gate.allowed_next_work : [],
       blocked_actions: council.activation_gate ? council.activation_gate.forbidden_without_new_objective : [],
+      coverage_complete: council.test_requirements &&
+        council.test_requirements.current_coverage
+        ? council.test_requirements.current_coverage.activation_coverage_complete === true
+        : false,
+      missing_before_activation: council.test_requirements
+        ? council.test_requirements.missing_before_activation || []
+        : [],
       entry_gate: 'new explicit objective plus verifier-backed workflow model and local dry-run evidence'
     }
   ];
@@ -4915,6 +4929,10 @@ async function handleAuditV1Stable(args) {
       nextLocalPlanCommand.expect.json_paths.decision === 'CONTINUE_LOCAL_PLANNING' &&
       nextLocalPlanCommand.expect.json_paths['completion_boundary.long_term_goal_complete'] === false &&
       nextLocalPlanCommand.expect.json_paths['validation_coverage.long_term_goal_status_readonly'] === true &&
+      nextLocalPlanCommand.expect.json_paths['current_phase_queue.3.coverage_complete'] === false &&
+      nextLocalPlanCommand.expect.json_paths['current_phase_queue.3.missing_before_enablement.0'] === 'future_capability_schema' &&
+      nextLocalPlanCommand.expect.json_paths['current_phase_queue.4.coverage_complete'] === false &&
+      nextLocalPlanCommand.expect.json_paths['current_phase_queue.4.missing_before_activation.0'] === 'verifier_backed_workflow_model' &&
       nextLocalPlanCommand.expect.json_paths['hard_boundaries.push_allowed'] === false &&
       nextLocalPlanCommand.expect.json_paths['hard_boundaries.private_key_access_allowed'] === false &&
       nextLocalPlanCommand.expect.json_paths['v2_hold_line.new_production_capability_allowed'] === false &&

@@ -374,7 +374,11 @@
           "completion_boundary.long_term_goal_complete": false,
           "completion_boundary.push_performed": false,
           "current_phase_queue.0.id": "v1_stable_candidate_maintenance",
+          "current_phase_queue.3.coverage_complete": false,
+          "current_phase_queue.3.missing_before_enablement.0": "future_capability_schema",
           "current_phase_queue.4.id": "v2_council_runtime_hold_line",
+          "current_phase_queue.4.coverage_complete": false,
+          "current_phase_queue.4.missing_before_activation.0": "verifier_backed_workflow_model",
           "next_commands.0": "node scripts/bha-run.js next-local-plan-status --remote 'origin' --branch 'master' --format json",
           "next_commands.1": "node scripts/bha-run.js stable-exit-review --remote 'origin' --branch 'master' --format json"
         },
