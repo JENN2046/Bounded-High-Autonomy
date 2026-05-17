@@ -66,4 +66,6 @@ node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format
 
 The long-term goal is not a remote release or push state. The current local stable candidate is clean only when verifier, validation, checkpoint, closeout, stable audit, recovery status, and gate-status are freshly checked against repository reality.
 
+Entering the next local planning stage requires `stable-exit-review` to report `PASS`, `next-local-plan-status` to report `NEXT_LOCAL_PLAN_READY`, a clean worktree, and `push_required_now=false`. That state means local planning can continue; it does not mean the long-term goal is complete, does not authorize push, and does not enable V2 capability or council runtime activation.
+
 Any future move beyond the current hold lines requires a new explicit objective and local deny/replay/verifier coverage before enablement.

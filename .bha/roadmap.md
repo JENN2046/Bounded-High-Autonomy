@@ -131,6 +131,11 @@ Operator status:
 
 ## Next Tasks
 
+Stage transition rule:
+
+- Enter the next local planning stage only when `stable-exit-review` reports `PASS`, `next-local-plan-status` reports `NEXT_LOCAL_PLAN_READY`, the worktree is clean, and `push_required_now=false`.
+- Treat that transition as local planning readiness only. It does not authorize push, complete the long-term goal, or enable V2 capability/council runtime work.
+
 1. V1 stable candidate maintenance
    - Keep verifier, validation, checkpoint, closeout, audit, and gate-status passing from a clean worktree.
    - Keep post-commit evidence-time HEAD mismatch explicit so operator knows when a fresh capability is needed.
