@@ -386,9 +386,11 @@
           "current_phase_queue.0.id": "v1_stable_candidate_maintenance",
           "current_phase_queue.3.coverage_complete": false,
           "current_phase_queue.3.missing_before_enablement.0": "future_capability_schema",
+          "current_phase_queue.3.non_enablement_reasons.5": "explicit_policy_change_missing",
           "current_phase_queue.4.id": "v2_council_runtime_hold_line",
           "current_phase_queue.4.coverage_complete": false,
           "current_phase_queue.4.missing_before_activation.0": "verifier_backed_workflow_model",
+          "current_phase_queue.4.non_activation_reasons.5": "automated_spawn_provider_memory_and_remote_actions_forbidden",
           "next_commands.0": "node scripts/bha-run.js next-local-plan-status --remote 'origin' --branch 'master' --format json",
           "next_commands.1": "node scripts/bha-run.js stable-exit-review --remote 'origin' --branch 'master' --format json"
         },

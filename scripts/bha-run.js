@@ -4185,6 +4185,9 @@ async function handleNextLocalPlanStatus(args) {
       missing_before_enablement: framework.test_requirements
         ? framework.test_requirements.missing_before_enablement || []
         : [],
+      non_enablement_reasons: framework.draft_artifacts
+        ? framework.draft_artifacts.non_enablement_reasons || []
+        : [],
       entry_gate: 'new explicit objective plus schema, binding, policy, deny tests, replay tests, and verifier evidence'
     },
     {
@@ -4198,6 +4201,9 @@ async function handleNextLocalPlanStatus(args) {
         : false,
       missing_before_activation: council.test_requirements
         ? council.test_requirements.missing_before_activation || []
+        : [],
+      non_activation_reasons: council.draft_artifacts
+        ? council.draft_artifacts.non_activation_reasons || []
         : [],
       entry_gate: 'new explicit objective plus verifier-backed workflow model and local dry-run evidence'
     }
@@ -5027,8 +5033,10 @@ async function handleAuditV1Stable(args) {
       nextLocalPlanCommand.expect.json_paths['validation_coverage.long_term_goal_status_readonly'] === true &&
       nextLocalPlanCommand.expect.json_paths['current_phase_queue.3.coverage_complete'] === false &&
       nextLocalPlanCommand.expect.json_paths['current_phase_queue.3.missing_before_enablement.0'] === 'future_capability_schema' &&
+      nextLocalPlanCommand.expect.json_paths['current_phase_queue.3.non_enablement_reasons.5'] === 'explicit_policy_change_missing' &&
       nextLocalPlanCommand.expect.json_paths['current_phase_queue.4.coverage_complete'] === false &&
       nextLocalPlanCommand.expect.json_paths['current_phase_queue.4.missing_before_activation.0'] === 'verifier_backed_workflow_model' &&
+      nextLocalPlanCommand.expect.json_paths['current_phase_queue.4.non_activation_reasons.5'] === 'automated_spawn_provider_memory_and_remote_actions_forbidden' &&
       nextLocalPlanCommand.expect.json_paths['hard_boundaries.push_allowed'] === false &&
       nextLocalPlanCommand.expect.json_paths['hard_boundaries.private_key_access_allowed'] === false &&
       nextLocalPlanCommand.expect.json_paths['v2_hold_line.new_production_capability_allowed'] === false &&
