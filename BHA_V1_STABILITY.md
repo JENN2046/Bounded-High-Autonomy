@@ -94,6 +94,14 @@ V1 can be treated as a stable local baseline only when all of the following are 
 - Unknown, incomplete, unsupported, provider, memory, deploy, release, package, ssh, and generic command capabilities remain fail-closed.
 - Path allowlist enforcement is active for runtime `exec` file effects.
 - `AGENTS.md`, roadmap text, closeout prose, prompt text, and council output remain guidance, not proof.
+- Spawned `exec` commands have both before and after git status evidence. If either status cannot be established, the runtime must record a `HALT_*_GIT_STATUS_*_UNAVAILABLE` event and fail closed.
+
+Freeze claim labels:
+
+- verified: confirmed by current repository commands, verifier output, or validation evidence
+- inferred: derived from verified facts but not directly checked by a command in the current session
+- proposed: planned requirement, CI design, or branch protection setting not yet applied
+- unknown: requires future fresh clone, CI output, or GitHub settings inspection
 
 V1 freeze acceptance commands:
 
@@ -104,7 +112,8 @@ node --check scripts/bha-verify.js
 node scripts/bha-verify.js --self-test
 node scripts/bha-run.js regression-selftest --format json
 node scripts/bha-run.js validate
-node scripts/bha-run.js verify --record
+node scripts/bha-run.js checkpoint --format json
+node scripts/bha-run.js closeout --record --format json
 node scripts/bha-verify.js
 node scripts/bha-run.js audit-v12 --format json
 node scripts/bha-run.js audit-v1-stable --format json
@@ -120,6 +129,7 @@ P1 blockers:
 - checkpoint or closeout bound to an older git `HEAD`
 - state/ledger mismatch
 - accepted unsupported closeout or capability claim
+- spawned `exec` event with `path_allowlist_enforced=false` that is not explicitly halted
 - real remote side effect without explicit operator intent and a valid current capability
 - non-`git_push` production capability enablement
 - CI or integration layer writing tracked evidence without a dedicated evidence model
@@ -135,6 +145,17 @@ P2 blockers:
 Completion definition:
 
 V1 Stable means the local-first kernel is internally consistent, repeatable from tracked evidence, and ready for remote gate work. It does not mean the project has remote enforcement, remote attestation, production deployment safety, or authorization to push.
+
+Freeze completion requires all of these facts at the same repository `HEAD`:
+
+- verified: clean worktree
+- verified: `node scripts/bha-verify.js` reports `PASS` with no warnings
+- verified: latest validation status is `PASS`
+- verified: checkpoint and closeout bind to the current git `HEAD`
+- verified: `stable-exit-status` reports `PASS`
+- verified: `gate-status` fails closed unless a current one-use local `git_push` capability is present
+- proposed: remote CI and branch protection can be designed from the local evidence model
+- unknown until remote work begins: GitHub settings, required check names as observed by GitHub, and admin bypass configuration
 
 Rollback path:
 

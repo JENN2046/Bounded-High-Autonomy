@@ -87,7 +87,7 @@ This section turns the next local planning queue into concrete stop gates. Each 
 | --- | --- | --- | --- |
 | Local agent runs a denied command | verified | runner policy denies known command families | keep deny taxonomy and add regression when a new family appears |
 | Shell success after denied check | verified | `check` and `assert-deny` now have distinct exit semantics | keep validation negative tests on `assert-deny` |
-| Runtime changes files outside allowed paths | verified | `exec` records before/after git status and enforces policy paths | keep path enforcement in regression coverage |
+| Runtime changes files outside allowed paths | verified | `exec` records before/after git status, fails closed when either status is unavailable, and enforces policy paths | keep path enforcement in regression coverage |
 | Ledger write race | verified | local ledger lock exists | keep stale lock recovery and add replay checks before stable freeze |
 | Capability double consume | verified | local capability consume is lock-protected | add future black-box concurrency fixture if needed |
 | Local hook bypass with `--no-verify` | verified risk | local hook cannot prevent it | remote CI and branch protection required |
@@ -169,6 +169,8 @@ CI requirements:
 - `permissions: contents: read`
 - no repository secrets
 - no write token
+- no `pull_request_target`
+- no checkout credentials persisted after checkout
 - no dependency install or package manager mutation
 - no provider calls
 - no deploy, release, tag, package publish, or push
@@ -185,6 +187,56 @@ node scripts/bha-verify.js
 node scripts/bha-run.js audit-v12 --format json
 node scripts/bha-run.js audit-v1-stable --format json
 ```
+
+Proposed required check names:
+
+- `bha/syntax`
+- `bha/verifier-self-test`
+- `bha/verifier`
+- `bha/audit-v12`
+- `bha/audit-v1-stable`
+- `bha/fresh-clone-readonly`
+- `bha/bypass-matrix-readonly`
+
+Proposed JSON artifacts:
+
+- `bha-syntax.json`
+- `bha-verifier-self-test.json`
+- `bha-verifier.json`
+- `bha-audit-v12.json`
+- `bha-audit-v1-stable.json`
+- `bha-fresh-clone-readonly.json`
+- `bha-bypass-matrix-readonly.json`
+
+Fresh clone read-only matrix:
+
+```powershell
+git status --short --branch
+node --check scripts/bha-run.js
+node --check scripts/bha-verify.js
+node scripts/bha-verify.js --self-test
+node scripts/bha-verify.js
+node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json
+node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json
+```
+
+Bypass matrix read-only assertions:
+
+- `check -- git push origin master` returns DENY with exit 2.
+- `assert-deny -- git push origin master` returns success because DENY is expected.
+- `assert-deny -- git push --force origin master` returns success because force push is denied.
+- `assert-deny -- git tag v0.0.0` returns success because tag/release is denied.
+- `assert-deny -- npm install` and `assert-deny -- npm publish` return success because package install/publish is denied.
+- `assert-deny -- openai models list` and `assert-deny -- codex-memory write` return success because provider and memory writes are denied.
+- `gate-status` reports `push_requirement.required_now=false` and blocks real push readiness without a current consumed `git_push` capability.
+
+Workflow hardening requirements:
+
+- Use `actions/checkout` with `persist-credentials: false`.
+- Do not request or inherit write permissions.
+- Do not upload `.bha/local/`.
+- Do not run `validate`, `checkpoint`, `closeout --record`, `push-prep`, `issue-capability`, `consume-capability`, or any command that writes tracked evidence.
+- Treat artifacts as CI observations only. They do not update ledger/state and do not replace local closeout evidence.
 
 Future strict interface target:
 
@@ -203,18 +255,29 @@ Claim status: proposed GitHub configuration checklist, not applied.
 Required settings before claiming remote gate:
 
 - required status checks before merge
-- fixed check names for BHA syntax, verifier, self-test, and audit
+- fixed required check names: `bha/syntax`, `bha/verifier-self-test`, `bha/verifier`, `bha/audit-v12`, `bha/audit-v1-stable`, `bha/fresh-clone-readonly`, and `bha/bypass-matrix-readonly`
 - require branch up to date before merge, unless explicitly waived
 - block force pushes
 - block branch deletion
-- decide whether PR is required or direct owner push is allowed
-- decide whether administrators can bypass
+- require PR before merging to `master`; direct owner push is an emergency path only if explicitly documented
+- require at least one approving review for changes to `.bha/**`, `scripts/bha-*.js`, `.githooks/**`, `.github/workflows/**`, and `AGENTS.md`
+- require conversation resolution before merge
+- do not allow administrators to bypass unless an emergency record is written afterward
 - restrict push access where supported
 - document emergency bypass and cleanup path
+- require signed commits only if the repository owner can support that operationally; otherwise do not claim signed-commit protection
+- protect workflow changes with review and required checks
 
 Stop gate:
 
 No claim of remote enforcement until the protection rules are actually applied and verified from GitHub repository settings.
+
+Emergency bypass path:
+
+1. State the reason, affected branch, exact bypass action, and rollback command before acting.
+2. Keep the bypass local or remote-minimal; do not combine it with release, deploy, tag, or provider actions.
+3. After the emergency action, run the read-only CI gate and local verifier path.
+4. Record the bypass as accepted residual risk or repair it with a normal protected PR.
 
 ### Fresh Clone And Bypass Validation Matrix
 

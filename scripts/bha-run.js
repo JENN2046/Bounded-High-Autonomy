@@ -1051,6 +1051,45 @@ async function handleExec(args) {
   }
   const result = await runCommand(argv, { inherit: true });
   const statusAfter = await gitStatusPorcelainV2();
+  if (!statusAfter.ok) {
+    appendLedger('command_execution', {
+      command: scrubArgv(argv),
+      spawned: true,
+      shell: false,
+      exit_code: result.exit_code,
+      signal: result.signal,
+      error: statusAfter.error || 'git status after exec failed',
+      file_changes: [],
+      git_status: {
+        before: {
+          ok: statusBefore.ok,
+          exit_code: statusBefore.exit_code,
+          error: statusBefore.error || null,
+          stderr: truncate(statusBefore.stderr),
+          files: statusBefore.files
+        },
+        after: {
+          ok: statusAfter.ok,
+          exit_code: statusAfter.exit_code,
+          error: statusAfter.error || null,
+          stderr: truncate(statusAfter.stderr),
+          files: statusAfter.files
+        }
+      },
+      path_allowlist_enforced: false,
+      disallowed_file_changes: [],
+      status: 'HALT_GIT_STATUS_AFTER_UNAVAILABLE'
+    });
+    console.log(JSON.stringify({
+      ok: false,
+      status: 'HALT_GIT_STATUS_AFTER_UNAVAILABLE',
+      allowed: false,
+      spawned: true,
+      reason: 'git status after exec failed'
+    }));
+    process.exitCode = 5;
+    return;
+  }
   const fileChanges = statusBefore.ok && statusAfter.ok ? fileChangesAfterExec(statusBefore, statusAfter, policy) : [];
   const disallowed = fileChanges.filter((file) => !file.allowed || file.protected);
   const statusPayload = {
@@ -8387,6 +8426,15 @@ async function handleRegressionSelftest(args) {
     halt_status_present: fileContains(RUN_SCRIPT, 'HALT_GIT_STATUS_BEFORE_UNAVAILABLE'),
     no_path_allowlist_claim_without_status: fileContains(RUN_SCRIPT, 'path_allowlist_enforced: false'),
     fail_closed_exit_code: fileContains(RUN_SCRIPT, 'process.exitCode = 5')
+  }));
+  checks.push(regressionCheck('exec_fails_closed_without_after_git_status',
+    fileContains(RUN_SCRIPT, 'HALT_GIT_STATUS_AFTER_UNAVAILABLE') &&
+    fileContains(RUN_SCRIPT, "reason: 'git status after exec failed'") &&
+    fileContains(RUN_SCRIPT, 'path_allowlist_enforced: false') &&
+    fileContains(RUN_SCRIPT, 'spawned: true'), {
+    halt_status_present: fileContains(RUN_SCRIPT, 'HALT_GIT_STATUS_AFTER_UNAVAILABLE'),
+    no_path_allowlist_claim_without_status: fileContains(RUN_SCRIPT, 'path_allowlist_enforced: false'),
+    command_spawned_before_after_status_failure: fileContains(RUN_SCRIPT, 'spawned: true')
   }));
   checks.push(regressionCheck('roadmap_current_state_is_procedural_not_snapshot',
     fileContains(ROADMAP_PATH, 'Current repository state is intentionally not embedded') &&
