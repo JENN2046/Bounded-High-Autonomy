@@ -264,6 +264,20 @@
       },
       {
         "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "signed-payload-status",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only signed git_push payload status"
+      },
+      {
+        "command": "node",
         "args_prefix": [
           "scripts/bha-run.js",
           "verify-signed-capability",

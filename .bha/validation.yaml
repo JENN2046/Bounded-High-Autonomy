@@ -298,6 +298,32 @@
       }
     },
     {
+      "id": "signed_payload_status_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "signed-payload-status",
+        "--remote",
+        "origin",
+        "--branch",
+        "master",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "recorded": false,
+        "read_only": true,
+        "has_keys": [
+          "signed_payload",
+          "local_payload_status",
+          "next_action",
+          "signer_boundary",
+          "proof_boundary"
+        ]
+      }
+    },
+    {
       "id": "verify_signed_reject_nested_envelope",
       "argv": [
         "node",
