@@ -2640,6 +2640,10 @@ function nextGateCommands(action, remote, branch) {
   const targetBranch = branch || 'master';
   const payloadPath = '.bha/local/push-payload.json';
   const signedPath = '.bha/local/signed-push-capability.json';
+  const remoteArg = powerShellSingleQuote(targetRemote);
+  const branchArg = powerShellSingleQuote(targetBranch);
+  const payloadArg = powerShellSingleQuote(payloadPath);
+  const signedArg = powerShellSingleQuote(signedPath);
   const commands = {
     RUN_VERIFIER_AND_FIX_ISSUES: ['node scripts/bha-verify.js'],
     RESOLVE_VERIFIER_WARNINGS_OR_RECORD_CLOSEOUT: ['node scripts/bha-run.js closeout --record --format json'],
@@ -2653,23 +2657,23 @@ function nextGateCommands(action, remote, branch) {
     RUN_CLOSEOUT_RECORD: ['node scripts/bha-run.js closeout --record --format json'],
     COMMIT_OR_RESOLVE_UNVERIFIED_WORKTREE_CHANGES: ['git status --short'],
     MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY: [
-      `node scripts/bha-run.js make-push-payload --remote ${targetRemote} --branch ${targetBranch} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadPath}`,
+      `node scripts/bha-run.js make-push-payload --remote ${remoteArg} --branch ${branchArg} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadArg}`,
       `operator signs ${payloadPath} outside BHA and writes ${signedPath}`,
-      `node scripts/bha-run.js verify-signed-capability --file ${signedPath}`,
-      `node scripts/bha-run.js issue-capability --file ${signedPath}`,
-      `node scripts/bha-run.js consume-capability --id <capability_id> --for git_push --remote ${targetRemote} --branch ${targetBranch}`,
-      `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${targetRemote}`
+      `node scripts/bha-run.js verify-signed-capability --file ${signedArg}`,
+      `node scripts/bha-run.js issue-capability --file ${signedArg}`,
+      `node scripts/bha-run.js consume-capability --id <capability_id> --for git_push --remote ${remoteArg} --branch ${branchArg}`,
+      `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${remoteArg}`
     ],
     ISSUE_AND_CONSUME_A_NEW_SIGNED_GIT_PUSH_CAPABILITY: [
-      `node scripts/bha-run.js make-push-payload --remote ${targetRemote} --branch ${targetBranch} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadPath}`,
+      `node scripts/bha-run.js make-push-payload --remote ${remoteArg} --branch ${branchArg} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadArg}`,
       `operator signs ${payloadPath} outside BHA and writes ${signedPath}`,
-      `node scripts/bha-run.js verify-signed-capability --file ${signedPath}`,
-      `node scripts/bha-run.js issue-capability --file ${signedPath}`,
-      `node scripts/bha-run.js consume-capability --id <capability_id> --for git_push --remote ${targetRemote} --branch ${targetBranch}`
+      `node scripts/bha-run.js verify-signed-capability --file ${signedArg}`,
+      `node scripts/bha-run.js issue-capability --file ${signedArg}`,
+      `node scripts/bha-run.js consume-capability --id <capability_id> --for git_push --remote ${remoteArg} --branch ${branchArg}`
     ],
     READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH: [
-      `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${targetRemote}`,
-      `git push ${targetRemote} ${targetBranch}`
+      `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${remoteArg}`,
+      `git push ${remoteArg} ${branchArg}`
     ]
   };
   return commands[action] || [];
@@ -3039,11 +3043,11 @@ async function recoverStatus(remote, branch) {
       reason: hasUsableCapability.ok === true ? null : hasUsableCapability.reason,
       local_only: true,
       next_commands: [
-        `node scripts/bha-run.js push-prep --remote ${targetRemote} --branch ${targetBranch || 'master'} --expires-minutes 20 --key-id owner-main-pkcs8 --format json --write-handoff`,
-        `node scripts/bha-run.js operator-signer-preflight --remote ${targetRemote} --branch ${targetBranch || 'master'} --format json`,
+        `node scripts/bha-run.js push-prep --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --expires-minutes 20 --key-id owner-main-pkcs8 --format json --write-handoff`,
+        `node scripts/bha-run.js operator-signer-preflight --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --format json`,
         'operator signs .bha/local/push-payload.json outside BHA and writes .bha/local/signed-push-capability.json',
-        `node scripts/bha-run.js signed-payload-status --remote ${targetRemote} --branch ${targetBranch || 'master'} --format json`,
-        `node scripts/bha-run.js gate-status --remote ${targetRemote} --branch ${targetBranch || 'master'} --format json`
+        `node scripts/bha-run.js signed-payload-status --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --format json`,
+        `node scripts/bha-run.js gate-status --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --format json`
       ]
     },
     proof_boundary: '.bha/local/ is local-only capability evidence and is not required for tracked verifier trust; fresh clones must regenerate local git_push capability evidence before pushing.'
@@ -3167,6 +3171,9 @@ function localPayloadStatus(unsigned, signed) {
 async function operatorPushHandoff(action, remote, branch, head, capability, immediateCommands, context) {
   const payloadPath = '.bha/local/push-payload.json';
   const signedPath = '.bha/local/signed-push-capability.json';
+  const remoteArg = powerShellSingleQuote(remote || 'origin');
+  const branchArg = powerShellSingleQuote(branch || 'master');
+  const payloadArg = powerShellSingleQuote(payloadPath);
   const currentContext = context || currentPayloadContext(remote, branch, head, null);
   const unsigned = capabilityFileSummary(payloadPath, remote, branch, head, false, currentContext);
   const signed = await signedCapabilityFileSummary(signedPath, remote, branch, head, currentContext);
@@ -3185,14 +3192,14 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
     'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH'
   ]);
   const capabilityCommands = [
-    `node scripts/bha-run.js make-push-payload --remote ${remote || 'origin'} --branch ${branch || 'master'} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadPath}`,
+    `node scripts/bha-run.js make-push-payload --remote ${remoteArg} --branch ${branchArg} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadArg}`,
     `operator signs ${payloadPath} outside BHA and writes ${signedPath}`,
     `$cap = "${signedPath}"`,
     `$id = "${capabilityId}"`,
     'node scripts/bha-run.js verify-signed-capability --file $cap',
     'node scripts/bha-run.js issue-capability --file $cap',
-    `node scripts/bha-run.js consume-capability --id $id --for git_push --remote ${remote || 'origin'} --branch ${branch || 'master'}`,
-    `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${remote || 'origin'}`
+    `node scripts/bha-run.js consume-capability --id $id --for git_push --remote ${remoteArg} --branch ${branchArg}`,
+    `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${remoteArg}`
   ];
   const blockedBeforeCapability = !capabilityActions.has(action);
   const singleLineCommands = blockedBeforeCapability ? immediateCommands : capabilityCommands;
@@ -3643,6 +3650,7 @@ async function handleAuditV1Stable(args) {
     'push_prep_print_next_command_single_line',
     'push_prep_write_handoff_local_only',
     'push_prep_rejects_local_symlink_escape',
+    'gate_status_copyable_commands_quote_arguments',
     'operator_handoff_capability_flow_is_conditional',
     'gate_status_next_action_context_is_conditional'
   ];
@@ -4220,6 +4228,7 @@ async function handleAuditV12(args) {
     'gate_status_reports_post_push_status',
     'gate_status_reports_push_requirement_boundary',
     'gate_status_operator_meaning_is_conditional',
+    'gate_status_copyable_commands_quote_arguments',
     'operator_handoff_capability_flow_is_conditional',
     'gate_status_next_action_context_is_conditional',
     'local_git_push_replay_fail_closed_after_used_session',
@@ -5135,6 +5144,27 @@ async function handleRegressionSelftest(args) {
     next_action: missingPayloadGateStatus.parsed ? missingPayloadGateStatus.parsed.next_action : 'NO_JSON',
     next_action_required_now: missingPayloadGateStatus.parsed ? missingPayloadGateStatus.parsed.next_action_required_now : 'NO_JSON',
     next_action_scope: missingPayloadGateStatus.parsed ? missingPayloadGateStatus.parsed.next_action_scope : 'NO_JSON'
+  }));
+  const gateNextCommands = missingPayloadGateStatus.parsed && Array.isArray(missingPayloadGateStatus.parsed.next_commands)
+    ? missingPayloadGateStatus.parsed.next_commands
+    : [];
+  const gateCapabilityCommands = missingPayloadHandoff && Array.isArray(missingPayloadHandoff.capability_commands_when_unblocked)
+    ? missingPayloadHandoff.capability_commands_when_unblocked
+    : [];
+  const gateCopyableCommands = gateNextCommands.concat(gateCapabilityCommands);
+  checks.push(regressionCheck('gate_status_copyable_commands_quote_arguments', missingPayloadGateStatus.exit_code === 0 &&
+    gateCopyableCommands.length > 0 &&
+    gateCopyableCommands.every((commandText) => !String(commandText).includes('\n')) &&
+    gateCopyableCommands.some((commandText) => String(commandText).includes("--remote 'origin'")) &&
+    gateCopyableCommands.some((commandText) => String(commandText).includes(`--branch '${branch}'`)) &&
+    gateCopyableCommands.some((commandText) => String(commandText).includes("--out '.bha/local/push-payload.json'")) &&
+    gateCopyableCommands.some((commandText) => String(commandText).includes("--file '.bha/local/signed-push-capability.json'")), {
+    command_count: gateCopyableCommands.length,
+    has_newline: gateCopyableCommands.some((commandText) => String(commandText).includes('\n')),
+    quotes_remote: gateCopyableCommands.some((commandText) => String(commandText).includes("--remote 'origin'")),
+    quotes_branch: gateCopyableCommands.some((commandText) => String(commandText).includes(`--branch '${branch}'`)),
+    quotes_out: gateCopyableCommands.some((commandText) => String(commandText).includes("--out '.bha/local/push-payload.json'")),
+    quotes_file: gateCopyableCommands.some((commandText) => String(commandText).includes("--file '.bha/local/signed-push-capability.json'"))
   }));
   checks.push(regressionCheck('signed_payload_status_readonly_reports_missing', missingSignedPayloadStatus.exit_code === 0 &&
     missingSignedPayloadStatus.parsed &&
