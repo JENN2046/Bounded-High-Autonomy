@@ -40,6 +40,8 @@ Trusted proof comes from:
 
 Fresh clones must be able to verify tracked trust without `.bha/local/`. Any real git_push still requires regenerated local-only capability evidence for the current git reality.
 
+Recovery status must explain missing, stale, expired, or otherwise unusable `.bha/local/` payload files as local-only recovery context. That context helps the operator regenerate payloads, but it is not tracked proof.
+
 ## Not Proof
 
 These can guide workflow but are not proof:

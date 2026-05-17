@@ -2875,6 +2875,10 @@ async function recoverStatus(remote, branch) {
     ? await matchingConsumedCapability(targetRemote, targetBranch, head, { reserve: false })
     : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
   const needsLocalGitPushCapability = hasUsableCapability.ok !== true;
+  const currentContext = currentPayloadContext(targetRemote, targetBranch, head, verifierPass && verify.parsed ? verify.parsed.ledger_head_hash : null);
+  const unsignedPayload = capabilityFileSummary('.bha/local/push-payload.json', targetRemote, targetBranch, head, false, currentContext);
+  const signedPayload = await signedCapabilityFileSummary('.bha/local/signed-push-capability.json', targetRemote, targetBranch, head, currentContext);
+  const payloadStatus = localPayloadStatus(unsignedPayload, signedPayload);
   return {
     ok: verifierPass,
     status: verifierPass ? 'RECOVER_STATUS_READY' : 'RECOVER_STATUS_BLOCKED',
@@ -2898,6 +2902,14 @@ async function recoverStatus(remote, branch) {
       local_capability_store_exists: fs.existsSync(localCapabilitiesPath),
       local_session_store_exists: fs.existsSync(localSessionsPath),
       required_for_tracked_verifier_pass: false
+    },
+    local_payload_recovery: {
+      read_only: true,
+      unsigned_payload: unsignedPayload,
+      signed_payload: signedPayload,
+      local_payload_status: payloadStatus,
+      stale_or_not_usable: payloadStatus.not_usable_local_files.length > 0,
+      recovery_action: payloadStatus.next_payload_action
     },
     git_reality: {
       clean: gitStatus.clean,
@@ -3390,6 +3402,7 @@ async function handleAuditV1Stable(args) {
       gateStatusCommand.expect.has_keys.includes('operator_handoff') &&
       recoverStatusCommand.expect &&
       Array.isArray(recoverStatusCommand.expect.has_keys) &&
+      recoverStatusCommand.expect.has_keys.includes('local_payload_recovery') &&
       recoverStatusCommand.expect.has_keys.includes('git_push_recovery') &&
       fileContains(RUN_SCRIPT, 'push_requirement: {') &&
       fileContains(RUN_SCRIPT, 'required_now: false') &&
@@ -3399,6 +3412,7 @@ async function handleAuditV1Stable(args) {
       fileContains(RUN_SCRIPT, 'Only required before an operator-chosen real git push.') &&
       fileContains(RUN_SCRIPT, 'gate_status_next_action_context_is_conditional') &&
       fileContains(RUN_SCRIPT, 'operator_handoff_capability_flow_is_conditional') &&
+      fileContains(RUN_SCRIPT, 'local_payload_recovery') &&
       fileContains(RUN_SCRIPT, 'fresh_clone_recover_status_explains_missing_local_capability') &&
       fileContains(STABILITY_PATH, 'Push guidance is conditional')),
     {
@@ -3496,6 +3510,7 @@ async function handleAuditV12(args) {
     'push_prep_write_handoff_local_only',
     'signed_payload_status_readonly_reports_missing',
     'signed_payload_status_reports_stale_payload',
+    'recover_status_reports_stale_local_payload_recovery',
     'signed_payload_status_reports_ready_payload',
     'operator_signer_preflight_validation_wired',
     'operator_signer_preflight_blocks_missing_key_path',
@@ -4846,6 +4861,23 @@ async function handleRegressionSelftest(args) {
     staleSignedPayloadStatus.parsed.signed_payload.not_usable_reasons.includes('HEAD_MISMATCH'), {
     status: staleSignedPayloadStatus.parsed ? staleSignedPayloadStatus.parsed.status : 'NO_JSON',
     reasons: staleSignedPayloadStatus.parsed && staleSignedPayloadStatus.parsed.signed_payload ? staleSignedPayloadStatus.parsed.signed_payload.not_usable_reasons : 'NO_JSON'
+  }));
+  const staleRecoverStatus = await runFixtureBha(fixtureRoot, ['recover-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  const staleRecoverPayload = staleRecoverStatus.parsed ? staleRecoverStatus.parsed.local_payload_recovery : null;
+  const staleRecoverIssues = staleRecoverPayload && staleRecoverPayload.local_payload_status && Array.isArray(staleRecoverPayload.local_payload_status.not_usable_local_files)
+    ? staleRecoverPayload.local_payload_status.not_usable_local_files
+    : [];
+  checks.push(regressionCheck('recover_status_reports_stale_local_payload_recovery', staleRecoverStatus.exit_code === 0 &&
+    staleRecoverStatus.parsed &&
+    staleRecoverStatus.parsed.read_only === true &&
+    staleRecoverPayload &&
+    staleRecoverPayload.read_only === true &&
+    staleRecoverPayload.stale_or_not_usable === true &&
+    staleRecoverPayload.recovery_action === 'REGENERATE_UNSIGNED_PAYLOAD_AND_SIGN_CURRENT_CONTEXT' &&
+    staleRecoverIssues.some((issue) => issue.kind === 'unsigned_payload' && issue.reasons.includes('HEAD_MISMATCH')) &&
+    staleRecoverIssues.some((issue) => issue.kind === 'signed_payload' && issue.reasons.includes('HEAD_MISMATCH')), {
+    recovery_action: staleRecoverPayload ? staleRecoverPayload.recovery_action : 'NO_JSON',
+    stale_issue_count: staleRecoverIssues.length
   }));
 
   const trackedGitReality = staleGateStatus.parsed ? staleGateStatus.parsed.tracked_git_reality : null;

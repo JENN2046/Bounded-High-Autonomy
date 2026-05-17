@@ -454,6 +454,7 @@
         "has_keys": [
           "tracked_trust",
           "local_state",
+          "local_payload_recovery",
           "git_push_recovery",
           "proof_boundary"
         ]
