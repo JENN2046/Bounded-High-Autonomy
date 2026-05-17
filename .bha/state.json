@@ -2,16 +2,16 @@
   "schema": "bha.state.v1",
   "version": "1.0.0",
   "run_id": "bha-dry-run-v1",
-  "updated_at": "2026-05-17T09:09:41.262Z",
-  "ledger_head_hash": "c357d4fc85621ae8eca80fcaa298f67c707cd4e2461405822e29215bffe72480",
-  "ledger_event_count": 6802,
+  "updated_at": "2026-05-17T09:12:06.043Z",
+  "ledger_head_hash": "76d5b684c9f281ca8de8cb55bd476e365bcd197cec9e29402a6f3e8cf4c67d4c",
+  "ledger_event_count": 6861,
   "validation": {
     "status": "PASS",
-    "completed_at": "2026-05-17T09:09:34.180Z",
-    "inputs_hash": "cee4c7086bb05e03eb583ce7e758aade4430bac81333c5375a521463bdbb73c1",
+    "completed_at": "2026-05-17T09:11:59.275Z",
+    "inputs_hash": "11201e1d0b0148be9bf7f7b4786393e0d47f662eb4481b4fa789a465f53c6a0a",
     "policy_hash": "6bc0d5d0ce99f42e1a99584ca8e2775a5e341d9d4d485958732cb7b1f395d3b6",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
-    "ledger_event_hash": "8b438c05b909f4fd972b6176759730c681462137e6a384ba928ae6f184987657",
+    "ledger_event_hash": "969a340ed14474f7a5d98417ef569b7a9eb25455a6d643e2d253d57c6cbcd0db",
     "commands": [
       {
         "id": "git_diff_check",
@@ -1229,10 +1229,12 @@
             "next_action_required_now",
             "next_action_condition",
             "next_action_scope",
+            "next_commands",
             "post_push_evidence_strategy",
             "post_push_status",
             "tracked_git_reality",
             "push_requirement",
+            "signer_boundary",
             "operator_handoff"
           ]
         },
@@ -1398,25 +1400,25 @@
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "closeout": {
     "status": "PASS",
-    "completed_at": "2026-05-17T09:09:41.262Z",
-    "ledger_event_hash": "c357d4fc85621ae8eca80fcaa298f67c707cd4e2461405822e29215bffe72480",
-    "verified_ledger_head_hash": "331d6310d61cca0135596aa743090c41860c8f23437715b72e01d1d15dd966d2",
-    "closeout_event_hash": "c357d4fc85621ae8eca80fcaa298f67c707cd4e2461405822e29215bffe72480",
-    "final_ledger_head_hash": "c357d4fc85621ae8eca80fcaa298f67c707cd4e2461405822e29215bffe72480",
-    "validation_ledger_event_hash": "8b438c05b909f4fd972b6176759730c681462137e6a384ba928ae6f184987657",
+    "completed_at": "2026-05-17T09:12:06.043Z",
+    "ledger_event_hash": "76d5b684c9f281ca8de8cb55bd476e365bcd197cec9e29402a6f3e8cf4c67d4c",
+    "verified_ledger_head_hash": "709023a90e29bdf404361bfa5019728fd6eff7930b15320f9dbdb9dc7215abd4",
+    "closeout_event_hash": "76d5b684c9f281ca8de8cb55bd476e365bcd197cec9e29402a6f3e8cf4c67d4c",
+    "final_ledger_head_hash": "76d5b684c9f281ca8de8cb55bd476e365bcd197cec9e29402a6f3e8cf4c67d4c",
+    "validation_ledger_event_hash": "969a340ed14474f7a5d98417ef569b7a9eb25455a6d643e2d253d57c6cbcd0db",
     "policy_hash": "6bc0d5d0ce99f42e1a99584ca8e2775a5e341d9d4d485958732cb7b1f395d3b6",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
   },
   "last_checkpoint": {
-    "checkpoint_id": "checkpoint-2026-05-17T09-09-40-523Z",
-    "created_at": "2026-05-17T09:09:40.578Z",
-    "ledger_event_hash": "331d6310d61cca0135596aa743090c41860c8f23437715b72e01d1d15dd966d2",
-    "verified_ledger_head_hash": "8b438c05b909f4fd972b6176759730c681462137e6a384ba928ae6f184987657",
-    "checkpoint_event_hash": "331d6310d61cca0135596aa743090c41860c8f23437715b72e01d1d15dd966d2",
-    "final_ledger_head_hash": "331d6310d61cca0135596aa743090c41860c8f23437715b72e01d1d15dd966d2",
+    "checkpoint_id": "checkpoint-2026-05-17T09-12-05-323Z",
+    "created_at": "2026-05-17T09:12:05.376Z",
+    "ledger_event_hash": "709023a90e29bdf404361bfa5019728fd6eff7930b15320f9dbdb9dc7215abd4",
+    "verified_ledger_head_hash": "969a340ed14474f7a5d98417ef569b7a9eb25455a6d643e2d253d57c6cbcd0db",
+    "checkpoint_event_hash": "709023a90e29bdf404361bfa5019728fd6eff7930b15320f9dbdb9dc7215abd4",
+    "final_ledger_head_hash": "709023a90e29bdf404361bfa5019728fd6eff7930b15320f9dbdb9dc7215abd4",
     "path": ".bha/checkpoint.json",
     "policy_hash": "6bc0d5d0ce99f42e1a99584ca8e2775a5e341d9d4d485958732cb7b1f395d3b6",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
   },
-  "last_checkpoint_id": "checkpoint-2026-05-17T09-09-40-523Z"
+  "last_checkpoint_id": "checkpoint-2026-05-17T09-12-05-323Z"
 }

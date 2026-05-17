@@ -3935,7 +3935,9 @@ async function handleAuditV1Stable(args) {
       gateStatusCommand.expect.has_keys.includes('next_action_required_now') &&
       gateStatusCommand.expect.has_keys.includes('next_action_condition') &&
       gateStatusCommand.expect.has_keys.includes('next_action_scope') &&
+      gateStatusCommand.expect.has_keys.includes('next_commands') &&
       gateStatusCommand.expect.has_keys.includes('push_requirement') &&
+      gateStatusCommand.expect.has_keys.includes('signer_boundary') &&
       gateStatusCommand.expect.has_keys.includes('tracked_git_reality') &&
       gateStatusCommand.expect.has_keys.includes('operator_handoff') &&
       recoverStatusCommand.expect &&

@@ -811,10 +811,12 @@
           "next_action_required_now",
           "next_action_condition",
           "next_action_scope",
+          "next_commands",
           "post_push_evidence_strategy",
           "post_push_status",
           "tracked_git_reality",
           "push_requirement",
+          "signer_boundary",
           "operator_handoff"
         ]
       }
