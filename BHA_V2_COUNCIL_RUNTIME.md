@@ -67,3 +67,7 @@ The workflow must stop when the next step would cross any of these boundaries:
 ## Activation Gate
 
 `council-status` must report `activation_gate.runtime_activation_allowed=false` until a new explicit objective adds a verifier-backed workflow model and local dry-run evidence. Planning can continue locally, but automated agent spawning, provider calls, memory writes, push, deploy, release, tag, package publishing, and private key access remain forbidden without a new objective.
+
+## Test Gate
+
+`council-status` must report activation coverage as incomplete until workflow schema, role boundary tests, local dry-run trace evidence, verifier evidence, validation wiring, and activation regression tests exist. The current status command may expose the missing activation requirements, but that is planning context only; it does not activate automated scheduling or make role prose proof.

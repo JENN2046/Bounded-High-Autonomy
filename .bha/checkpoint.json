@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-17T10-44-47-596Z",
-  "created_at": "2026-05-17T10:44:47.696Z",
+  "checkpoint_id": "checkpoint-2026-05-17T10-50-50-733Z",
+  "created_at": "2026-05-17T10:50:50.797Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,8 +13,8 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "master",
-  "head": "dbb031bb89339b688e412aa10d304a724b699c07",
-  "ledger_head_hash": "987688b4fabe7f74c14b232f1f610943273bbb3dc3c79249f247f02c118828a2",
+  "head": "43cd2c9178eab0cb67adcd7aa33284119a6f36d3",
+  "ledger_head_hash": "3a996287dafd8549f6b845b9b3ec94893d253350b9bf68d630def95ed0d173c1",
   "policy_hash": "7766169f4c5d80100edbec4f3aa86a869b7461d69f0b9081ce6b9bec3130f596",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
@@ -74,14 +74,6 @@
     },
     {
       "status": "M",
-      "path": ".bha/policy.yaml"
-    },
-    {
-      "status": "M",
-      "path": ".bha/roadmap.md"
-    },
-    {
-      "status": "M",
       "path": ".bha/state.json"
     },
     {
@@ -94,7 +86,7 @@
     },
     {
       "status": "M",
-      "path": "BHA_V1_STABILITY.md"
+      "path": "BHA_V2_COUNCIL_RUNTIME.md"
     },
     {
       "status": "M",
@@ -103,13 +95,13 @@
   ],
   "validation_run": {
     "status": "PASS",
-    "completed_at": "2026-05-17T10:44:46.799Z",
-    "ledger_event_hash": "987688b4fabe7f74c14b232f1f610943273bbb3dc3c79249f247f02c118828a2",
+    "completed_at": "2026-05-17T10:50:49.952Z",
+    "ledger_event_hash": "3a996287dafd8549f6b845b9b3ec94893d253350b9bf68d630def95ed0d173c1",
     "command_count": 44
   },
   "validation_not_run": [],
   "verifier_status": "PASS",
-  "verifier_ledger_head_hash": "987688b4fabe7f74c14b232f1f610943273bbb3dc3c79249f247f02c118828a2",
+  "verifier_ledger_head_hash": "3a996287dafd8549f6b845b9b3ec94893d253350b9bf68d630def95ed0d173c1",
   "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
@@ -144,9 +136,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "987688b4fabe7f74c14b232f1f610943273bbb3dc3c79249f247f02c118828a2",
-    "checkpoint_event_hash": "2b97f2f46ab015cb483ed3c11db96a9fc35b696dcc67b2b49a42fb36ba17db26",
-    "final_ledger_head_hash": "2b97f2f46ab015cb483ed3c11db96a9fc35b696dcc67b2b49a42fb36ba17db26"
+    "verified_ledger_head_hash": "3a996287dafd8549f6b845b9b3ec94893d253350b9bf68d630def95ed0d173c1",
+    "checkpoint_event_hash": "b3ee9056d59efceba446c5d926038315ee001643e7fad3a1d537e03665116bb3",
+    "final_ledger_head_hash": "b3ee9056d59efceba446c5d926038315ee001643e7fad3a1d537e03665116bb3"
   },
-  "ledger_event_hash": "2b97f2f46ab015cb483ed3c11db96a9fc35b696dcc67b2b49a42fb36ba17db26"
+  "ledger_event_hash": "b3ee9056d59efceba446c5d926038315ee001643e7fad3a1d537e03665116bb3"
 }

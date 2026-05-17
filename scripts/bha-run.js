@@ -1184,6 +1184,38 @@ function councilRuntimeStatus() {
         'private_key_access'
       ]
     },
+    test_requirements: {
+      required_before_activation: [
+        'workflow_schema',
+        'role_boundary_tests',
+        'local_dry_run_trace',
+        'verifier_evidence',
+        'validation_wiring'
+      ],
+      current_coverage: {
+        status_command: 'node scripts/bha-run.js council-status --format json',
+        validation_commands: [
+          'council_status_readonly',
+          'v1_stable_audit_readonly',
+          'long_term_goal_status_readonly'
+        ],
+        covered_boundaries: [
+          'preview_contract_only',
+          'no_automated_agent_spawn',
+          'no_provider_calls',
+          'no_memory_writes',
+          'no_remote_or_release_actions',
+          'not_proof'
+        ],
+        activation_coverage_complete: false
+      },
+      missing_before_activation: [
+        'verifier_backed_workflow_model',
+        'local_dry_run_evidence',
+        'role_boundary_tests',
+        'activation_regression_tests'
+      ]
+    },
     roles: [
       {
         id: 'commander',
@@ -4679,6 +4711,7 @@ async function handleAuditV1Stable(args) {
       fileContains(COUNCIL_RUNTIME_PATH, 'local-only and read-only') &&
       fileContains(COUNCIL_RUNTIME_PATH, 'not proof') &&
       fileContains(COUNCIL_RUNTIME_PATH, 'does not execute the workflow') &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'activation coverage as incomplete') &&
       councilRuntimeStatus().runtime_state === 'PREVIEW_CONTRACT_ONLY' &&
       councilRuntimeStatus().default_decision === 'NO_AUTOMATED_DELEGATION' &&
       councilRuntimeStatus().external_side_effects_allowed === false &&
@@ -4689,11 +4722,18 @@ async function handleAuditV1Stable(args) {
       councilRuntimeStatus().activation_gate.runtime_activation_allowed === false &&
       councilRuntimeStatus().activation_gate.requires_new_explicit_objective === true &&
       councilRuntimeStatus().activation_gate.requires_verifier_backed_workflow_model === true &&
+      councilRuntimeStatus().test_requirements &&
+      councilRuntimeStatus().test_requirements.current_coverage &&
+      councilRuntimeStatus().test_requirements.current_coverage.activation_coverage_complete === false &&
+      Array.isArray(councilRuntimeStatus().test_requirements.missing_before_activation) &&
+      councilRuntimeStatus().test_requirements.missing_before_activation.includes('verifier_backed_workflow_model') &&
       councilStatusJsonPaths.local_only === true &&
       councilStatusJsonPaths['activation_gate.runtime_activation_allowed'] === false &&
       councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.0'] === 'automated_agent_spawn' &&
       councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.2'] === 'memory_write' &&
-      councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.3'] === 'push',
+      councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.3'] === 'push' &&
+      councilStatusJsonPaths['test_requirements.current_coverage.activation_coverage_complete'] === false &&
+      councilStatusJsonPaths['test_requirements.missing_before_activation.0'] === 'verifier_backed_workflow_model',
     {
       validation_command_present: Boolean(councilStatusCommand),
       policy_allowed: councilStatusCommand ? policyAllowsArgv(policy, councilStatusCommand.argv) : false,
@@ -4704,7 +4744,8 @@ async function handleAuditV1Stable(args) {
       automated_agent_spawn_allowed: councilRuntimeStatus().automated_agent_spawn_allowed,
       provider_calls_allowed: councilRuntimeStatus().provider_calls_allowed,
       memory_writes_allowed: councilRuntimeStatus().memory_writes_allowed,
-      activation_gate: councilRuntimeStatus().activation_gate
+      activation_gate: councilRuntimeStatus().activation_gate,
+      test_requirements: councilRuntimeStatus().test_requirements
     },
     ['BHA_V2_COUNCIL_RUNTIME.md', 'scripts/bha-run.js', '.bha/validation.yaml', '.bha/policy.yaml']
   ));
