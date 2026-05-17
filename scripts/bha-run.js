@@ -3466,6 +3466,14 @@ async function handleAuditV1Stable(args) {
     .filter((id) => !fileContains(RUN_SCRIPT, `'${id}'`) && !fileContains(RUN_SCRIPT, `"${id}"`));
   const missingCapabilityVerifierSelftestIds = requiredCapabilityVerifierSelftestIds
     .filter((id) => !fileContains(VERIFY_SCRIPT, `'${id}'`) && !fileContains(VERIFY_SCRIPT, `"${id}"`));
+  const requiredFreshCloneRegressionIds = [
+    'fresh_clone_without_bha_local_verifier_passes',
+    'fresh_clone_recover_status_explains_missing_local_capability',
+    'fresh_clone_gate_status_blocks_without_local_capability',
+    'fresh_clone_push_prep_generates_local_handoff'
+  ];
+  const missingFreshCloneRegressionIds = requiredFreshCloneRegressionIds
+    .filter((id) => !fileContains(RUN_SCRIPT, `'${id}'`) && !fileContains(RUN_SCRIPT, `"${id}"`));
   const checks = [];
   checks.push(auditCheck(
     'stability_doc_present',
@@ -3707,6 +3715,24 @@ async function handleAuditV1Stable(args) {
       gate_status_validation_command_present: Boolean(gateStatusCommand),
       recover_status_validation_command_present: Boolean(recoverStatusCommand),
       regression_selftest_validation_command_present: Boolean(regressionCommand)
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'fresh_clone_recovery_regressions_covered',
+    'V1 recovery freeze is covered by regression cases for fresh clone verifier trust, missing local capability explanation, fail-closed gate, and local handoff regeneration.',
+    Boolean(regressionCommand &&
+      recoverStatusCommand &&
+      missingFreshCloneRegressionIds.length === 0 &&
+      fileContains(RUN_SCRIPT, 'required_for_tracked_verifier_pass: false') &&
+      fileContains(RUN_SCRIPT, 'requires_new_local_capability') &&
+      fileContains(RUN_SCRIPT, 'Only required before an operator-chosen real git push.') &&
+      fileContains(STABILITY_PATH, 'Fresh clones must be able to verify tracked trust without `.bha/local/`')),
+    {
+      regression_selftest_validation_command_present: Boolean(regressionCommand),
+      recover_status_validation_command_present: Boolean(recoverStatusCommand),
+      required_regression_ids: requiredFreshCloneRegressionIds,
+      missing_regression_ids: missingFreshCloneRegressionIds
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
   ));
