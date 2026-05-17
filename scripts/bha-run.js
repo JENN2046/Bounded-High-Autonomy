@@ -6724,6 +6724,7 @@ async function handleCloseout(args) {
     return warning && warning.code !== 'CLOSEOUT_NOT_CURRENT_LEDGER_HEAD';
   });
   const report = {
+    schema: 'bha.closeout_output.v1',
     ok: true,
     status: 'CLOSEOUT_GENERATED',
     closeout_status: verify.ok && validationStatus === 'PASS' && unsupportedClaims.length === 0 ? 'PASS' : 'BLOCKED',

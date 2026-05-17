@@ -170,6 +170,7 @@
           "unknown_capability_policy": "DENY"
         },
         "has_keys": [
+          "schema",
           "production_capability_types",
           "always_denied_capability_types",
           "extension_policy",
@@ -203,6 +204,7 @@
           "memory_writes_allowed": false
         },
         "has_keys": [
+          "schema",
           "roles",
           "loop",
           "stop_conditions",
@@ -228,6 +230,7 @@
         "recorded": false,
         "read_only": true,
         "has_keys": [
+          "schema",
           "closeout_binding",
           "verifier",
           "unsupported_claims"
@@ -258,6 +261,7 @@
         "recorded": false,
         "read_only": true,
         "has_keys": [
+          "schema",
           "payload",
           "steps",
           "hard_boundaries",
@@ -281,6 +285,7 @@
         "recorded": false,
         "read_only": true,
         "has_keys": [
+          "schema",
           "checks",
           "hard_boundaries",
           "evidence_sources"
