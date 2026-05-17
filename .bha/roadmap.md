@@ -94,6 +94,7 @@ Fresh clone note:
 
 Operator status:
 - `node scripts/bha-run.js gate-status --remote origin --branch master --format json` is read-only and reports verifier gates, hook configuration, capability status, post-push evidence strategy, and the next action.
+- `node scripts/bha-run.js hook-status --format json` is read-only and reports whether local `core.hooksPath` points at `.githooks` and whether `.githooks/pre-push` exists. Hook installation remains local setup, not proof.
 - `make-push-payload --out`, `verify-signed-capability --file`, and `issue-capability --file` use `.bha/local/` paths so operators do not need to paste long signed JSON on the command line.
 - `gate-status` includes an `operator_handoff` block with local payload/signed-file status, the current capability id when it can be derived from `.bha/local/push-payload.json`, and PowerShell-safe single-line gate commands. It does not print signatures or private key material.
 

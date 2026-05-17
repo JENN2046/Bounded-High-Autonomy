@@ -540,6 +540,29 @@
       }
     },
     {
+      "id": "hook_status_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "hook-status",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "read_only": true,
+        "recorded": false,
+        "has_keys": [
+          "ok",
+          "status",
+          "hook",
+          "checks",
+          "next_action",
+          "proof_boundary"
+        ]
+      }
+    },
+    {
       "id": "gate_status_readonly",
       "argv": [
         "node",

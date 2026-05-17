@@ -275,6 +275,16 @@
         "command": "node",
         "args": [
           "scripts/bha-run.js",
+          "hook-status",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only local hook installation status"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
           "gate-status",
           "--remote",
           "origin",

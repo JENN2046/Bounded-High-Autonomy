@@ -2003,6 +2003,32 @@ async function hookPathStatus() {
   };
 }
 
+async function handleHookStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const hook = await hookPathStatus();
+  const checks = {
+    hooks_path_configured: hook.configured === hook.expected,
+    pre_push_exists: hook.pre_push_exists === true
+  };
+  const ok = Object.values(checks).every(Boolean);
+  console.log(JSON.stringify({
+    ok,
+    status: ok ? 'PASS' : 'BLOCKED',
+    read_only: true,
+    recorded: false,
+    hook,
+    checks,
+    next_action: ok ? 'NONE' : 'SET_LOCAL_HOOKS_PATH',
+    next_commands: ok ? [] : ['git config core.hooksPath .githooks'],
+    proof_boundary: 'Hook configuration is local setup evidence, not proof of trusted work; verifier, validation, ledger, policy, mission, and git reality remain the proof sources.'
+  }));
+}
+
 function nextGateAction(checks, capability) {
   if (!checks.verifier_pass) {
     return 'RUN_VERIFIER_AND_FIX_ISSUES';
@@ -2351,6 +2377,7 @@ async function handleAuditV12(args) {
   const v12Command = validationCommandById(validation, 'v12_regression_selftest');
   const v12Recorded = recordedValidationCommand(state, 'v12_regression_selftest');
   const inspectCommand = validationCommandById(validation, 'inspect_readonly');
+  const hookCommand = validationCommandById(validation, 'hook_status_readonly');
   const auditArgv = ['node', 'scripts/bha-run.js', 'audit-v12', '--format', 'json'];
 
   const regressionIds = [
@@ -2443,7 +2470,9 @@ async function handleAuditV12(args) {
     'operator_ux_commands_present',
     'Codex shell UX exposes inspect, gate-status next commands, signer boundary, and file-based payload handling without private-key custody.',
     Boolean(inspectCommand &&
+      hookCommand &&
       fileContains(RUN_SCRIPT, 'async function handleInspect') &&
+      fileContains(RUN_SCRIPT, 'async function handleHookStatus') &&
       fileContains(RUN_SCRIPT, 'next_commands') &&
       fileContains(RUN_SCRIPT, 'operator_handoff') &&
       fileContains(RUN_SCRIPT, 'single_line_commands') &&
@@ -2454,6 +2483,7 @@ async function handleAuditV12(args) {
       fileContains(RUN_SCRIPT, 'resolveLocalFile(outPath)')),
     {
       inspect_validation_command_present: Boolean(inspectCommand),
+      hook_status_validation_command_present: Boolean(hookCommand),
       inspect_recorded_status: recordedValidationCommand(state, 'inspect_readonly') ? recordedValidationCommand(state, 'inspect_readonly').status : 'MISSING'
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', '.bha/state.json']
@@ -3865,6 +3895,8 @@ async function main() {
       await handleCapabilitySelftest(args);
     } else if (command === 'prepush-check') {
       await handlePrepushCheck(args);
+    } else if (command === 'hook-status') {
+      await handleHookStatus(args);
     } else if (command === 'gate-status') {
       await handleGateStatus(args);
     } else if (command === 'audit-v12') {
