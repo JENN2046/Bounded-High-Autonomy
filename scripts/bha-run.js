@@ -3274,6 +3274,7 @@ async function handleAuditV1Stable(args) {
   const validationCommand = validationCommandById(validation, 'v1_stable_audit_readonly');
   const gateStatusCommand = validationCommandById(validation, 'gate_status_readonly');
   const recoverStatusCommand = validationCommandById(validation, 'recover_status_readonly');
+  const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const requiredDenied = [
     'provider_call',
@@ -3361,6 +3362,38 @@ async function handleAuditV1Stable(args) {
       test_requirements: capabilityFramework().test_requirements
     },
     ['BHA_V2_CAPABILITY_FRAMEWORK.md', 'scripts/bha-run.js', '.bha/policy.yaml']
+  ));
+  checks.push(auditCheck(
+    'v2_council_runtime_preview_no_automation',
+    'V2+ Council Runtime remains a preview/status contract only and cannot spawn agents, write memory, call providers, or create external side effects.',
+    fs.existsSync(COUNCIL_RUNTIME_PATH) &&
+      Boolean(councilStatusCommand &&
+      councilStatusCommand.expect &&
+      councilStatusCommand.expect.exit_code === 0 &&
+      councilStatusCommand.expect.read_only === true &&
+      councilStatusCommand.expect.recorded === false &&
+      policyAllowsArgv(policy, councilStatusCommand.argv)) &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'Status: preview contract only') &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'local-only and read-only') &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'not proof') &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'does not execute the workflow') &&
+      councilRuntimeStatus().runtime_state === 'PREVIEW_CONTRACT_ONLY' &&
+      councilRuntimeStatus().default_decision === 'NO_AUTOMATED_DELEGATION' &&
+      councilRuntimeStatus().external_side_effects_allowed === false &&
+      councilRuntimeStatus().automated_agent_spawn_allowed === false &&
+      councilRuntimeStatus().provider_calls_allowed === false &&
+      councilRuntimeStatus().memory_writes_allowed === false,
+    {
+      validation_command_present: Boolean(councilStatusCommand),
+      policy_allowed: councilStatusCommand ? policyAllowsArgv(policy, councilStatusCommand.argv) : false,
+      runtime_state: councilRuntimeStatus().runtime_state,
+      default_decision: councilRuntimeStatus().default_decision,
+      external_side_effects_allowed: councilRuntimeStatus().external_side_effects_allowed,
+      automated_agent_spawn_allowed: councilRuntimeStatus().automated_agent_spawn_allowed,
+      provider_calls_allowed: councilRuntimeStatus().provider_calls_allowed,
+      memory_writes_allowed: councilRuntimeStatus().memory_writes_allowed
+    },
+    ['BHA_V2_COUNCIL_RUNTIME.md', 'scripts/bha-run.js', '.bha/validation.yaml', '.bha/policy.yaml']
   ));
   checks.push(auditCheck(
     'node_builtins_only_no_package_manifest',
