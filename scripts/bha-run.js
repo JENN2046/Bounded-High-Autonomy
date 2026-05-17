@@ -1053,6 +1053,8 @@ function capabilityFramework() {
           'unknown_capability_type_rejected',
           'disallowed_provider_capability_type_rejected',
           'incomplete_git_push_capability_rejected',
+          'gate_status_flags_expired_unsigned_payload',
+          'signed_payload_status_reports_expired_reason_detail',
           'replayed_local_capability_rejected',
           'local_git_push_replay_fail_closed_after_used_session'
         ],
@@ -1060,6 +1062,7 @@ function capabilityFramework() {
           'unsupported_capability_type_rejected',
           'disallowed_capability_type_rejected',
           'incomplete_capability_binding_rejected',
+          'expired_capability_rejected',
           'capability_replay_rejected'
         ],
         validation_commands: [
@@ -3595,6 +3598,8 @@ async function handleAuditV1Stable(args) {
     'unknown_capability_type_rejected',
     'disallowed_provider_capability_type_rejected',
     'incomplete_git_push_capability_rejected',
+    'gate_status_flags_expired_unsigned_payload',
+    'signed_payload_status_reports_expired_reason_detail',
     'replayed_local_capability_rejected',
     'local_git_push_replay_fail_closed_after_used_session'
   ];
@@ -3602,6 +3607,7 @@ async function handleAuditV1Stable(args) {
     'unsupported_capability_type_rejected',
     'disallowed_capability_type_rejected',
     'incomplete_capability_binding_rejected',
+    'expired_capability_rejected',
     'capability_replay_rejected'
   ];
   const missingCapabilityRuntimeRegressionIds = requiredCapabilityRuntimeRegressionIds
@@ -3703,15 +3709,17 @@ async function handleAuditV1Stable(args) {
   ));
   checks.push(auditCheck(
     'capability_scope_negative_tests_covered',
-    'V1 git_push-only capability scope is covered by runtime and verifier negative tests for unknown, disallowed, incomplete, and replayed capabilities.',
+    'V1 git_push-only capability scope is covered by runtime and verifier negative tests for unknown, disallowed, incomplete, expired, and replayed capabilities.',
     Boolean(regressionCommand &&
       verifierSelftestCommand &&
       missingCapabilityRuntimeRegressionIds.length === 0 &&
       missingCapabilityVerifierSelftestIds.length === 0 &&
       fileContains(RUN_SCRIPT, 'CAPABILITY_TYPE_NOT_SUPPORTED') &&
       fileContains(RUN_SCRIPT, 'DISALLOWED_CAPABILITY_TYPE') &&
+      fileContains(RUN_SCRIPT, 'PAYLOAD_EXPIRED') &&
       fileContains(VERIFY_SCRIPT, 'UNSUPPORTED_CAPABILITY_MARKED_VALID') &&
       fileContains(VERIFY_SCRIPT, 'DISALLOWED_CAPABILITY_VALID') &&
+      fileContains(VERIFY_SCRIPT, 'CAPABILITY_EXPIRED') &&
       fileContains(VERIFY_SCRIPT, 'CAPABILITY_REPLAY_DETECTED')),
     {
       regression_selftest_validation_command_present: Boolean(regressionCommand),
