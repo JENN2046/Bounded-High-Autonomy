@@ -3751,6 +3751,27 @@ async function handleAuditV1Stable(args) {
     ['scripts/bha-run.js', 'BHA_V1_STABILITY.md']
   ));
   checks.push(auditCheck(
+    'local_capability_path_boundary_hardened',
+    'V1 local capability payload, event, session, and lock paths are physically confined to .bha/local and reject symlink or junction traversal.',
+    Boolean(regressionCommand &&
+      fileContains(RUN_SCRIPT, 'function localPathSafetyIssue') &&
+      fileContains(RUN_SCRIPT, '.bha/local must not be a symbolic link or junction') &&
+      fileContains(RUN_SCRIPT, 'local capability paths must not traverse symbolic links or junctions') &&
+      fileContains(RUN_SCRIPT, 'resolveLocalFile(LOCAL_CAPABILITIES_PATH)') &&
+      fileContains(RUN_SCRIPT, 'resolveLocalFile(LOCAL_CAPABILITY_SESSIONS_PATH)') &&
+      fileContains(RUN_SCRIPT, 'LOCAL_CAPABILITY_PATH_INVALID') &&
+      fileContains(RUN_SCRIPT, 'push_prep_rejects_local_symlink_escape') &&
+      fileContains(STABILITY_PATH, 'Symlink or junction traversal is rejected') &&
+      fileContains(ROADMAP_PATH, 'Local capability payload, event, session, and lock paths are physically confined')),
+    {
+      regression_selftest_validation_command_present: Boolean(regressionCommand),
+      local_path_guard_present: fileContains(RUN_SCRIPT, 'function localPathSafetyIssue'),
+      symlink_escape_regression_present: fileContains(RUN_SCRIPT, 'push_prep_rejects_local_symlink_escape'),
+      invalid_path_reason_present: fileContains(RUN_SCRIPT, 'LOCAL_CAPABILITY_PATH_INVALID')
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md', '.bha/roadmap.md']
+  ));
+  checks.push(auditCheck(
     'audit_v1_stable_wired',
     'audit-v1-stable is read-only, policy-allowed, and wired into validation.',
     Boolean(validationCommand &&

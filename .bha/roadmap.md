@@ -48,6 +48,7 @@ Completed locally:
 - `capability-framework-status` reports the default-deny V2 capability preview and the deny/replay test gate for any future capability type.
 - `council-status` reports the V2+ Council Runtime preview contract as read-only, local-only coordination context, not proof.
 - Ledger writes are guarded by a local `.bha/local/ledger.lock` so concurrent local evidence writers fail closed instead of corrupting the hash chain.
+- Local capability payload, event, session, and lock paths are physically confined to `.bha/local/`; symlink or junction traversal is rejected before local-only writes.
 - Current local acceptance requires `node scripts/bha-run.js validate`, `node scripts/bha-verify.js`, `node scripts/bha-run.js checkpoint --format json`, and `node scripts/bha-run.js closeout --record --format json` to pass after any tracked change.
 
 ## V1 Handoff / Release Note
