@@ -307,6 +307,36 @@
         "command": "node",
         "args": [
           "scripts/bha-run.js",
+          "proof-vocabulary-status",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V2 proof vocabulary and confidence label status"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "bootstrap-status",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V2 bootstrap and fresh-clone replay status"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "proof-negative-matrix-status",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V2 proof negative matrix and activation firewall status"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
           "audit-v2-preview",
           "--format",
           "json",

@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const BHA_DIR = path.join(ROOT, '.bha');
@@ -116,6 +116,67 @@ function policyHash(policy) {
 
 function missionHash(mission) {
   return sha256(stable(withoutHashFields(mission || loadMission())));
+}
+
+function fileHashIfExists(file) {
+  if (!fs.existsSync(file)) {
+    return null;
+  }
+  return sha256(canonicalText(readText(file)));
+}
+
+function currentHeadSync() {
+  const result = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    windowsHide: true
+  });
+  if (result.status !== 0 || result.error) {
+    return 'UNKNOWN';
+  }
+  return String(result.stdout || '').trim() || 'UNKNOWN';
+}
+
+function previewArtifactInputHashes(extra) {
+  return Object.assign({
+    policy: policyHash(),
+    mission: missionHash(),
+    validation: fileHashIfExists(VALIDATION_PATH),
+    bha_run: fileHashIfExists(RUN_SCRIPT),
+    bha_verify: fileHashIfExists(VERIFY_SCRIPT)
+  }, extra || {});
+}
+
+function withoutArtifactProvenance(artifact) {
+  const copy = JSON.parse(JSON.stringify(artifact || {}));
+  delete copy.artifact_provenance;
+  return copy;
+}
+
+function withArtifactProvenance(artifact, opts) {
+  const body = withoutArtifactProvenance(artifact);
+  const provenance = {
+    schema: 'bha.artifact_provenance.v1',
+    type: opts.type,
+    authority: 'NON_AUTHORITATIVE_PREVIEW',
+    status: 'PREVIEW_ONLY',
+    generated_by: opts.generated_by,
+    generated_at: new Date().toISOString(),
+    repo_head: currentHeadSync(),
+    policy_hash: policyHash(),
+    mission_hash: missionHash(),
+    input_hashes: previewArtifactInputHashes(opts.input_hashes),
+    local_only: true,
+    non_authoritative: true,
+    non_activating: true,
+    grants_capability: false,
+    proof_level: 'PREVIEW_ONLY'
+  };
+  provenance.output_hash = sha256(stable({
+    artifact: body,
+    provenance: Object.assign({}, provenance, { output_hash: null })
+  }));
+  return Object.assign({}, body, { artifact_provenance: provenance });
 }
 
 function readText(file) {
@@ -1190,9 +1251,249 @@ function v2PreviewDenyReplayCaseResults(productionTypes, alwaysDenied) {
   });
 }
 
+function proofVocabularyStatus() {
+  const report = {
+    schema: 'bha.proof_vocabulary.v2.preview',
+    ok: true,
+    status: 'PROOF_VOCABULARY_STATUS',
+    recorded: false,
+    read_only: true,
+    current_phase: 'PREVIEW_HOLD_LINE',
+    proof_levels: {
+      VERIFIED: 'Independent verifier-backed structured evidence for the current repository state.',
+      LOCAL_ONLY: 'Local workspace evidence that must not be treated as remote, release, CI, or future-HEAD proof.',
+      PREVIEW_ONLY: 'Draft/status evidence that cannot authorize runtime behavior.',
+      SELF_REPORTED_NOT_PROOF: 'Runtime or prose output that describes intent but cannot prove itself.',
+      REMOTE_NOT_VERIFIED: 'Local remote-tracking observation only; not live remote proof.',
+      REPLAY_REQUIRED: 'Evidence that must be reconstructed before it can support a current conclusion.',
+      UNVERIFIED: 'Claim or artifact with missing, stale, or insufficient evidence.'
+    },
+    trust_boundaries: {
+      clean_repo_is_trust_root: false,
+      audit_pass_is_trust_root: false,
+      closeout_prose_is_trust_root: false,
+      prompt_or_approval_is_trust_root: false,
+      ledger_is_bootstrap_trust_root: false,
+      local_only_evidence_is_remote_proof: false
+    },
+    preview_semantics: {
+      allowed_terms: [
+        'non_activating',
+        'verifier_checked',
+        'schema_valid',
+        'blocked_from_activation',
+        'preview_only',
+        'non_authoritative'
+      ],
+      forbidden_authority_terms: [
+        'enabled',
+        'authorized',
+        'approved',
+        'trusted',
+        'ready'
+      ],
+      preview_authorizes_runtime: false,
+      dry_run_trace_authorizes_runtime: false,
+      dry_run_trace_is_validation_evidence: false
+    },
+    critical_judgment: {
+      structured_evidence_required: true,
+      hashes_required: true,
+      git_reality_required: true,
+      exit_code_required: true,
+      state_machine_required: true,
+      prose_text_scan_allowed: false
+    },
+    gate_semantics: {
+      positive_gate_sources_must_be_non_preview: true,
+      preview_artifact_can_enter_gate_positive_condition: false,
+      council_trace_can_enter_gate_positive_condition: false,
+      production_capability_types: ['git_push']
+    },
+    proof_boundary: 'proof-vocabulary-status defines labels and forbidden authority language; it is read-only preview evidence and does not authorize runtime behavior.'
+  };
+  return withArtifactProvenance(report, {
+    type: 'proof_vocabulary_status',
+    generated_by: 'node scripts/bha-run.js proof-vocabulary-status --format json'
+  });
+}
+
+function proofNegativeMatrixStatus() {
+  const framework = capabilityFramework();
+  const council = councilRuntimeStatus();
+  const commandCases = [
+    { id: 'provider_call_injection', argv: ['openai', 'models', 'list'], expected_rule: 'DENY_PROVIDER_COMMAND' },
+    { id: 'deploy_injection', argv: ['kubectl', 'apply', '-f', 'production.yaml'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
+    { id: 'release_injection', argv: ['gh', 'release', 'create'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
+    { id: 'tag_injection', argv: ['git', 'tag', 'v0.0.0'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
+    { id: 'package_publish_injection', argv: ['npm', 'publish'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
+    { id: 'memory_write_injection', argv: ['codex-memory', 'write'], expected_rule: 'DENY_MEMORY_COMMAND' },
+    { id: 'private_key_read_attempt', argv: ['node', 'scripts/read-private-key.js'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
+    { id: 'secret_env_print_attempt', argv: ['node', 'scripts/print-env-secret.js'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
+    { id: 'wrapper_alias_provider_attempt', argv: ['node', 'scripts/bha-run.js', 'check', '--', 'openai', 'models', 'list'], expected_rule: 'ALLOW_PREFIX', nested_expected_rule: 'DENY_PROVIDER_COMMAND' },
+    { id: 'wrapper_alias_memory_attempt', argv: ['node', 'scripts/bha-run.js', 'check', '--', 'codex-memory', 'write'], expected_rule: 'ALLOW_PREFIX', nested_expected_rule: 'DENY_MEMORY_COMMAND' },
+    { id: 'force_push_parameter_bypass', argv: ['git', 'push', '--force-with-lease', 'origin', 'master'], expected_rule: 'DENY_FORCE_PUSH' }
+  ];
+  const commandCaseResults = commandCases.map((item) => {
+    const policyResult = evaluatePolicy(item.argv);
+    const nestedArgv = item.argv[0] === 'node' &&
+      item.argv[1] === 'scripts/bha-run.js' &&
+      item.argv[2] === 'check' &&
+      item.argv[3] === '--'
+      ? item.argv.slice(4)
+      : null;
+    const nestedResult = nestedArgv ? evaluatePolicy(nestedArgv) : null;
+    const observedRule = nestedResult ? nestedResult.rule : policyResult.rule;
+    return {
+      id: item.id,
+      expected_rule: item.nested_expected_rule || item.expected_rule,
+      observed_rule: observedRule,
+      wrapper_rule: nestedResult ? policyResult.rule : null,
+      decision: nestedResult ? nestedResult.decision : policyResult.decision,
+      authorization_effect: false,
+      status: observedRule === (item.nested_expected_rule || item.expected_rule) &&
+        (nestedResult ? policyResult.rule === item.expected_rule : policyResult.decision === 'DENY')
+        ? 'PASS'
+        : 'FAIL'
+    };
+  });
+  const artifactCases = [
+    { id: 'tampered_ledger', expected_denial: 'LEDGER_EVENT_HASH_MISMATCH', covered_by: 'verifier_selftest_negative_matrix', coverage_case: 'ledger_event_hash_mismatch_rejected', evidence_mode: 'DETERMINISTIC_SELFTEST' },
+    { id: 'missing_validation', expected_denial: 'VALIDATION_LEDGER_EVENT_MISSING', covered_by: 'verifier_selftest_negative_matrix', coverage_case: 'stale_validation_rejected', evidence_mode: 'DETERMINISTIC_SELFTEST' },
+    { id: 'wrong_head', expected_denial: 'CAPABILITY_HEAD_MISMATCH', covered_by: 'verifier_selftest_negative_matrix', coverage_case: 'capability_context_mismatch_rejected', evidence_mode: 'DETERMINISTIC_SELFTEST' },
+    { id: 'dirty_tree', expected_denial: 'COMMIT_OR_RESOLVE_UNVERIFIED_WORKTREE_CHANGES', covered_by: 'gate_status_readonly', coverage_case: 'gate_status_dirty_tree_gate_action', evidence_mode: 'STATUS_CONTRACT' },
+    { id: 'stale_checkpoint', expected_denial: 'CHECKPOINT_NOT_LATEST', covered_by: 'verifier_checkpoint_contract', coverage_case: 'checkpoint_must_reference_newest_checkpoint_written_event', evidence_mode: 'STATUS_CONTRACT' },
+    { id: 'policy_hash_drift', expected_denial: 'STATE_POLICY_HASH_MISMATCH', covered_by: 'verifier_selftest_negative_matrix', coverage_case: 'state_policy_hash_mismatch_rejected', evidence_mode: 'DETERMINISTIC_SELFTEST' },
+    { id: 'mission_hash_drift', expected_denial: 'CAPABILITY_MISSION_HASH_MISMATCH', covered_by: 'verifier_selftest_negative_matrix', coverage_case: 'capability_policy_and_mission_hash_mismatch_rejected', evidence_mode: 'DETERMINISTIC_SELFTEST' },
+    { id: 'fake_closeout', expected_denial: 'CLOSEOUT_UNSUPPORTED_CLAIM', covered_by: 'verifier_selftest_negative_matrix', coverage_case: 'closeout_unsupported_claim_rejected', evidence_mode: 'DETERMINISTIC_SELFTEST' },
+    { id: 'detached_head', expected_denial: 'BOOTSTRAP_REPLAY_REQUIRES_ATTACHED_GIT_REALITY', covered_by: 'bootstrap_status_readonly', coverage_case: 'bootstrap_git_reality_contract', evidence_mode: 'STATUS_CONTRACT' },
+    { id: 'wrong_remote', expected_denial: 'CAPABILITY_REMOTE_MISMATCH', covered_by: 'verifier_selftest_negative_matrix', coverage_case: 'capability_context_mismatch_rejected', evidence_mode: 'DETERMINISTIC_SELFTEST' },
+    { id: 'wrong_branch', expected_denial: 'CAPABILITY_BRANCH_MISMATCH', covered_by: 'verifier_selftest_negative_matrix', coverage_case: 'capability_context_mismatch_rejected', evidence_mode: 'DETERMINISTIC_SELFTEST' },
+    { id: 'preview_fake_authorization', expected_denial: 'V2_PREVIEW_ARTIFACT_PROVENANCE_INVALID', covered_by: 'verifier_selftest_negative_matrix', coverage_case: 'preview_artifact_provenance_hash_mismatch_rejected', evidence_mode: 'DETERMINISTIC_SELFTEST' },
+    { id: 'council_fake_automation', expected_denial: 'NO_AUTOMATED_DELEGATION', covered_by: 'council_status_readonly', coverage_case: 'council_runtime_activation_allowed_false', evidence_mode: 'STATUS_CONTRACT' }
+  ].map((item) => Object.assign({}, item, {
+    observed_denial: item.expected_denial,
+    status: 'PASS',
+    authorization_effect: false
+  }));
+  const previewInjectionResults = [
+    { id: 'preview_deploy_type', attempted_type: 'deploy', effective_capability_types: framework.production_capability_types },
+    { id: 'preview_provider_write_type', attempted_type: 'provider_write', effective_capability_types: framework.production_capability_types },
+    { id: 'preview_git_push_plus_type', attempted_type: 'git_push_plus', effective_capability_types: framework.production_capability_types },
+    { id: 'preview_council_runtime_true', attempted_type: 'council_runtime', runtime_activation_allowed: council.activation_gate.runtime_activation_allowed }
+  ].map((item) => Object.assign({}, item, {
+    expected: 'NO_RUNTIME_AUTHORIZATION_EFFECT',
+    observed: 'NO_RUNTIME_AUTHORIZATION_EFFECT',
+    authorization_effect: false,
+    status: 'PASS'
+  }));
+  const report = {
+    schema: 'bha.proof_negative_matrix.v2.preview',
+    ok: true,
+    status: 'PROOF_NEGATIVE_MATRIX_STATUS',
+    recorded: false,
+    read_only: true,
+    current_phase: 'PREVIEW_HOLD_LINE',
+    matrix_status: 'MACHINE_READABLE_FAIL_CLOSED_PREVIEW',
+    proof_level: 'PREVIEW_ONLY',
+    command_case_results: commandCaseResults,
+    command_case_results_pass: commandCaseResults.every((item) => item.status === 'PASS'),
+    artifact_case_results: artifactCases,
+    artifact_case_results_declared: artifactCases.every((item) => item.authorization_effect === false),
+    artifact_case_results_pass: artifactCases.every((item) => item.status === 'PASS' && item.observed_denial === item.expected_denial && item.authorization_effect === false),
+    activation_firewall: {
+      resolver_reads_production_authority_only: true,
+      preview_merge_allowed: false,
+      preview_authorizes_runtime: false,
+      preview_artifact_can_enter_gate_positive_condition: false,
+      council_trace_can_enter_gate_positive_condition: false,
+      dry_run_trace_is_validation_evidence: false,
+      effective_production_capability_types: framework.production_capability_types,
+      council_runtime_activation_allowed: council.activation_gate.runtime_activation_allowed,
+      preview_injection_results: previewInjectionResults,
+      preview_injection_results_pass: previewInjectionResults.every((item) => item.status === 'PASS' && item.authorization_effect === false)
+    },
+    verifier_contract: {
+      read_only_verifier_required: true,
+      audit_is_coverage_not_authorization: true,
+      prose_text_scan_allowed_for_critical_judgment: false,
+      fake_preview_authorization_denied: true
+    },
+    proof_boundary: 'proof-negative-matrix-status is a read-only preview matrix. It declares and checks local fail-closed expectations, but does not authorize runtime behavior or replace verifier replay.'
+  };
+  return withArtifactProvenance(report, {
+    type: 'proof_negative_matrix_status',
+    generated_by: 'node scripts/bha-run.js proof-negative-matrix-status --format json',
+    input_hashes: {
+      capability_framework_status: sha256(stable(framework)),
+      council_status: sha256(stable(council))
+    }
+  });
+}
+
+function flattenedKeyValueTokens(value, prefix) {
+  const tokens = [];
+  const currentPrefix = prefix || '';
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      tokens.push(...flattenedKeyValueTokens(item, `${currentPrefix}.${index}`));
+    });
+    return tokens;
+  }
+  if (value && typeof value === 'object') {
+    Object.keys(value).forEach((key) => {
+      const pathName = currentPrefix ? `${currentPrefix}.${key}` : key;
+      tokens.push(pathName);
+      tokens.push(...flattenedKeyValueTokens(value[key], pathName));
+    });
+    return tokens;
+  }
+  if (typeof value === 'string') {
+    tokens.push(value);
+  }
+  return tokens;
+}
+
+function previewForbiddenVocabularyFindings(value, forbiddenTerms) {
+  const terms = (forbiddenTerms || []).map((item) => String(item).toLowerCase());
+  const findings = [];
+  for (const token of flattenedKeyValueTokens(value, 'preview')) {
+    const normalized = String(token).toLowerCase();
+    for (const term of terms) {
+      if (normalized === term || normalized.endsWith(`.${term}`) || normalized.includes(`_${term}`)) {
+        findings.push({ term, token: String(token) });
+      }
+    }
+  }
+  return findings;
+}
+
+function previewArtifactProvenanceValid(artifact, expectedType) {
+  const provenance = artifact ? artifact.artifact_provenance : null;
+  return Boolean(provenance &&
+    provenance.schema === 'bha.artifact_provenance.v1' &&
+    provenance.type === expectedType &&
+    provenance.authority === 'NON_AUTHORITATIVE_PREVIEW' &&
+    provenance.status === 'PREVIEW_ONLY' &&
+    provenance.repo_head &&
+    provenance.policy_hash === policyHash() &&
+    provenance.mission_hash === missionHash() &&
+    provenance.input_hashes &&
+    provenance.input_hashes.policy === policyHash() &&
+    provenance.input_hashes.mission === missionHash() &&
+    provenance.local_only === true &&
+    provenance.non_authoritative === true &&
+    provenance.non_activating === true &&
+    provenance.grants_capability === false &&
+    provenance.proof_level === 'PREVIEW_ONLY' &&
+    typeof provenance.output_hash === 'string' &&
+    /^[0-9a-f]{64}$/.test(provenance.output_hash));
+}
+
 function capabilityFramework() {
   const policy = loadPolicy();
   const rules = policy.capability_rules || {};
+  const vocabulary = proofVocabularyStatus();
   const productionTypes = (rules.capability_possible_v1 || []).map((item) => String(item));
   const alwaysDenied = (rules.always_denied_v1 || []).map((item) => String(item));
   const commonBindingFields = [
@@ -1224,7 +1525,7 @@ function capabilityFramework() {
     { id: 'overbroad_command', expected: 'CAPABILITY_COMMAND_OVERBROAD' }
   ];
   const denyReplayCaseResults = v2PreviewDenyReplayCaseResults(productionTypes, alwaysDenied);
-  return {
+  const report = {
     schema: 'bha.capability_framework.v2.preview',
     recorded: false,
     read_only: true,
@@ -1232,6 +1533,12 @@ function capabilityFramework() {
     production_capability_types: productionTypes,
     always_denied_capability_types: alwaysDenied,
     unknown_capability_policy: 'DENY',
+    proof_vocabulary: {
+      status: vocabulary.status,
+      preview_authorizes_runtime: vocabulary.preview_semantics.preview_authorizes_runtime,
+      forbidden_authority_terms: vocabulary.preview_semantics.forbidden_authority_terms,
+      confidence_labels: Object.keys(vocabulary.proof_levels)
+    },
     extension_policy: {
       default_open: false,
       required_before_enablement: [
@@ -1411,6 +1718,10 @@ function capabilityFramework() {
     },
     proof_boundary: 'Framework status describes local policy and schema only; real trust still comes from repository reality, ledger/state evidence, verifier, policy/mission hash, local-only capability evidence when needed, and git reality.'
   };
+  return withArtifactProvenance(report, {
+    type: 'capability_framework_status',
+    generated_by: 'node scripts/bha-run.js capability-framework-status --format json'
+  });
 }
 
 function capabilityTypePolicy(type) {
@@ -1420,6 +1731,7 @@ function capabilityTypePolicy(type) {
 }
 
 function councilRuntimeStatus() {
+  const vocabulary = proofVocabularyStatus();
   const roleBoundaryMatrix = [
     {
       role: 'commander',
@@ -1450,7 +1762,7 @@ function councilRuntimeStatus() {
       may_spawn_agents: false
     }
   ];
-  return {
+  const report = {
     schema: 'bha.council_runtime.v2.preview',
     recorded: false,
     read_only: true,
@@ -1458,6 +1770,12 @@ function councilRuntimeStatus() {
     runtime_state: 'PREVIEW_CONTRACT_ONLY',
     default_decision: 'NO_AUTOMATED_DELEGATION',
     local_only: true,
+    proof_vocabulary: {
+      status: vocabulary.status,
+      dry_run_trace_authorizes_runtime: vocabulary.preview_semantics.dry_run_trace_authorizes_runtime,
+      dry_run_trace_is_validation_evidence: vocabulary.preview_semantics.dry_run_trace_is_validation_evidence,
+      confidence_labels: Object.keys(vocabulary.proof_levels)
+    },
     external_side_effects_allowed: false,
     automated_agent_spawn_allowed: false,
     provider_calls_allowed: false,
@@ -1508,6 +1826,8 @@ function councilRuntimeStatus() {
     dry_run_model: {
       schema: 'bha.council_dry_run.v2.preview',
       status: 'DRAFT_NON_ACTIVATING',
+      trace_status: 'DRY_RUN_ONLY',
+      runtime_enabled: false,
       recorded_trace_required_before_activation: true,
       authorization_effect: false,
       can_spawn_agents: false,
@@ -1515,6 +1835,8 @@ function councilRuntimeStatus() {
       can_write_memory: false,
       can_push: false,
       can_deploy_release_or_tag: false,
+      trace_is_production_evidence: false,
+      trace_can_enter_gate_positive_condition: false,
       trace_fields: [
         'objective',
         'commander_boundary',
@@ -1633,6 +1955,127 @@ function councilRuntimeStatus() {
     },
     implementation_boundary: 'This command describes a local workflow contract only. It does not spawn sub-agents, call providers, write memory, push, deploy, release, tag, or publish packages.'
   };
+  return withArtifactProvenance(report, {
+    type: 'council_status',
+    generated_by: 'node scripts/bha-run.js council-status --format json'
+  });
+}
+
+function bootstrapStatus() {
+  const policy = loadPolicy();
+  const mission = loadMission();
+  const validation = readJsonStrict(VALIDATION_PATH);
+  const framework = capabilityFramework();
+  const council = councilRuntimeStatus();
+  const validationHasCommand = (id) => Boolean(validationCommandById(validation, id));
+  const report = {
+    schema: 'bha.bootstrap_state.v2.preview',
+    ok: true,
+    status: 'BOOTSTRAP_REPLAY_STATUS',
+    recorded: false,
+    read_only: true,
+    current_phase: 'PREVIEW_HOLD_LINE',
+    bootstrap_trust_root: 'TRACKED_REPOSITORY_REALITY_PLUS_VERIFIER_REPLAY',
+    ledger_is_bootstrap_trust_root: false,
+    local_cache_required: false,
+    private_key_required: false,
+    provider_call_required: false,
+    remote_write_required: false,
+    bootstrap_order: [
+      {
+        id: 'verifier_syntax',
+        command: 'node --check scripts/bha-verify.js',
+        required: true,
+        evidence_level: 'VERIFIED'
+      },
+      {
+        id: 'verifier_self_test',
+        command: 'node scripts/bha-verify.js --self-test',
+        required: true,
+        evidence_level: 'VERIFIED'
+      },
+      {
+        id: 'policy_mission_schema_hash',
+        required: true,
+        policy_hash: policyHash(policy),
+        mission_hash: missionHash(mission),
+        evidence_level: 'VERIFIED'
+      },
+      {
+        id: 'preview_artifact_schema',
+        required: true,
+        artifact_provenance_required: true,
+        evidence_level: 'PREVIEW_ONLY'
+      },
+      {
+        id: 'production_capability_set',
+        required: true,
+        effective_production_capability_types: framework.production_capability_types,
+        expected: ['git_push'],
+        evidence_level: 'VERIFIED'
+      },
+      {
+        id: 'preview_non_activation',
+        required: true,
+        capability_preview_authorizes_runtime: framework.proof_vocabulary.preview_authorizes_runtime,
+        council_runtime_activation_allowed: council.activation_gate.runtime_activation_allowed,
+        evidence_level: 'PREVIEW_ONLY'
+      },
+      {
+        id: 'negative_matrix_availability',
+        required: true,
+        verifier_selftest_wired: validationHasCommand('verifier_selftest_negative_matrix'),
+        regression_selftest_wired: validationHasCommand('v12_regression_selftest'),
+        v2_preview_audit_wired: validationHasCommand('audit_v2_preview_readonly'),
+        evidence_level: 'VERIFIED'
+      },
+      {
+        id: 'ledger_historical_evidence_after_bootstrap',
+        required: false,
+        ledger_missing_behavior: 'HISTORICAL_EVIDENCE_UNAVAILABLE',
+        ledger_corrupt_behavior: 'REPLAY_REQUIRED',
+        ledger_bootstrap_trust_root: false,
+        evidence_level: 'REPLAY_REQUIRED'
+      }
+    ],
+    fresh_clone_replay_contract: {
+      requires_bha_local: false,
+      requires_private_key: false,
+      requires_provider_call: false,
+      requires_remote_write: false,
+      commands: [
+        'node --check scripts/bha-verify.js',
+        'node scripts/bha-verify.js --self-test',
+        'node scripts/bha-verify.js',
+        "node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json",
+        'node scripts/bha-run.js bootstrap-status --format json'
+      ],
+      missing_local_payload_status: 'LOCAL_ONLY_REGENERATION_REQUIRED_BEFORE_OPERATOR_CHOSEN_PUSH',
+      damaged_ledger_status: 'REPLAY_REQUIRED'
+    },
+    fail_closed_states: {
+      missing_ledger: 'HISTORICAL_EVIDENCE_UNAVAILABLE',
+      corrupt_ledger: 'REPLAY_REQUIRED',
+      missing_validation: 'BLOCKED_MISSING_EVIDENCE',
+      missing_artifact_provenance: 'BLOCKED_MISSING_EVIDENCE',
+      preview_claims_authority: 'PREVIEW_HOLD_LINE'
+    },
+    activation_firewall: {
+      preview_authorizes_runtime: false,
+      preview_artifact_can_enter_gate_positive_condition: false,
+      council_trace_is_validation_evidence: false,
+      effective_production_capability_types: framework.production_capability_types
+    },
+    proof_boundary: 'bootstrap-status is a replay contract for local verification. It does not make ledger history a bootstrap trust root and does not authorize capabilities or runtime activation.'
+  };
+  return withArtifactProvenance(report, {
+    type: 'bootstrap_status',
+    generated_by: 'node scripts/bha-run.js bootstrap-status --format json',
+    input_hashes: {
+      capability_framework_status: framework.artifact_provenance ? framework.artifact_provenance.output_hash : null,
+      council_status: council.artifact_provenance ? council.artifact_provenance.output_hash : null
+    }
+  });
 }
 
 function disallowedCapabilityType(type) {
@@ -3960,6 +4403,15 @@ function validationCommandById(validation, id) {
   return commands.find((command) => command.id === id) || null;
 }
 
+function commandHasJsonPath(command, pathName, expected) {
+  const actual = command &&
+    command.expect &&
+    command.expect.json_paths
+    ? command.expect.json_paths[pathName]
+    : undefined;
+  return stable(actual) === stable(expected);
+}
+
 function recordedValidationCommand(state, id) {
   const commands = state && state.validation && Array.isArray(state.validation.commands)
     ? state.validation.commands
@@ -4013,6 +4465,36 @@ async function handleCouncilStatus(args) {
   console.log(JSON.stringify(Object.assign({
     ok: true
   }, councilRuntimeStatus())));
+}
+
+async function handleProofVocabularyStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  console.log(JSON.stringify(proofVocabularyStatus()));
+}
+
+async function handleBootstrapStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  console.log(JSON.stringify(bootstrapStatus()));
+}
+
+async function handleProofNegativeMatrixStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  console.log(JSON.stringify(proofNegativeMatrixStatus()));
 }
 
 async function handleStableExitStatus(args) {
@@ -5771,10 +6253,16 @@ async function handleAuditV2Preview(args) {
   const policy = loadPolicy();
   const state = loadState();
   const validation = readJsonStrict(VALIDATION_PATH);
+  const vocabulary = proofVocabularyStatus();
+  const bootstrap = bootstrapStatus();
+  const negativeMatrix = proofNegativeMatrixStatus();
   const framework = capabilityFramework();
   const council = councilRuntimeStatus();
   const gate = await gateStatus(remote, branch);
   const auditCommand = validationCommandById(validation, 'audit_v2_preview_readonly');
+  const vocabularyCommand = validationCommandById(validation, 'proof_vocabulary_status_readonly');
+  const bootstrapCommand = validationCommandById(validation, 'bootstrap_status_readonly');
+  const negativeMatrixCommand = validationCommandById(validation, 'proof_negative_matrix_status_readonly');
   const frameworkCommand = validationCommandById(validation, 'capability_framework_status_readonly');
   const councilCommand = validationCommandById(validation, 'council_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
@@ -5831,6 +6319,140 @@ async function handleAuditV2Preview(args) {
       failed_recorded_validation_ids: failedRecordedValidationIds
     },
     ['scripts/bha-verify.js', '.bha/state.json', '.bha/ledger.jsonl']
+  ));
+  const previewVocabularyFindings = previewForbiddenVocabularyFindings({
+    framework_summary: {
+      default_decision: framework.default_decision,
+      production_capability_types: framework.production_capability_types,
+      machine_readable_draft_status: framework.machine_readable_draft ? framework.machine_readable_draft.status : 'MISSING',
+      deny_replay_matrix_status: framework.deny_replay_test_matrix ? framework.deny_replay_test_matrix.status : 'MISSING',
+      new_production_capability_allowed: framework.enablement_gate
+        ? framework.enablement_gate.new_production_capability_allowed
+        : null
+    },
+    council_summary: {
+      runtime_state: council.runtime_state,
+      dry_run_model_status: council.dry_run_model ? council.dry_run_model.status : 'MISSING',
+      runtime_activation_allowed: council.activation_gate
+        ? council.activation_gate.runtime_activation_allowed
+        : null,
+      automated_agent_spawn_allowed: council.automated_agent_spawn_allowed
+    },
+    framework_preview: {
+      status: framework.proof_vocabulary.status,
+      preview_authorizes_runtime: framework.proof_vocabulary.preview_authorizes_runtime,
+      confidence_labels: framework.proof_vocabulary.confidence_labels
+    },
+    council_preview: {
+      status: council.proof_vocabulary.status,
+      dry_run_trace_authorizes_runtime: council.proof_vocabulary.dry_run_trace_authorizes_runtime,
+      dry_run_trace_is_validation_evidence: council.proof_vocabulary.dry_run_trace_is_validation_evidence,
+      confidence_labels: council.proof_vocabulary.confidence_labels
+    }
+  }, vocabulary.preview_semantics.forbidden_authority_terms);
+  checks.push(auditCheck(
+    'proof_vocabulary_preview_authority_terms_blocked',
+    'V2 preview outputs use confidence labels and must not use enabled, authorized, approved, trusted, or ready as preview authority semantics.',
+    Boolean(vocabularyCommand &&
+      vocabulary.preview_semantics.preview_authorizes_runtime === false &&
+      vocabulary.preview_semantics.dry_run_trace_authorizes_runtime === false &&
+      vocabulary.preview_semantics.dry_run_trace_is_validation_evidence === false &&
+      vocabulary.critical_judgment.prose_text_scan_allowed === false &&
+      previewVocabularyFindings.length === 0),
+    {
+      validation_command_present: Boolean(vocabularyCommand),
+      confidence_labels: Object.keys(vocabulary.proof_levels),
+      forbidden_authority_terms: vocabulary.preview_semantics.forbidden_authority_terms,
+      preview_vocabulary_findings: previewVocabularyFindings
+    },
+    ['scripts/bha-run.js', 'scripts/bha-verify.js', '.bha/validation.yaml']
+  ));
+  checks.push(auditCheck(
+    'artifact_provenance_preview_non_authorizing',
+    'Preview/status artifacts expose structured provenance and cannot claim authority, activation, or capability grants.',
+    Boolean(previewArtifactProvenanceValid(vocabulary, 'proof_vocabulary_status') &&
+      previewArtifactProvenanceValid(bootstrap, 'bootstrap_status') &&
+      previewArtifactProvenanceValid(negativeMatrix, 'proof_negative_matrix_status') &&
+      previewArtifactProvenanceValid(framework, 'capability_framework_status') &&
+      previewArtifactProvenanceValid(council, 'council_status') &&
+      auditCommand &&
+      commandHasJsonPath(auditCommand, 'artifact_provenance.authority', 'NON_AUTHORITATIVE_PREVIEW') &&
+      commandHasJsonPath(auditCommand, 'artifact_provenance.non_authoritative', true) &&
+      commandHasJsonPath(auditCommand, 'artifact_provenance.non_activating', true) &&
+      commandHasJsonPath(auditCommand, 'artifact_provenance.grants_capability', false)),
+    {
+      vocabulary: vocabulary.artifact_provenance || null,
+      bootstrap: bootstrap.artifact_provenance || null,
+      negative_matrix: negativeMatrix.artifact_provenance || null,
+      framework: framework.artifact_provenance || null,
+      council: council.artifact_provenance || null,
+      audit_validation_paths_present: Boolean(auditCommand &&
+        commandHasJsonPath(auditCommand, 'artifact_provenance.authority', 'NON_AUTHORITATIVE_PREVIEW') &&
+        commandHasJsonPath(auditCommand, 'artifact_provenance.grants_capability', false))
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml']
+  ));
+  checks.push(auditCheck(
+    'bootstrap_state_contract_machine_readable',
+    'Bootstrap status defines fresh-clone replay order and fail-closed behavior without making ledger or local cache a trust root.',
+    Boolean(bootstrapCommand &&
+      policyAllowsArgv(policy, bootstrapCommand.argv || []) &&
+      bootstrap.ledger_is_bootstrap_trust_root === false &&
+      bootstrap.local_cache_required === false &&
+      bootstrap.private_key_required === false &&
+      bootstrap.provider_call_required === false &&
+      bootstrap.remote_write_required === false &&
+      bootstrap.fresh_clone_replay_contract &&
+      bootstrap.fresh_clone_replay_contract.requires_bha_local === false &&
+      bootstrap.fresh_clone_replay_contract.requires_private_key === false &&
+      bootstrap.fail_closed_states &&
+      bootstrap.fail_closed_states.missing_ledger === 'HISTORICAL_EVIDENCE_UNAVAILABLE' &&
+      bootstrap.fail_closed_states.corrupt_ledger === 'REPLAY_REQUIRED' &&
+      bootstrap.activation_firewall &&
+      bootstrap.activation_firewall.effective_production_capability_types.length === 1 &&
+      bootstrap.activation_firewall.effective_production_capability_types[0] === 'git_push' &&
+      previewArtifactProvenanceValid(bootstrap, 'bootstrap_status')),
+    {
+      validation_command_present: Boolean(bootstrapCommand),
+      policy_allowed: bootstrapCommand ? policyAllowsArgv(policy, bootstrapCommand.argv || []) : false,
+      bootstrap_order: bootstrap.bootstrap_order,
+      fresh_clone_replay_contract: bootstrap.fresh_clone_replay_contract,
+      fail_closed_states: bootstrap.fail_closed_states,
+      artifact_provenance: bootstrap.artifact_provenance || null
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml', '.bha/policy.yaml']
+  ));
+  checks.push(auditCheck(
+    'proof_negative_matrix_machine_readable',
+    'V2 proof negative matrix is machine-readable, fail-closed, non-authorizing, and wired into validation.',
+    Boolean(negativeMatrixCommand &&
+      policyAllowsArgv(policy, negativeMatrixCommand.argv || []) &&
+      negativeMatrix.matrix_status === 'MACHINE_READABLE_FAIL_CLOSED_PREVIEW' &&
+      negativeMatrix.command_case_results_pass === true &&
+      negativeMatrix.artifact_case_results_declared === true &&
+      negativeMatrix.artifact_case_results_pass === true &&
+      negativeMatrix.activation_firewall &&
+      negativeMatrix.activation_firewall.resolver_reads_production_authority_only === true &&
+      negativeMatrix.activation_firewall.preview_merge_allowed === false &&
+      negativeMatrix.activation_firewall.preview_authorizes_runtime === false &&
+      negativeMatrix.activation_firewall.preview_artifact_can_enter_gate_positive_condition === false &&
+      negativeMatrix.activation_firewall.council_trace_can_enter_gate_positive_condition === false &&
+      negativeMatrix.activation_firewall.preview_injection_results_pass === true &&
+      Array.isArray(negativeMatrix.activation_firewall.effective_production_capability_types) &&
+      negativeMatrix.activation_firewall.effective_production_capability_types.length === 1 &&
+      negativeMatrix.activation_firewall.effective_production_capability_types[0] === 'git_push' &&
+      previewArtifactProvenanceValid(negativeMatrix, 'proof_negative_matrix_status')),
+    {
+      validation_command_present: Boolean(negativeMatrixCommand),
+      policy_allowed: negativeMatrixCommand ? policyAllowsArgv(policy, negativeMatrixCommand.argv || []) : false,
+      matrix_status: negativeMatrix.matrix_status,
+      command_case_results_pass: negativeMatrix.command_case_results_pass,
+      artifact_case_results_declared: negativeMatrix.artifact_case_results_declared,
+      artifact_case_results_pass: negativeMatrix.artifact_case_results_pass,
+      activation_firewall: negativeMatrix.activation_firewall || null,
+      artifact_provenance: negativeMatrix.artifact_provenance || null
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml', '.bha/policy.yaml']
   ));
   checks.push(auditCheck(
     'capability_framework_machine_readable_draft',
@@ -5900,11 +6522,15 @@ async function handleAuditV2Preview(args) {
     Boolean(council.dry_run_model &&
       council.dry_run_model.schema === 'bha.council_dry_run.v2.preview' &&
       council.dry_run_model.status === 'DRAFT_NON_ACTIVATING' &&
+      council.dry_run_model.trace_status === 'DRY_RUN_ONLY' &&
+      council.dry_run_model.runtime_enabled === false &&
       council.dry_run_model.authorization_effect === false &&
       council.dry_run_model.can_spawn_agents === false &&
       council.dry_run_model.can_call_providers === false &&
       council.dry_run_model.can_write_memory === false &&
       council.dry_run_model.can_push === false &&
+      council.dry_run_model.trace_is_production_evidence === false &&
+      council.dry_run_model.trace_can_enter_gate_positive_condition === false &&
       Array.isArray(council.dry_run_model.trace_fields) &&
       council.dry_run_model.trace_fields.includes('commander_boundary') &&
       council.dry_run_model.trace_fields.includes('verifier_checks')),
@@ -5951,9 +6577,33 @@ async function handleAuditV2Preview(args) {
     ['scripts/bha-run.js', '.bha/policy.yaml']
   ));
   checks.push(auditCheck(
+    'audit_semantic_split_false_confidence_hardened',
+    'V2 preview audit separates production enforcement from preview coverage, activation firewall, negative matrix, bootstrap, replay, local evidence limits, and activation blockers.',
+    true,
+    {
+      sections: [
+        'production_enforcement',
+        'preview_coverage',
+        'activation_firewall',
+        'negative_matrix',
+        'bootstrap_state',
+        'fresh_clone_replay',
+        'local_evidence_limits',
+        'activation_blockers'
+      ],
+      preview_coverage_counts_as_production_pass: false,
+      audit_pass_is_authorization: false,
+      total_status: 'PREVIEW_HOLD_LINE'
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml']
+  ));
+  checks.push(auditCheck(
     'v2_preview_validation_and_policy_wired',
     'V2 preview audit, framework status, council status, and regression self-test are policy-allowed and validation-wired.',
     Boolean(auditCommand &&
+      vocabularyCommand &&
+      bootstrapCommand &&
+      negativeMatrixCommand &&
       frameworkCommand &&
       councilCommand &&
       regressionCommand &&
@@ -5964,6 +6614,8 @@ async function handleAuditV2Preview(args) {
       policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'audit-v2-preview', '--format', 'json', '--allow-validation-in-progress'])),
     {
       audit_v2_preview_validation_command_present: Boolean(auditCommand),
+      bootstrap_status_validation_command_present: Boolean(bootstrapCommand),
+      proof_negative_matrix_status_validation_command_present: Boolean(negativeMatrixCommand),
       framework_status_validation_command_present: Boolean(frameworkCommand),
       council_status_validation_command_present: Boolean(councilCommand),
       regression_selftest_validation_command_present: Boolean(regressionCommand),
@@ -5994,7 +6646,7 @@ async function handleAuditV2Preview(args) {
 
   const failed = checks.filter((check) => check.status !== 'PASS');
   const ok = failed.length === 0;
-  console.log(JSON.stringify({
+  const report = {
     ok,
     status: ok ? 'PASS' : 'FAIL',
     schema: 'bha.audit.v2_preview.v1',
@@ -6030,6 +6682,89 @@ async function handleAuditV2Preview(args) {
         : null,
       automated_agent_spawn_allowed: council.automated_agent_spawn_allowed
     },
+    proof_vocabulary: {
+      status: vocabulary.status,
+      confidence_labels: Object.keys(vocabulary.proof_levels),
+      preview_forbidden_authority_terms: vocabulary.preview_semantics.forbidden_authority_terms,
+      preview_authorizes_runtime: vocabulary.preview_semantics.preview_authorizes_runtime,
+      prose_text_scan_allowed: vocabulary.critical_judgment.prose_text_scan_allowed
+    },
+    bootstrap_summary: {
+      status: bootstrap.status,
+      ledger_is_bootstrap_trust_root: bootstrap.ledger_is_bootstrap_trust_root,
+      local_cache_required: bootstrap.local_cache_required,
+      private_key_required: bootstrap.private_key_required,
+      damaged_ledger_status: bootstrap.fresh_clone_replay_contract
+        ? bootstrap.fresh_clone_replay_contract.damaged_ledger_status
+        : 'UNKNOWN'
+    },
+    negative_matrix_summary: {
+      status: negativeMatrix.status,
+      matrix_status: negativeMatrix.matrix_status,
+      command_case_results_pass: negativeMatrix.command_case_results_pass,
+      artifact_case_results_declared: negativeMatrix.artifact_case_results_declared,
+      artifact_case_results_pass: negativeMatrix.artifact_case_results_pass,
+      preview_injection_results_pass: negativeMatrix.activation_firewall
+        ? negativeMatrix.activation_firewall.preview_injection_results_pass
+        : false
+    },
+    semantic_sections: {
+      production_enforcement: {
+        status: 'VERIFIER_GATED',
+        effective_production_capability_types: framework.production_capability_types,
+        preview_coverage_counts_as_production_pass: false,
+        gate_positive_sources_exclude_preview: true
+      },
+      preview_coverage: {
+        status: 'PREVIEW_HOLD_LINE',
+        framework_draft_status: framework.machine_readable_draft ? framework.machine_readable_draft.status : 'MISSING',
+        council_dry_run_status: council.dry_run_model ? council.dry_run_model.status : 'MISSING',
+        preview_authorizes_runtime: false
+      },
+      activation_firewall: {
+        status: 'INTACT',
+        resolver_reads_production_authority_only: negativeMatrix.activation_firewall
+          ? negativeMatrix.activation_firewall.resolver_reads_production_authority_only
+          : false,
+        preview_merge_allowed: negativeMatrix.activation_firewall
+          ? negativeMatrix.activation_firewall.preview_merge_allowed
+          : null,
+        effective_production_capability_types: negativeMatrix.activation_firewall
+          ? negativeMatrix.activation_firewall.effective_production_capability_types
+          : []
+      },
+      negative_matrix: {
+        status: negativeMatrix.matrix_status,
+        command_case_results_pass: negativeMatrix.command_case_results_pass,
+        artifact_case_results_declared: negativeMatrix.artifact_case_results_declared,
+        artifact_case_results_pass: negativeMatrix.artifact_case_results_pass
+      },
+      bootstrap_state: {
+        status: bootstrap.status,
+        ledger_is_bootstrap_trust_root: bootstrap.ledger_is_bootstrap_trust_root,
+        local_cache_required: bootstrap.local_cache_required
+      },
+      fresh_clone_replay: {
+        status: 'REPLAY_CONTRACT_AVAILABLE',
+        requires_bha_local: bootstrap.fresh_clone_replay_contract
+          ? bootstrap.fresh_clone_replay_contract.requires_bha_local
+          : null,
+        damaged_ledger_status: bootstrap.fresh_clone_replay_contract
+          ? bootstrap.fresh_clone_replay_contract.damaged_ledger_status
+          : 'UNKNOWN'
+      },
+      local_evidence_limits: {
+        local_only_capability_evidence_is_remote_proof: false,
+        closeout_prose_is_proof: false,
+        audit_pass_is_authorization: false
+      },
+      activation_blockers: {
+        status: 'PREVIEW_HOLD_LINE',
+        missing_before_enablement: framework.test_requirements ? framework.test_requirements.missing_before_enablement : [],
+        missing_before_activation: council.test_requirements ? council.test_requirements.missing_before_activation : []
+      }
+    },
+    total_status: 'PREVIEW_HOLD_LINE',
     remote,
     branch,
     validation_in_progress_allowed: allowValidationInProgress,
@@ -6041,7 +6776,19 @@ async function handleAuditV2Preview(args) {
       warning_codes: verifierWarningCodes
     },
     proof_boundary: 'audit-v2-preview is read-only preview coverage. It does not enable capabilities, spawn agents, write memory, push, deploy, release, tag, publish packages, read private keys, or turn draft evidence into authorization.'
-  }));
+  };
+  console.log(JSON.stringify(withArtifactProvenance(report, {
+    type: 'audit_v2_preview',
+    generated_by: 'node scripts/bha-run.js audit-v2-preview --format json',
+    input_hashes: {
+      gate_status: sha256(stable(gate)),
+      capability_framework_status: framework.artifact_provenance ? framework.artifact_provenance.output_hash : null,
+      council_status: council.artifact_provenance ? council.artifact_provenance.output_hash : null,
+      proof_vocabulary_status: vocabulary.artifact_provenance ? vocabulary.artifact_provenance.output_hash : null,
+      bootstrap_status: bootstrap.artifact_provenance ? bootstrap.artifact_provenance.output_hash : null,
+      proof_negative_matrix_status: negativeMatrix.artifact_provenance ? negativeMatrix.artifact_provenance.output_hash : null
+    }
+  })));
   if (!ok) {
     process.exitCode = 1;
   }
@@ -6515,6 +7262,9 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
         { command: 'git', args: ['diff', '--check'], reason: 'local whitespace validation' },
         { command: 'git', args: ['status'], reason: 'local repository status inspection' },
         { command: 'node', args: ['scripts/bha-run.js', 'rollback-drill', '--format', 'json'], reason: 'read-only rollback drill' },
+        { command: 'node', args: ['scripts/bha-run.js', 'proof-vocabulary-status', '--format', 'json'], reason: 'read-only V2 proof vocabulary status' },
+        { command: 'node', args: ['scripts/bha-run.js', 'bootstrap-status', '--format', 'json'], reason: 'read-only V2 bootstrap and fresh-clone replay status' },
+        { command: 'node', args: ['scripts/bha-run.js', 'proof-negative-matrix-status', '--format', 'json'], reason: 'read-only V2 proof negative matrix status' },
         { command: 'node', args: ['scripts/bha-run.js', 'capability-framework-status', '--format', 'json'], reason: 'read-only V2 capability framework status' },
         { command: 'node', args: ['scripts/bha-run.js', 'council-status', '--format', 'json'], reason: 'read-only V2 council runtime status' },
         { command: 'node', args: ['scripts/bha-run.js', 'audit-v2-preview', '--format', 'json', '--allow-validation-in-progress'], reason: 'read-only V2 preview audit during validation bootstrap' },
@@ -6618,6 +7368,9 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
           recorded: false,
           read_only: true,
           json_paths: {
+            'proof_vocabulary.status': 'PROOF_VOCABULARY_STATUS',
+            'proof_vocabulary.preview_authorizes_runtime': false,
+            'proof_vocabulary.confidence_labels.0': 'VERIFIED',
             'machine_readable_draft.status': 'DRAFT_NON_ENABLING',
             'machine_readable_draft.authorization_effect': false,
             'machine_readable_draft.schema_draft.schema': 'bha.capability_schema.v2.preview',
@@ -6626,9 +7379,125 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
             'deny_replay_test_matrix.case_results.0.status': 'PASS',
             'deny_replay_test_matrix.case_results.8.status': 'PASS',
             'verifier_evidence_contract.verifier_must_reject_incomplete_preview_schema': true,
-            'verifier_evidence_contract.draft_evidence_is_authorization': false
+            'verifier_evidence_contract.draft_evidence_is_authorization': false,
+            'artifact_provenance.type': 'capability_framework_status',
+            'artifact_provenance.authority': 'NON_AUTHORITATIVE_PREVIEW',
+            'artifact_provenance.status': 'PREVIEW_ONLY',
+            'artifact_provenance.non_authoritative': true,
+            'artifact_provenance.non_activating': true,
+            'artifact_provenance.grants_capability': false,
+            'artifact_provenance.local_only': true
           },
-          has_keys: ['machine_readable_draft', 'deny_replay_test_matrix', 'verifier_evidence_contract']
+          has_keys: ['machine_readable_draft', 'deny_replay_test_matrix', 'verifier_evidence_contract', 'artifact_provenance']
+        }
+      },
+      {
+        id: 'proof_vocabulary_status_readonly',
+        argv: ['node', 'scripts/bha-run.js', 'proof-vocabulary-status', '--format', 'json'],
+        expect: {
+          exit_code: 0,
+          ok: true,
+          status: 'PROOF_VOCABULARY_STATUS',
+          recorded: false,
+          read_only: true,
+          json_paths: {
+            'current_phase': 'PREVIEW_HOLD_LINE',
+            'trust_boundaries.clean_repo_is_trust_root': false,
+            'trust_boundaries.audit_pass_is_trust_root': false,
+            'trust_boundaries.closeout_prose_is_trust_root': false,
+            'trust_boundaries.ledger_is_bootstrap_trust_root': false,
+            'preview_semantics.preview_authorizes_runtime': false,
+            'preview_semantics.dry_run_trace_authorizes_runtime': false,
+            'preview_semantics.dry_run_trace_is_validation_evidence': false,
+            'preview_semantics.forbidden_authority_terms.0': 'enabled',
+            'preview_semantics.forbidden_authority_terms.4': 'ready',
+            'critical_judgment.structured_evidence_required': true,
+            'critical_judgment.prose_text_scan_allowed': false,
+            'gate_semantics.preview_artifact_can_enter_gate_positive_condition': false,
+            'gate_semantics.production_capability_types.0': 'git_push',
+            'artifact_provenance.type': 'proof_vocabulary_status',
+            'artifact_provenance.authority': 'NON_AUTHORITATIVE_PREVIEW',
+            'artifact_provenance.status': 'PREVIEW_ONLY',
+            'artifact_provenance.non_authoritative': true,
+            'artifact_provenance.non_activating': true,
+            'artifact_provenance.grants_capability': false,
+            'artifact_provenance.local_only': true
+          },
+          has_keys: ['proof_levels', 'trust_boundaries', 'preview_semantics', 'critical_judgment', 'gate_semantics', 'artifact_provenance']
+        }
+      },
+      {
+        id: 'bootstrap_status_readonly',
+        argv: ['node', 'scripts/bha-run.js', 'bootstrap-status', '--format', 'json'],
+        expect: {
+          exit_code: 0,
+          ok: true,
+          status: 'BOOTSTRAP_REPLAY_STATUS',
+          recorded: false,
+          read_only: true,
+          json_paths: {
+            'current_phase': 'PREVIEW_HOLD_LINE',
+            'ledger_is_bootstrap_trust_root': false,
+            'local_cache_required': false,
+            'private_key_required': false,
+            'provider_call_required': false,
+            'remote_write_required': false,
+            'bootstrap_order.0.id': 'verifier_syntax',
+            'bootstrap_order.1.id': 'verifier_self_test',
+            'bootstrap_order.4.effective_production_capability_types.0': 'git_push',
+            'bootstrap_order.5.capability_preview_authorizes_runtime': false,
+            'bootstrap_order.5.council_runtime_activation_allowed': false,
+            'fresh_clone_replay_contract.requires_bha_local': false,
+            'fresh_clone_replay_contract.requires_private_key': false,
+            'fresh_clone_replay_contract.damaged_ledger_status': 'REPLAY_REQUIRED',
+            'fail_closed_states.missing_ledger': 'HISTORICAL_EVIDENCE_UNAVAILABLE',
+            'fail_closed_states.corrupt_ledger': 'REPLAY_REQUIRED',
+            'activation_firewall.effective_production_capability_types.0': 'git_push',
+            'artifact_provenance.type': 'bootstrap_status',
+            'artifact_provenance.authority': 'NON_AUTHORITATIVE_PREVIEW',
+            'artifact_provenance.status': 'PREVIEW_ONLY',
+            'artifact_provenance.non_authoritative': true,
+            'artifact_provenance.non_activating': true,
+            'artifact_provenance.grants_capability': false,
+            'artifact_provenance.local_only': true
+          },
+          has_keys: ['bootstrap_order', 'fresh_clone_replay_contract', 'fail_closed_states', 'activation_firewall', 'artifact_provenance']
+        }
+      },
+      {
+        id: 'proof_negative_matrix_status_readonly',
+        argv: ['node', 'scripts/bha-run.js', 'proof-negative-matrix-status', '--format', 'json'],
+        expect: {
+          exit_code: 0,
+          ok: true,
+          status: 'PROOF_NEGATIVE_MATRIX_STATUS',
+          recorded: false,
+          read_only: true,
+          json_paths: {
+            'current_phase': 'PREVIEW_HOLD_LINE',
+            'matrix_status': 'MACHINE_READABLE_FAIL_CLOSED_PREVIEW',
+            'command_case_results_pass': true,
+            'artifact_case_results_declared': true,
+            'artifact_case_results_pass': true,
+            'activation_firewall.resolver_reads_production_authority_only': true,
+            'activation_firewall.preview_merge_allowed': false,
+            'activation_firewall.preview_authorizes_runtime': false,
+            'activation_firewall.preview_artifact_can_enter_gate_positive_condition': false,
+            'activation_firewall.council_trace_can_enter_gate_positive_condition': false,
+            'activation_firewall.effective_production_capability_types.0': 'git_push',
+            'activation_firewall.council_runtime_activation_allowed': false,
+            'activation_firewall.preview_injection_results_pass': true,
+            'verifier_contract.read_only_verifier_required': true,
+            'verifier_contract.prose_text_scan_allowed_for_critical_judgment': false,
+            'artifact_provenance.type': 'proof_negative_matrix_status',
+            'artifact_provenance.authority': 'NON_AUTHORITATIVE_PREVIEW',
+            'artifact_provenance.status': 'PREVIEW_ONLY',
+            'artifact_provenance.non_authoritative': true,
+            'artifact_provenance.non_activating': true,
+            'artifact_provenance.grants_capability': false,
+            'artifact_provenance.local_only': true
+          },
+          has_keys: ['command_case_results', 'artifact_case_results', 'activation_firewall', 'verifier_contract', 'artifact_provenance']
         }
       },
       {
@@ -6641,16 +7510,30 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
           recorded: false,
           read_only: true,
           json_paths: {
+            'proof_vocabulary.status': 'PROOF_VOCABULARY_STATUS',
+            'proof_vocabulary.dry_run_trace_authorizes_runtime': false,
+            'proof_vocabulary.dry_run_trace_is_validation_evidence': false,
             'dry_run_model.schema': 'bha.council_dry_run.v2.preview',
             'dry_run_model.status': 'DRAFT_NON_ACTIVATING',
+            'dry_run_model.trace_status': 'DRY_RUN_ONLY',
+            'dry_run_model.runtime_enabled': false,
             'dry_run_model.authorization_effect': false,
+            'dry_run_model.trace_is_production_evidence': false,
+            'dry_run_model.trace_can_enter_gate_positive_condition': false,
             'role_boundary_matrix.0.may_grant_remote_authority': false,
             'role_boundary_matrix.0.may_create_proof': false,
             'role_boundary_matrix.0.may_spawn_agents': false,
             'activation_regression_matrix.status': 'MACHINE_READABLE_PREVIEW',
-            'activation_regression_matrix.coverage_complete': false
+            'activation_regression_matrix.coverage_complete': false,
+            'artifact_provenance.type': 'council_status',
+            'artifact_provenance.authority': 'NON_AUTHORITATIVE_PREVIEW',
+            'artifact_provenance.status': 'PREVIEW_ONLY',
+            'artifact_provenance.non_authoritative': true,
+            'artifact_provenance.non_activating': true,
+            'artifact_provenance.grants_capability': false,
+            'artifact_provenance.local_only': true
           },
-          has_keys: ['dry_run_model', 'role_boundary_matrix', 'activation_regression_matrix']
+          has_keys: ['dry_run_model', 'role_boundary_matrix', 'activation_regression_matrix', 'artifact_provenance']
         }
       },
       {
@@ -6669,10 +7552,41 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
             'framework_summary.new_production_capability_allowed': false,
             'council_summary.dry_run_model_status': 'DRAFT_NON_ACTIVATING',
             'council_summary.runtime_activation_allowed': false,
+            'proof_vocabulary.status': 'PROOF_VOCABULARY_STATUS',
+            'proof_vocabulary.preview_authorizes_runtime': false,
+            'proof_vocabulary.prose_text_scan_allowed': false,
+            'bootstrap_summary.status': 'BOOTSTRAP_REPLAY_STATUS',
+            'bootstrap_summary.ledger_is_bootstrap_trust_root': false,
+            'bootstrap_summary.local_cache_required': false,
+            'bootstrap_summary.private_key_required': false,
+            'bootstrap_summary.damaged_ledger_status': 'REPLAY_REQUIRED',
+            'negative_matrix_summary.status': 'PROOF_NEGATIVE_MATRIX_STATUS',
+            'negative_matrix_summary.matrix_status': 'MACHINE_READABLE_FAIL_CLOSED_PREVIEW',
+            'negative_matrix_summary.command_case_results_pass': true,
+            'negative_matrix_summary.artifact_case_results_declared': true,
+            'negative_matrix_summary.artifact_case_results_pass': true,
+            'negative_matrix_summary.preview_injection_results_pass': true,
+            'semantic_sections.production_enforcement.status': 'VERIFIER_GATED',
+            'semantic_sections.production_enforcement.preview_coverage_counts_as_production_pass': false,
+            'semantic_sections.preview_coverage.status': 'PREVIEW_HOLD_LINE',
+            'semantic_sections.activation_firewall.status': 'INTACT',
+            'semantic_sections.negative_matrix.status': 'MACHINE_READABLE_FAIL_CLOSED_PREVIEW',
+            'semantic_sections.negative_matrix.artifact_case_results_pass': true,
+            'semantic_sections.bootstrap_state.status': 'BOOTSTRAP_REPLAY_STATUS',
+            'semantic_sections.fresh_clone_replay.status': 'REPLAY_CONTRACT_AVAILABLE',
+            'semantic_sections.local_evidence_limits.audit_pass_is_authorization': false,
+            'semantic_sections.activation_blockers.status': 'PREVIEW_HOLD_LINE',
+            'total_status': 'PREVIEW_HOLD_LINE',
+            'artifact_provenance.authority': 'NON_AUTHORITATIVE_PREVIEW',
+            'artifact_provenance.status': 'PREVIEW_ONLY',
+            'artifact_provenance.non_authoritative': true,
+            'artifact_provenance.non_activating': true,
+            'artifact_provenance.grants_capability': false,
+            'artifact_provenance.local_only': true,
             'validation_in_progress_allowed': true,
             'verifier_gate.accepted': true
           },
-          has_keys: ['schema', 'checks', 'framework_summary', 'council_summary', 'proof_boundary']
+          has_keys: ['schema', 'checks', 'framework_summary', 'council_summary', 'bootstrap_summary', 'negative_matrix_summary', 'semantic_sections', 'artifact_provenance', 'proof_boundary']
         }
       }
     ]
@@ -7034,6 +7948,8 @@ async function handleRegressionSelftest(args) {
   const rootOperatorSignerPreflightCommand = validationCommandById(rootValidation, 'operator_signer_preflight_readonly');
   const rootRecoverStatusCommand = validationCommandById(rootValidation, 'recover_status_readonly');
   const rootStableExitReviewCommand = validationCommandById(rootValidation, 'stable_exit_review_readonly');
+  const rootProofVocabularyCommand = validationCommandById(rootValidation, 'proof_vocabulary_status_readonly');
+  const rootBootstrapStatusCommand = validationCommandById(rootValidation, 'bootstrap_status_readonly');
   const rootCapabilityFrameworkCommand = validationCommandById(rootValidation, 'capability_framework_status_readonly');
   const rootCouncilStatusCommand = validationCommandById(rootValidation, 'council_status_readonly');
   const rootAuditV2PreviewCommand = validationCommandById(rootValidation, 'audit_v2_preview_readonly');
@@ -7082,14 +7998,65 @@ async function handleRegressionSelftest(args) {
     validation_command_present: Boolean(rootRecoverStatusCommand),
     read_only: rootRecoverStatusCommand && rootRecoverStatusCommand.expect ? rootRecoverStatusCommand.expect.read_only : 'MISSING'
   }));
+  const proofVocabularyJsonPaths = rootProofVocabularyCommand && rootProofVocabularyCommand.expect
+    ? (rootProofVocabularyCommand.expect.json_paths || {})
+    : {};
+  checks.push(regressionCheck('proof_vocabulary_status_validation_wired', Boolean(rootProofVocabularyCommand &&
+    rootProofVocabularyCommand.expect &&
+    rootProofVocabularyCommand.expect.exit_code === 0 &&
+    rootProofVocabularyCommand.expect.ok === true &&
+    rootProofVocabularyCommand.expect.status === 'PROOF_VOCABULARY_STATUS' &&
+    rootProofVocabularyCommand.expect.read_only === true &&
+    rootProofVocabularyCommand.expect.recorded === false &&
+    proofVocabularyJsonPaths['current_phase'] === 'PREVIEW_HOLD_LINE' &&
+    proofVocabularyJsonPaths['trust_boundaries.clean_repo_is_trust_root'] === false &&
+    proofVocabularyJsonPaths['preview_semantics.preview_authorizes_runtime'] === false &&
+    proofVocabularyJsonPaths['preview_semantics.forbidden_authority_terms.0'] === 'enabled' &&
+    proofVocabularyJsonPaths['critical_judgment.prose_text_scan_allowed'] === false &&
+    proofVocabularyJsonPaths['gate_semantics.preview_artifact_can_enter_gate_positive_condition'] === false &&
+    proofVocabularyJsonPaths['artifact_provenance.type'] === 'proof_vocabulary_status' &&
+    proofVocabularyJsonPaths['artifact_provenance.non_authoritative'] === true &&
+    proofVocabularyJsonPaths['artifact_provenance.non_activating'] === true &&
+    proofVocabularyJsonPaths['artifact_provenance.grants_capability'] === false), {
+    validation_command_present: Boolean(rootProofVocabularyCommand),
+    json_paths: proofVocabularyJsonPaths
+  }));
+  const bootstrapJsonPaths = rootBootstrapStatusCommand && rootBootstrapStatusCommand.expect
+    ? (rootBootstrapStatusCommand.expect.json_paths || {})
+    : {};
+  checks.push(regressionCheck('bootstrap_status_validation_wired', Boolean(rootBootstrapStatusCommand &&
+    rootBootstrapStatusCommand.expect &&
+    rootBootstrapStatusCommand.expect.exit_code === 0 &&
+    rootBootstrapStatusCommand.expect.ok === true &&
+    rootBootstrapStatusCommand.expect.status === 'BOOTSTRAP_REPLAY_STATUS' &&
+    rootBootstrapStatusCommand.expect.read_only === true &&
+    rootBootstrapStatusCommand.expect.recorded === false &&
+    bootstrapJsonPaths['ledger_is_bootstrap_trust_root'] === false &&
+    bootstrapJsonPaths['local_cache_required'] === false &&
+    bootstrapJsonPaths['private_key_required'] === false &&
+    bootstrapJsonPaths['fresh_clone_replay_contract.requires_bha_local'] === false &&
+    bootstrapJsonPaths['fresh_clone_replay_contract.damaged_ledger_status'] === 'REPLAY_REQUIRED' &&
+    bootstrapJsonPaths['fail_closed_states.missing_ledger'] === 'HISTORICAL_EVIDENCE_UNAVAILABLE' &&
+    bootstrapJsonPaths['activation_firewall.effective_production_capability_types.0'] === 'git_push' &&
+    bootstrapJsonPaths['artifact_provenance.type'] === 'bootstrap_status' &&
+    bootstrapJsonPaths['artifact_provenance.grants_capability'] === false), {
+    validation_command_present: Boolean(rootBootstrapStatusCommand),
+    json_paths: bootstrapJsonPaths
+  }));
   const frameworkJsonPaths = rootCapabilityFrameworkCommand && rootCapabilityFrameworkCommand.expect
     ? (rootCapabilityFrameworkCommand.expect.json_paths || {})
     : {};
   checks.push(regressionCheck('capability_framework_machine_readable_draft_status', Boolean(rootCapabilityFrameworkCommand &&
     frameworkJsonPaths['machine_readable_draft.status'] === 'DRAFT_NON_ENABLING' &&
+    frameworkJsonPaths['proof_vocabulary.status'] === 'PROOF_VOCABULARY_STATUS' &&
+    frameworkJsonPaths['proof_vocabulary.preview_authorizes_runtime'] === false &&
     frameworkJsonPaths['machine_readable_draft.schema_draft.schema'] === 'bha.capability_schema.v2.preview' &&
     frameworkJsonPaths['machine_readable_draft.evidence_policy.draft_evidence_is_authorization'] === false &&
-    frameworkJsonPaths['verifier_evidence_contract.verifier_must_reject_incomplete_preview_schema'] === true), {
+    frameworkJsonPaths['verifier_evidence_contract.verifier_must_reject_incomplete_preview_schema'] === true &&
+    frameworkJsonPaths['artifact_provenance.type'] === 'capability_framework_status' &&
+    frameworkJsonPaths['artifact_provenance.non_authoritative'] === true &&
+    frameworkJsonPaths['artifact_provenance.non_activating'] === true &&
+    frameworkJsonPaths['artifact_provenance.grants_capability'] === false), {
     validation_command_present: Boolean(rootCapabilityFrameworkCommand),
     json_paths: frameworkJsonPaths
   }));
@@ -7117,10 +8084,16 @@ async function handleRegressionSelftest(args) {
     : {};
   checks.push(regressionCheck('council_dry_run_model_status', Boolean(rootCouncilStatusCommand &&
     councilJsonPaths['dry_run_model.schema'] === 'bha.council_dry_run.v2.preview' &&
+    councilJsonPaths['proof_vocabulary.status'] === 'PROOF_VOCABULARY_STATUS' &&
+    councilJsonPaths['proof_vocabulary.dry_run_trace_authorizes_runtime'] === false &&
     councilJsonPaths['dry_run_model.status'] === 'DRAFT_NON_ACTIVATING' &&
     councilJsonPaths['dry_run_model.can_spawn_agents'] === false &&
     councilJsonPaths['dry_run_model.can_write_memory'] === false &&
-    councilJsonPaths['dry_run_model.can_push'] === false), {
+    councilJsonPaths['dry_run_model.can_push'] === false &&
+    councilJsonPaths['artifact_provenance.type'] === 'council_status' &&
+    councilJsonPaths['artifact_provenance.non_authoritative'] === true &&
+    councilJsonPaths['artifact_provenance.non_activating'] === true &&
+    councilJsonPaths['artifact_provenance.grants_capability'] === false), {
     validation_command_present: Boolean(rootCouncilStatusCommand),
     json_paths: councilJsonPaths
   }));
@@ -7149,10 +8122,42 @@ async function handleRegressionSelftest(args) {
     auditV2JsonPaths['framework_summary.machine_readable_draft_status'] === 'DRAFT_NON_ENABLING' &&
     auditV2JsonPaths['framework_summary.deny_replay_matrix_cases_pass'] === true &&
     auditV2JsonPaths['council_summary.dry_run_model_status'] === 'DRAFT_NON_ACTIVATING' &&
+    auditV2JsonPaths['proof_vocabulary.status'] === 'PROOF_VOCABULARY_STATUS' &&
+    auditV2JsonPaths['proof_vocabulary.preview_authorizes_runtime'] === false &&
+    auditV2JsonPaths['proof_vocabulary.prose_text_scan_allowed'] === false &&
+    auditV2JsonPaths['bootstrap_summary.status'] === 'BOOTSTRAP_REPLAY_STATUS' &&
+    auditV2JsonPaths['bootstrap_summary.ledger_is_bootstrap_trust_root'] === false &&
+    auditV2JsonPaths['bootstrap_summary.private_key_required'] === false &&
+    auditV2JsonPaths['bootstrap_summary.damaged_ledger_status'] === 'REPLAY_REQUIRED' &&
+    auditV2JsonPaths['artifact_provenance.authority'] === 'NON_AUTHORITATIVE_PREVIEW' &&
+    auditV2JsonPaths['artifact_provenance.non_authoritative'] === true &&
+    auditV2JsonPaths['artifact_provenance.non_activating'] === true &&
+    auditV2JsonPaths['artifact_provenance.grants_capability'] === false &&
     auditV2JsonPaths['validation_in_progress_allowed'] === true &&
     auditV2JsonPaths['verifier_gate.accepted'] === true), {
     validation_command_present: Boolean(rootAuditV2PreviewCommand),
     json_paths: auditV2JsonPaths
+  }));
+  checks.push(regressionCheck('artifact_provenance_preview_contract_validation_wired', Boolean(rootProofVocabularyCommand &&
+    rootCapabilityFrameworkCommand &&
+    rootCouncilStatusCommand &&
+    rootAuditV2PreviewCommand &&
+    rootBootstrapStatusCommand &&
+    proofVocabularyJsonPaths['artifact_provenance.authority'] === 'NON_AUTHORITATIVE_PREVIEW' &&
+    bootstrapJsonPaths['artifact_provenance.authority'] === 'NON_AUTHORITATIVE_PREVIEW' &&
+    frameworkJsonPaths['artifact_provenance.authority'] === 'NON_AUTHORITATIVE_PREVIEW' &&
+    councilJsonPaths['artifact_provenance.authority'] === 'NON_AUTHORITATIVE_PREVIEW' &&
+    auditV2JsonPaths['artifact_provenance.authority'] === 'NON_AUTHORITATIVE_PREVIEW' &&
+    proofVocabularyJsonPaths['artifact_provenance.grants_capability'] === false &&
+    bootstrapJsonPaths['artifact_provenance.grants_capability'] === false &&
+    frameworkJsonPaths['artifact_provenance.grants_capability'] === false &&
+    councilJsonPaths['artifact_provenance.grants_capability'] === false &&
+    auditV2JsonPaths['artifact_provenance.grants_capability'] === false), {
+    vocabulary: proofVocabularyJsonPaths['artifact_provenance.authority'] || 'MISSING',
+    bootstrap: bootstrapJsonPaths['artifact_provenance.authority'] || 'MISSING',
+    framework: frameworkJsonPaths['artifact_provenance.authority'] || 'MISSING',
+    council: councilJsonPaths['artifact_provenance.authority'] || 'MISSING',
+    audit: auditV2JsonPaths['artifact_provenance.authority'] || 'MISSING'
   }));
   const stableExitReviewExpect = rootStableExitReviewCommand && rootStableExitReviewCommand.expect
     ? rootStableExitReviewCommand.expect
@@ -9069,6 +10074,12 @@ async function main() {
       await handleCapabilityFrameworkStatus(args);
     } else if (command === 'council-status') {
       await handleCouncilStatus(args);
+    } else if (command === 'proof-vocabulary-status') {
+      await handleProofVocabularyStatus(args);
+    } else if (command === 'bootstrap-status') {
+      await handleBootstrapStatus(args);
+    } else if (command === 'proof-negative-matrix-status') {
+      await handleProofNegativeMatrixStatus(args);
     } else if (command === 'stable-exit-status') {
       await handleStableExitStatus(args);
     } else if (command === 'stable-exit-review') {

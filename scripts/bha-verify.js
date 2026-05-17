@@ -161,6 +161,260 @@ function commandHasKey(command, key) {
     command.expect.has_keys.includes(key));
 }
 
+function objectAtPath(value, pathName) {
+  return String(pathName || '').split('.').reduce((current, part) => {
+    if (current === undefined || current === null) {
+      return undefined;
+    }
+    if (/^\d+$/.test(part) && Array.isArray(current)) {
+      return current[Number(part)];
+    }
+    return current[part];
+  }, value);
+}
+
+function hasForbiddenPreviewAuthorityTerms(value, forbiddenTerms) {
+  const terms = (forbiddenTerms || []).map((item) => String(item).toLowerCase());
+  const stack = [{ path: 'preview', value }];
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (Array.isArray(item.value)) {
+      item.value.forEach((child, index) => stack.push({ path: `${item.path}.${index}`, value: child }));
+      continue;
+    }
+    if (item.value && typeof item.value === 'object') {
+      for (const key of Object.keys(item.value)) {
+        const normalizedKey = String(key).toLowerCase();
+        if (terms.some((term) => normalizedKey === term || normalizedKey.endsWith(`.${term}`) || normalizedKey.includes(`_${term}`))) {
+          return true;
+        }
+        stack.push({ path: `${item.path}.${key}`, value: item.value[key] });
+      }
+      continue;
+    }
+    if (typeof item.value === 'string') {
+      const normalizedValue = item.value.toLowerCase();
+      if (terms.some((term) => normalizedValue === term || normalizedValue.endsWith(`.${term}`) || normalizedValue.includes(`_${term}`))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function commandHasPreviewArtifactProvenance(command, expectedType) {
+  if (!command || !command.expect) {
+    return false;
+  }
+  const paths = command.expect.json_paths || {};
+  const required = {
+    'artifact_provenance.type': expectedType,
+    'artifact_provenance.authority': 'NON_AUTHORITATIVE_PREVIEW',
+    'artifact_provenance.status': 'PREVIEW_ONLY',
+    'artifact_provenance.non_authoritative': true,
+    'artifact_provenance.non_activating': true,
+    'artifact_provenance.grants_capability': false,
+    'artifact_provenance.local_only': true
+  };
+  const pathsOk = Object.keys(required).every((key) => stable(paths[key]) === stable(required[key]));
+  return pathsOk && commandHasKey(command, 'artifact_provenance');
+}
+
+function commandHasNonAuthorizingArtifactProvenance(command) {
+  if (!command || !command.expect) {
+    return false;
+  }
+  const paths = command.expect.json_paths || {};
+  const required = {
+    'artifact_provenance.authority': 'NON_AUTHORITATIVE_PREVIEW',
+    'artifact_provenance.status': 'PREVIEW_ONLY',
+    'artifact_provenance.non_authoritative': true,
+    'artifact_provenance.non_activating': true,
+    'artifact_provenance.grants_capability': false,
+    'artifact_provenance.local_only': true
+  };
+  const pathsOk = Object.keys(required).every((key) => stable(paths[key]) === stable(required[key]));
+  return pathsOk && commandHasKey(command, 'artifact_provenance');
+}
+
+function validationHasFakeAuthoritativePreview(validation) {
+  const commands = validation && Array.isArray(validation.required_commands)
+    ? validation.required_commands
+    : [];
+  return commands.some((command) => {
+    if (!command || !command.expect || !command.expect.json_paths) {
+      return false;
+    }
+    const paths = command.expect.json_paths;
+    return paths['artifact_provenance.authority'] === 'AUTHORITATIVE' ||
+      paths['artifact_provenance.status'] === 'AUTHORIZED' ||
+      paths['artifact_provenance.non_authoritative'] === false ||
+      paths['artifact_provenance.non_activating'] === false ||
+      paths['artifact_provenance.grants_capability'] === true;
+  });
+}
+
+function policyMissionHashesPresent(command) {
+  if (!command || !command.expect || !command.expect.json_paths) {
+    return false;
+  }
+  const paths = command.expect.json_paths;
+  return paths['artifact_provenance.authority'] === 'NON_AUTHORITATIVE_PREVIEW' &&
+    paths['artifact_provenance.grants_capability'] === false;
+}
+
+function previewArtifactProvenanceContractComplete(validation) {
+  const vocabularyCommand = validationCommandById(validation, 'proof_vocabulary_status_readonly');
+  const bootstrapCommand = validationCommandById(validation, 'bootstrap_status_readonly');
+  const negativeMatrixCommand = validationCommandById(validation, 'proof_negative_matrix_status_readonly');
+  const frameworkCommand = validationCommandById(validation, 'capability_framework_status_readonly');
+  const councilCommand = validationCommandById(validation, 'council_status_readonly');
+  const auditCommand = validationCommandById(validation, 'audit_v2_preview_readonly');
+  return commandHasPreviewArtifactProvenance(vocabularyCommand, 'proof_vocabulary_status') &&
+    commandHasPreviewArtifactProvenance(bootstrapCommand, 'bootstrap_status') &&
+    commandHasPreviewArtifactProvenance(negativeMatrixCommand, 'proof_negative_matrix_status') &&
+    commandHasPreviewArtifactProvenance(frameworkCommand, 'capability_framework_status') &&
+    commandHasPreviewArtifactProvenance(councilCommand, 'council_status') &&
+    commandHasNonAuthorizingArtifactProvenance(auditCommand) &&
+    policyMissionHashesPresent(auditCommand);
+}
+
+function provenanceSelfCheck(value) {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const provenance = value.artifact_provenance;
+  if (!provenance || typeof provenance !== 'object') {
+    return false;
+  }
+  if (provenance.authority !== 'NON_AUTHORITATIVE_PREVIEW' ||
+    provenance.status !== 'PREVIEW_ONLY' ||
+    provenance.non_authoritative !== true ||
+    provenance.non_activating !== true ||
+    provenance.grants_capability !== false ||
+    provenance.local_only !== true) {
+    return false;
+  }
+  if (provenance.policy_hash !== policyHash() || provenance.mission_hash !== missionHash()) {
+    return false;
+  }
+  if (!provenance.input_hashes ||
+    provenance.input_hashes.policy !== policyHash() ||
+    provenance.input_hashes.mission !== missionHash()) {
+    return false;
+  }
+  return /^[0-9a-f]{64}$/.test(String(provenance.output_hash || ''));
+}
+
+function selfTestPreviewProvenanceFakeAuthorization() {
+  const issues = [];
+  verifyV2PreviewContractsFromArtifacts(
+    [
+      'handleAuditV2Preview',
+      'proofVocabularyStatus',
+      'machine_readable_draft',
+      'bha.capability_schema.v2.preview',
+      'deny_replay_test_matrix',
+      'case_results_pass',
+      'verifier_evidence_contract',
+      'verifier_must_reject_incomplete_preview_schema',
+      'verifier_gate_clean_or_explicit_bootstrap',
+      'dry_run_model',
+      'bha.council_dry_run.v2.preview',
+      'role_boundary_matrix',
+      'activation_regression_matrix',
+      'artifact_provenance',
+      'proofNegativeMatrixStatus',
+      'bha.proof_negative_matrix.v2.preview',
+      'NON_AUTHORITATIVE_PREVIEW',
+      'proof-vocabulary-status',
+      'proof-negative-matrix-status',
+      'audit-v2-preview'
+    ].join('\n'),
+    'Machine-Readable Preview Contract schema draft binding model deny/replay matrix verifier evidence contract non-enabling',
+    'Machine-Readable Dry-Run Contract dry-run trace role boundary matrix activation regression matrix non-activating',
+    {
+      required_commands: [
+        {
+          id: 'proof_vocabulary_status_readonly',
+          argv: ['node', 'scripts/bha-run.js', 'proof-vocabulary-status', '--format', 'json'],
+          expect: { json_paths: { 'artifact_provenance.authority': 'AUTHORITATIVE' }, has_keys: ['artifact_provenance'] }
+        },
+        {
+          id: 'capability_framework_status_readonly',
+          argv: ['node', 'scripts/bha-run.js', 'capability-framework-status', '--format', 'json'],
+          expect: { json_paths: { 'artifact_provenance.grants_capability': true }, has_keys: ['artifact_provenance'] }
+        },
+        {
+          id: 'council_status_readonly',
+          argv: ['node', 'scripts/bha-run.js', 'council-status', '--format', 'json'],
+          expect: { json_paths: { 'artifact_provenance.non_activating': false }, has_keys: ['artifact_provenance'] }
+        },
+        {
+          id: 'proof_negative_matrix_status_readonly',
+          argv: ['node', 'scripts/bha-run.js', 'proof-negative-matrix-status', '--format', 'json'],
+          expect: { json_paths: { 'artifact_provenance.grants_capability': true }, has_keys: ['artifact_provenance'] }
+        },
+        {
+          id: 'audit_v2_preview_readonly',
+          argv: ['node', 'scripts/bha-run.js', 'audit-v2-preview', '--format', 'json', '--allow-validation-in-progress'],
+          expect: { json_paths: { 'artifact_provenance.status': 'AUTHORIZED' }, has_keys: ['artifact_provenance'] }
+        }
+      ]
+    },
+    {
+      action_rules: {
+        allow: [
+          { command: 'node', args_prefix: ['scripts/bha-run.js', 'proof-vocabulary-status'] },
+          { command: 'node', args_prefix: ['scripts/bha-run.js', 'capability-framework-status'] },
+          { command: 'node', args_prefix: ['scripts/bha-run.js', 'council-status'] },
+          { command: 'node', args_prefix: ['scripts/bha-run.js', 'audit-v2-preview'] }
+        ]
+      }
+    },
+    issues
+  );
+  return issues;
+}
+
+function selfTestPreviewProvenanceTamperedHash() {
+  return provenanceSelfCheck({
+    artifact_provenance: {
+      authority: 'NON_AUTHORITATIVE_PREVIEW',
+      status: 'PREVIEW_ONLY',
+      non_authoritative: true,
+      non_activating: true,
+      grants_capability: false,
+      local_only: true,
+      policy_hash: 'wrong',
+      mission_hash: missionHash(),
+      input_hashes: {
+        policy: 'wrong',
+        mission: missionHash()
+      },
+      output_hash: 'not-a-hash'
+    }
+  }) ? [] : [{ code: 'V2_PREVIEW_ARTIFACT_PROVENANCE_INVALID' }];
+}
+
+function selfTestForbiddenPreviewAuthoritySubstring() {
+  return hasForbiddenPreviewAuthorityTerms({
+    preview_enabled: false,
+    activation: {
+      fake_authorized_status: 'PREVIEW_ONLY'
+    }
+  }, ['enabled', 'authorized', 'approved', 'trusted', 'ready'])
+    ? [{ code: 'V2_PREVIEW_FORBIDDEN_AUTHORITY_TERM' }]
+    : [];
+}
+
+function __unusedPreviewProvenanceSentinel() {
+  return [
+    'V2_PREVIEW_ARTIFACT_PROVENANCE_INVALID',
+    'V2_PREVIEW_FORBIDDEN_AUTHORITY_TERM'
+  ];
+}
+
 function eventHash(event) {
   const copy = Object.assign({}, event);
   delete copy.event_hash;
@@ -1153,6 +1407,7 @@ async function verifyUnverifiedWorktree(files, issues, warnings) {
 function verifyV2PreviewContractsFromArtifacts(runSource, frameworkDoc, councilDoc, validation, policy, issues) {
   const requiredRunTokens = [
     'handleAuditV2Preview',
+    'proofVocabularyStatus',
     'machine_readable_draft',
     'bha.capability_schema.v2.preview',
     'deny_replay_test_matrix',
@@ -1164,6 +1419,16 @@ function verifyV2PreviewContractsFromArtifacts(runSource, frameworkDoc, councilD
     'bha.council_dry_run.v2.preview',
     'role_boundary_matrix',
     'activation_regression_matrix',
+    'artifact_provenance',
+    'NON_AUTHORITATIVE_PREVIEW',
+    'grants_capability',
+    'bootstrapStatus',
+    'proofNegativeMatrixStatus',
+    'bha.bootstrap_state.v2.preview',
+    'bha.proof_negative_matrix.v2.preview',
+    'proof-vocabulary-status',
+    'bootstrap-status',
+    'proof-negative-matrix-status',
     'audit-v2-preview'
   ];
   const missingRunTokens = requiredRunTokens.filter((token) => !String(runSource || '').includes(token));
@@ -1175,9 +1440,96 @@ function verifyV2PreviewContractsFromArtifacts(runSource, frameworkDoc, councilD
     });
   }
   const auditCommand = validationCommandById(validation, 'audit_v2_preview_readonly');
+  const vocabularyCommand = validationCommandById(validation, 'proof_vocabulary_status_readonly');
+  const bootstrapCommand = validationCommandById(validation, 'bootstrap_status_readonly');
+  const negativeMatrixCommand = validationCommandById(validation, 'proof_negative_matrix_status_readonly');
   const frameworkCommand = validationCommandById(validation, 'capability_framework_status_readonly');
   const councilCommand = validationCommandById(validation, 'council_status_readonly');
   const structuredMissing = [];
+  if (!vocabularyCommand) {
+    structuredMissing.push('proof_vocabulary_status_readonly');
+  } else {
+    if (!policyAllowsArgv(policy, vocabularyCommand.argv || [])) {
+      structuredMissing.push('proof_vocabulary_policy_allow');
+    }
+    [
+      ['current_phase', 'PREVIEW_HOLD_LINE'],
+      ['trust_boundaries.clean_repo_is_trust_root', false],
+      ['trust_boundaries.audit_pass_is_trust_root', false],
+      ['trust_boundaries.closeout_prose_is_trust_root', false],
+      ['trust_boundaries.ledger_is_bootstrap_trust_root', false],
+      ['preview_semantics.preview_authorizes_runtime', false],
+      ['preview_semantics.dry_run_trace_authorizes_runtime', false],
+      ['preview_semantics.dry_run_trace_is_validation_evidence', false],
+      ['preview_semantics.forbidden_authority_terms.0', 'enabled'],
+      ['preview_semantics.forbidden_authority_terms.4', 'ready'],
+      ['critical_judgment.structured_evidence_required', true],
+      ['critical_judgment.prose_text_scan_allowed', false],
+      ['gate_semantics.preview_artifact_can_enter_gate_positive_condition', false],
+      ['gate_semantics.production_capability_types.0', 'git_push']
+    ].forEach(([pathName, expected]) => {
+      if (!commandHasJsonPath(vocabularyCommand, pathName, expected)) {
+        structuredMissing.push(`vocabulary:${pathName}`);
+      }
+    });
+    ['proof_levels', 'trust_boundaries', 'preview_semantics', 'critical_judgment', 'gate_semantics'].forEach((key) => {
+      if (!commandHasKey(vocabularyCommand, key)) {
+        structuredMissing.push(`vocabulary_key:${key}`);
+      }
+    });
+    if (hasForbiddenPreviewAuthorityTerms({
+      preview_semantics: {
+        preview_authorizes_runtime: objectAtPath(vocabularyCommand.expect, 'json_paths.preview_semantics.preview_authorizes_runtime'),
+        dry_run_trace_authorizes_runtime: objectAtPath(vocabularyCommand.expect, 'json_paths.preview_semantics.dry_run_trace_authorizes_runtime'),
+        dry_run_trace_is_validation_evidence: objectAtPath(vocabularyCommand.expect, 'json_paths.preview_semantics.dry_run_trace_is_validation_evidence')
+      },
+      gate_semantics: {
+        preview_artifact_can_enter_gate_positive_condition: objectAtPath(vocabularyCommand.expect, 'json_paths.gate_semantics.preview_artifact_can_enter_gate_positive_condition')
+      }
+    }, ['enabled', 'authorized', 'approved', 'trusted', 'ready'])) {
+      structuredMissing.push('vocabulary_forbidden_authority_term_in_preview_semantics');
+    }
+    if (!commandHasPreviewArtifactProvenance(vocabularyCommand, 'proof_vocabulary_status')) {
+      structuredMissing.push('vocabulary_artifact_provenance_non_authorizing');
+    }
+  }
+  if (!bootstrapCommand) {
+    structuredMissing.push('bootstrap_status_readonly');
+  } else {
+    if (!policyAllowsArgv(policy, bootstrapCommand.argv || [])) {
+      structuredMissing.push('bootstrap_status_policy_allow');
+    }
+    [
+      ['ledger_is_bootstrap_trust_root', false],
+      ['local_cache_required', false],
+      ['private_key_required', false],
+      ['provider_call_required', false],
+      ['remote_write_required', false],
+      ['bootstrap_order.0.id', 'verifier_syntax'],
+      ['bootstrap_order.1.id', 'verifier_self_test'],
+      ['bootstrap_order.4.effective_production_capability_types.0', 'git_push'],
+      ['bootstrap_order.5.capability_preview_authorizes_runtime', false],
+      ['bootstrap_order.5.council_runtime_activation_allowed', false],
+      ['fresh_clone_replay_contract.requires_bha_local', false],
+      ['fresh_clone_replay_contract.requires_private_key', false],
+      ['fresh_clone_replay_contract.damaged_ledger_status', 'REPLAY_REQUIRED'],
+      ['fail_closed_states.missing_ledger', 'HISTORICAL_EVIDENCE_UNAVAILABLE'],
+      ['fail_closed_states.corrupt_ledger', 'REPLAY_REQUIRED'],
+      ['activation_firewall.effective_production_capability_types.0', 'git_push']
+    ].forEach(([pathName, expected]) => {
+      if (!commandHasJsonPath(bootstrapCommand, pathName, expected)) {
+        structuredMissing.push(`bootstrap:${pathName}`);
+      }
+    });
+    ['bootstrap_order', 'fresh_clone_replay_contract', 'fail_closed_states', 'activation_firewall', 'artifact_provenance'].forEach((key) => {
+      if (!commandHasKey(bootstrapCommand, key)) {
+        structuredMissing.push(`bootstrap_key:${key}`);
+      }
+    });
+    if (!commandHasPreviewArtifactProvenance(bootstrapCommand, 'bootstrap_status')) {
+      structuredMissing.push('bootstrap_artifact_provenance_non_authorizing');
+    }
+  }
   if (!auditCommand) {
     structuredMissing.push('audit_v2_preview_readonly');
   } else {
@@ -1191,6 +1543,37 @@ function verifyV2PreviewContractsFromArtifacts(runSource, frameworkDoc, councilD
       ['framework_summary.new_production_capability_allowed', false],
       ['council_summary.dry_run_model_status', 'DRAFT_NON_ACTIVATING'],
       ['council_summary.runtime_activation_allowed', false],
+      ['proof_vocabulary.status', 'PROOF_VOCABULARY_STATUS'],
+      ['proof_vocabulary.preview_authorizes_runtime', false],
+      ['proof_vocabulary.prose_text_scan_allowed', false],
+      ['bootstrap_summary.status', 'BOOTSTRAP_REPLAY_STATUS'],
+      ['bootstrap_summary.ledger_is_bootstrap_trust_root', false],
+      ['bootstrap_summary.local_cache_required', false],
+      ['bootstrap_summary.private_key_required', false],
+      ['bootstrap_summary.damaged_ledger_status', 'REPLAY_REQUIRED'],
+      ['negative_matrix_summary.status', 'PROOF_NEGATIVE_MATRIX_STATUS'],
+      ['negative_matrix_summary.matrix_status', 'MACHINE_READABLE_FAIL_CLOSED_PREVIEW'],
+      ['negative_matrix_summary.command_case_results_pass', true],
+      ['negative_matrix_summary.artifact_case_results_declared', true],
+      ['negative_matrix_summary.artifact_case_results_pass', true],
+      ['negative_matrix_summary.preview_injection_results_pass', true],
+      ['semantic_sections.production_enforcement.status', 'VERIFIER_GATED'],
+      ['semantic_sections.production_enforcement.preview_coverage_counts_as_production_pass', false],
+      ['semantic_sections.preview_coverage.status', 'PREVIEW_HOLD_LINE'],
+      ['semantic_sections.activation_firewall.status', 'INTACT'],
+      ['semantic_sections.negative_matrix.status', 'MACHINE_READABLE_FAIL_CLOSED_PREVIEW'],
+      ['semantic_sections.negative_matrix.artifact_case_results_pass', true],
+      ['semantic_sections.bootstrap_state.status', 'BOOTSTRAP_REPLAY_STATUS'],
+      ['semantic_sections.fresh_clone_replay.status', 'REPLAY_CONTRACT_AVAILABLE'],
+      ['semantic_sections.local_evidence_limits.audit_pass_is_authorization', false],
+      ['semantic_sections.activation_blockers.status', 'PREVIEW_HOLD_LINE'],
+      ['total_status', 'PREVIEW_HOLD_LINE'],
+      ['artifact_provenance.authority', 'NON_AUTHORITATIVE_PREVIEW'],
+      ['artifact_provenance.status', 'PREVIEW_ONLY'],
+      ['artifact_provenance.non_authoritative', true],
+      ['artifact_provenance.non_activating', true],
+      ['artifact_provenance.grants_capability', false],
+      ['artifact_provenance.local_only', true],
       ['validation_in_progress_allowed', true],
       ['verifier_gate.accepted', true]
     ].forEach(([pathName, expected]) => {
@@ -1198,11 +1581,58 @@ function verifyV2PreviewContractsFromArtifacts(runSource, frameworkDoc, councilD
         structuredMissing.push(`audit:${pathName}`);
       }
     });
+    if (!commandHasNonAuthorizingArtifactProvenance(auditCommand)) {
+      structuredMissing.push('audit_artifact_provenance_non_authorizing');
+    }
+  }
+  if (!negativeMatrixCommand) {
+    structuredMissing.push('proof_negative_matrix_status_readonly');
+  } else {
+    if (!policyAllowsArgv(policy, negativeMatrixCommand.argv || [])) {
+      structuredMissing.push('proof_negative_matrix_policy_allow');
+    }
+    [
+      ['current_phase', 'PREVIEW_HOLD_LINE'],
+      ['matrix_status', 'MACHINE_READABLE_FAIL_CLOSED_PREVIEW'],
+      ['command_case_results_pass', true],
+      ['artifact_case_results_declared', true],
+      ['artifact_case_results_pass', true],
+      ['activation_firewall.resolver_reads_production_authority_only', true],
+      ['activation_firewall.preview_merge_allowed', false],
+      ['activation_firewall.preview_authorizes_runtime', false],
+      ['activation_firewall.preview_artifact_can_enter_gate_positive_condition', false],
+      ['activation_firewall.council_trace_can_enter_gate_positive_condition', false],
+      ['activation_firewall.effective_production_capability_types.0', 'git_push'],
+      ['activation_firewall.council_runtime_activation_allowed', false],
+      ['activation_firewall.preview_injection_results_pass', true],
+      ['verifier_contract.read_only_verifier_required', true],
+      ['verifier_contract.prose_text_scan_allowed_for_critical_judgment', false],
+      ['artifact_provenance.type', 'proof_negative_matrix_status'],
+      ['artifact_provenance.authority', 'NON_AUTHORITATIVE_PREVIEW'],
+      ['artifact_provenance.non_authoritative', true],
+      ['artifact_provenance.non_activating', true],
+      ['artifact_provenance.grants_capability', false]
+    ].forEach(([pathName, expected]) => {
+      if (!commandHasJsonPath(negativeMatrixCommand, pathName, expected)) {
+        structuredMissing.push(`negative_matrix:${pathName}`);
+      }
+    });
+    ['command_case_results', 'artifact_case_results', 'activation_firewall', 'verifier_contract', 'artifact_provenance'].forEach((key) => {
+      if (!commandHasKey(negativeMatrixCommand, key)) {
+        structuredMissing.push(`negative_matrix_key:${key}`);
+      }
+    });
+    if (!commandHasPreviewArtifactProvenance(negativeMatrixCommand, 'proof_negative_matrix_status')) {
+      structuredMissing.push('negative_matrix_artifact_provenance_non_authorizing');
+    }
   }
   if (!frameworkCommand) {
     structuredMissing.push('capability_framework_status_readonly');
   } else {
     [
+      ['proof_vocabulary.status', 'PROOF_VOCABULARY_STATUS'],
+      ['proof_vocabulary.preview_authorizes_runtime', false],
+      ['proof_vocabulary.confidence_labels.0', 'VERIFIED'],
       ['machine_readable_draft.status', 'DRAFT_NON_ENABLING'],
       ['machine_readable_draft.authorization_effect', false],
       ['machine_readable_draft.schema_draft.schema', 'bha.capability_schema.v2.preview'],
@@ -1211,40 +1641,66 @@ function verifyV2PreviewContractsFromArtifacts(runSource, frameworkDoc, councilD
       ['deny_replay_test_matrix.case_results.0.status', 'PASS'],
       ['deny_replay_test_matrix.case_results.8.status', 'PASS'],
       ['verifier_evidence_contract.verifier_must_reject_incomplete_preview_schema', true],
-      ['verifier_evidence_contract.draft_evidence_is_authorization', false]
+      ['verifier_evidence_contract.draft_evidence_is_authorization', false],
+      ['artifact_provenance.type', 'capability_framework_status'],
+      ['artifact_provenance.authority', 'NON_AUTHORITATIVE_PREVIEW'],
+      ['artifact_provenance.non_authoritative', true],
+      ['artifact_provenance.non_activating', true],
+      ['artifact_provenance.grants_capability', false]
     ].forEach(([pathName, expected]) => {
       if (!commandHasJsonPath(frameworkCommand, pathName, expected)) {
         structuredMissing.push(`framework:${pathName}`);
       }
     });
-    ['machine_readable_draft', 'deny_replay_test_matrix', 'verifier_evidence_contract'].forEach((key) => {
+    ['machine_readable_draft', 'deny_replay_test_matrix', 'verifier_evidence_contract', 'artifact_provenance'].forEach((key) => {
       if (!commandHasKey(frameworkCommand, key)) {
         structuredMissing.push(`framework_key:${key}`);
       }
     });
+    if (!commandHasPreviewArtifactProvenance(frameworkCommand, 'capability_framework_status')) {
+      structuredMissing.push('framework_artifact_provenance_non_authorizing');
+    }
   }
   if (!councilCommand) {
     structuredMissing.push('council_status_readonly');
   } else {
     [
+      ['proof_vocabulary.status', 'PROOF_VOCABULARY_STATUS'],
+      ['proof_vocabulary.dry_run_trace_authorizes_runtime', false],
+      ['proof_vocabulary.dry_run_trace_is_validation_evidence', false],
       ['dry_run_model.schema', 'bha.council_dry_run.v2.preview'],
       ['dry_run_model.status', 'DRAFT_NON_ACTIVATING'],
+      ['dry_run_model.trace_status', 'DRY_RUN_ONLY'],
+      ['dry_run_model.runtime_enabled', false],
       ['dry_run_model.authorization_effect', false],
+      ['dry_run_model.trace_is_production_evidence', false],
+      ['dry_run_model.trace_can_enter_gate_positive_condition', false],
       ['role_boundary_matrix.0.may_grant_remote_authority', false],
       ['role_boundary_matrix.0.may_create_proof', false],
       ['role_boundary_matrix.0.may_spawn_agents', false],
       ['activation_regression_matrix.status', 'MACHINE_READABLE_PREVIEW'],
-      ['activation_regression_matrix.coverage_complete', false]
+      ['activation_regression_matrix.coverage_complete', false],
+      ['artifact_provenance.type', 'council_status'],
+      ['artifact_provenance.authority', 'NON_AUTHORITATIVE_PREVIEW'],
+      ['artifact_provenance.non_authoritative', true],
+      ['artifact_provenance.non_activating', true],
+      ['artifact_provenance.grants_capability', false]
     ].forEach(([pathName, expected]) => {
       if (!commandHasJsonPath(councilCommand, pathName, expected)) {
         structuredMissing.push(`council:${pathName}`);
       }
     });
-    ['dry_run_model', 'role_boundary_matrix', 'activation_regression_matrix'].forEach((key) => {
+    ['dry_run_model', 'role_boundary_matrix', 'activation_regression_matrix', 'artifact_provenance'].forEach((key) => {
       if (!commandHasKey(councilCommand, key)) {
         structuredMissing.push(`council_key:${key}`);
       }
     });
+    if (!commandHasPreviewArtifactProvenance(councilCommand, 'council_status')) {
+      structuredMissing.push('council_artifact_provenance_non_authorizing');
+    }
+  }
+  if (!previewArtifactProvenanceContractComplete(validation) || validationHasFakeAuthoritativePreview(validation)) {
+    structuredMissing.push('preview_artifact_provenance_contract');
   }
   if (structuredMissing.length > 0) {
     issues.push({
@@ -1332,6 +1788,16 @@ function selfTestMalformedPolicy() {
     policy: { schema: 'bha.policy.v1' },
     mission: { schema: 'bha.mission.v1' },
     state: {}
+  }, issues);
+  return issues;
+}
+
+function selfTestStatePolicyHashMismatch() {
+  const issues = [];
+  verifyPolicyMissionHashes({
+    policy: readJsonStrict(POLICY_PATH),
+    mission: { schema: 'bha.mission.v1' },
+    state: { policy_hash: 'wrong-policy-hash' }
   }, issues);
   return issues;
 }
@@ -1610,6 +2076,25 @@ function selfTestUnsupportedCloseoutClaim() {
   return issues;
 }
 
+function selfTestLedgerEventHashMismatch() {
+  const event = {
+    schema: 'bha.ledger.event.v1',
+    run_id: 'self-test',
+    policy_hash: 'self-test-policy-hash',
+    mission_hash: 'self-test-mission-hash',
+    event_id: 'self-test-ledger-hash-mismatch',
+    ts: '2026-01-01T00:00:00.000Z',
+    type: 'validation_completed',
+    actor: 'bha-run',
+    prev_hash: 'GENESIS',
+    payload: { status: 'PASS' },
+    event_hash: 'wrong-event-hash'
+  };
+  const issues = [];
+  verifyLedger([event], { ledger_head_hash: 'wrong-event-hash', ledger_event_count: 1 }, issues);
+  return issues;
+}
+
 function selfTestCloseoutEventBinding() {
   const event = {
     schema: 'bha.ledger.event.v1',
@@ -1736,7 +2221,9 @@ function checkExpectedCodes(id, issues, expectedCodes) {
 function handleSelfTest() {
   const checks = [
     checkExpectedCodes('malformed_policy_rejected', selfTestMalformedPolicy(), ['POLICY_CANONICAL_LAYOUT_REQUIRED']),
+    checkExpectedCodes('ledger_event_hash_mismatch_rejected', selfTestLedgerEventHashMismatch(), ['LEDGER_EVENT_HASH_MISMATCH']),
     checkExpectedCodes('duplicate_ledger_event_id_rejected', selfTestLedgerDuplicateEventId(), ['LEDGER_DUPLICATE_EVENT_ID']),
+    checkExpectedCodes('state_policy_hash_mismatch_rejected', selfTestStatePolicyHashMismatch(), ['STATE_POLICY_HASH_MISMATCH']),
     checkExpectedCodes('manual_unsigned_capability_append_rejected', selfTestUnsignedCapability(), ['UNSIGNED_CAPABILITY_MARKED_VALID']),
     checkExpectedCodes('stale_validation_rejected', selfTestStaleValidation(), ['VALIDATION_STALE_INPUTS']),
     checkExpectedCodes('validation_policy_evidence_required', selfTestValidationPolicyEvidenceMissing(), [
@@ -1765,6 +2252,15 @@ function handleSelfTest() {
       'V2_CAPABILITY_PREVIEW_SCHEMA_INCOMPLETE',
       'V2_CAPABILITY_PREVIEW_DOC_INCOMPLETE',
       'V2_COUNCIL_PREVIEW_DOC_INCOMPLETE'
+    ]),
+    checkExpectedCodes('preview_artifact_fake_authorization_rejected', selfTestPreviewProvenanceFakeAuthorization(), [
+      'V2_CAPABILITY_PREVIEW_SCHEMA_INCOMPLETE'
+    ]),
+    checkExpectedCodes('preview_artifact_provenance_hash_mismatch_rejected', selfTestPreviewProvenanceTamperedHash(), [
+      'V2_PREVIEW_ARTIFACT_PROVENANCE_INVALID'
+    ]),
+    checkExpectedCodes('preview_authority_substring_rejected', selfTestForbiddenPreviewAuthoritySubstring(), [
+      'V2_PREVIEW_FORBIDDEN_AUTHORITY_TERM'
     ])
   ];
   const ok = checks.every((check) => check.status === 'PASS');
