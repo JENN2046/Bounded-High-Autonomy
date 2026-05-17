@@ -3046,6 +3046,8 @@ async function handleAuditV12(args) {
     'operator_signer_preflight_accepts_external_key_path_without_reading_key',
     'recover_status_validation_wired',
     'fresh_clone_recover_status_explains_missing_local_capability',
+    'fresh_clone_gate_status_blocks_without_local_capability',
+    'fresh_clone_push_prep_generates_local_handoff',
     'gate_status_flags_unsigned_payload_stale_after_local_evidence_advances',
     'push_prep_validation_wired',
     'signed_payload_status_validation_wired',
@@ -4297,6 +4299,7 @@ async function handleRegressionSelftest(args) {
   const cloneVerifyParsed = parseJsonLine(cloneVerify.stdout);
   const cloneRecoverStatus = await runCommand([process.execPath, 'scripts/bha-run.js', 'recover-status', '--remote', 'origin', '--branch', branch, '--format', 'json'], { cwd: cloneRoot });
   const cloneRecoverParsed = parseJsonLine(cloneRecoverStatus.stdout);
+  const cloneGateStatus = await runFixtureBha(cloneRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
   checks.push(regressionCheck('fresh_clone_without_bha_local_verifier_passes', clone.exit_code === 0 &&
     cloneVerify.exit_code === 0 &&
     cloneVerifyParsed &&
@@ -4321,6 +4324,62 @@ async function handleRegressionSelftest(args) {
     verifier_pass: cloneRecoverParsed && cloneRecoverParsed.tracked_trust ? cloneRecoverParsed.tracked_trust.verifier_pass : 'NO_JSON',
     bha_local_exists: cloneRecoverParsed && cloneRecoverParsed.local_state ? cloneRecoverParsed.local_state.bha_local_exists : 'NO_JSON',
     requires_new_local_capability: cloneRecoverParsed && cloneRecoverParsed.git_push_recovery ? cloneRecoverParsed.git_push_recovery.requires_new_local_capability : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('fresh_clone_gate_status_blocks_without_local_capability', clone.exit_code === 0 &&
+    cloneGateStatus.exit_code === 0 &&
+    cloneGateStatus.parsed &&
+    cloneGateStatus.parsed.status === 'BLOCKED' &&
+    cloneGateStatus.parsed.read_only === true &&
+    cloneGateStatus.parsed.checks &&
+    cloneGateStatus.parsed.checks.valid_consumed_capability === false &&
+    cloneGateStatus.parsed.capability &&
+    cloneGateStatus.parsed.capability.ok === false &&
+    !fs.existsSync(path.join(cloneRoot, '.bha', 'local')), {
+    status: cloneGateStatus.parsed ? cloneGateStatus.parsed.status : 'NO_JSON',
+    valid_consumed_capability: cloneGateStatus.parsed && cloneGateStatus.parsed.checks ? cloneGateStatus.parsed.checks.valid_consumed_capability : 'NO_JSON',
+    capability_reason: cloneGateStatus.parsed && cloneGateStatus.parsed.capability ? cloneGateStatus.parsed.capability.reason : 'NO_JSON',
+    bha_local_exists: fs.existsSync(path.join(cloneRoot, '.bha', 'local'))
+  }));
+  const clonePushPrepTrackedBefore = await regressionGitStatus(cloneRoot);
+  const clonePushPrep = await runFixtureBha(cloneRoot, [
+    'push-prep',
+    '--remote',
+    'origin',
+    '--branch',
+    branch,
+    '--expires-minutes',
+    '20',
+    '--key-id',
+    keyId,
+    '--format',
+    'json',
+    '--write-handoff'
+  ]);
+  const clonePushPrepTrackedAfter = await regressionGitStatus(cloneRoot);
+  const clonePayloadPath = path.join(cloneRoot, '.bha', 'local', 'push-payload.json');
+  const cloneHandoffPath = path.join(cloneRoot, '.bha', 'local', 'push-handoff.json');
+  const clonePayload = fs.existsSync(clonePayloadPath) ? readJsonStrict(clonePayloadPath) : null;
+  const cloneHandoff = fs.existsSync(cloneHandoffPath) ? readJsonStrict(cloneHandoffPath) : null;
+  const cloneHead = await runCommand(['git', 'rev-parse', 'HEAD'], { cwd: cloneRoot });
+  checks.push(regressionCheck('fresh_clone_push_prep_generates_local_handoff', clonePushPrep.exit_code === 0 &&
+    clonePushPrep.parsed &&
+    clonePushPrep.parsed.status === 'PUSH_PREP_READY_FOR_OPERATOR_SIGNER' &&
+    clonePushPrep.parsed.payload_path === '.bha/local/push-payload.json' &&
+    clonePushPrep.parsed.handoff_path === '.bha/local/push-handoff.json' &&
+    clonePushPrep.parsed.head_bound === true &&
+    clonePayload &&
+    clonePayload.head === cloneHead.stdout.trim() &&
+    cloneHandoff &&
+    cloneHandoff.schema === 'bha.push_handoff.v1' &&
+    typeof cloneHandoff.next_powershell_command === 'string' &&
+    !cloneHandoff.next_powershell_command.includes('\n') &&
+    clonePushPrepTrackedBefore === clonePushPrepTrackedAfter, {
+    status: clonePushPrep.parsed ? clonePushPrep.parsed.status : 'NO_JSON',
+    payload_head: clonePayload ? clonePayload.head : 'MISSING',
+    clone_head: cloneHead.stdout.trim() || 'UNKNOWN',
+    handoff_path: clonePushPrep.parsed ? clonePushPrep.parsed.handoff_path : 'NO_JSON',
+    tracked_before: clonePushPrepTrackedBefore || 'CLEAN',
+    tracked_after: clonePushPrepTrackedAfter || 'CLEAN'
   }));
   checks.push(regressionCheck('local_git_push_replay_fail_closed_after_used_session', hookReserve.exit_code === 0 &&
     replay.exit_code === 1 &&
