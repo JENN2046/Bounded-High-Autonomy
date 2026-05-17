@@ -2993,6 +2993,9 @@ async function signedCapabilityFileSummary(localPath, remote, branch, head, cont
     if (Array.isArray(summary.context_mismatch_reasons)) {
       notUsableReasons.push(...summary.context_mismatch_reasons);
     }
+    if (summary.expiry && summary.expiry.expired === true) {
+      notUsableReasons.push('PAYLOAD_EXPIRED');
+    }
     if (result.ok !== true) {
       notUsableReasons.push(result.reason || 'SIGNED_CAPABILITY_INVALID');
     }
@@ -5171,6 +5174,26 @@ async function handleRegressionSelftest(args) {
       ? readySignedPayloadStatus.parsed.next_powershell_command.includes('\n')
       : 'NO_JSON'
   }));
+
+  const expiredSignedPayload = Object.assign({}, signedPayload, {
+    expires_at: '2000-01-01T00:00:00.000Z'
+  });
+  writeTextFile(signedPath, JSON.stringify(expiredSignedPayload) + '\n');
+  const expiredSignedPayloadStatus = await runFixtureBha(fixtureRoot, ['signed-payload-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  checks.push(regressionCheck('signed_payload_status_reports_expired_reason_detail', expiredSignedPayloadStatus.exit_code === 0 &&
+    expiredSignedPayloadStatus.parsed &&
+    expiredSignedPayloadStatus.parsed.status === 'SIGNED_PAYLOAD_EXPIRED' &&
+    expiredSignedPayloadStatus.parsed.signed_payload &&
+    Array.isArray(expiredSignedPayloadStatus.parsed.signed_payload.not_usable_reasons) &&
+    expiredSignedPayloadStatus.parsed.signed_payload.not_usable_reasons.includes('PAYLOAD_EXPIRED') &&
+    Array.isArray(expiredSignedPayloadStatus.parsed.signed_payload.not_usable_reason_details) &&
+    expiredSignedPayloadStatus.parsed.signed_payload.not_usable_reason_details.some((detail) => detail.code === 'PAYLOAD_EXPIRED' && String(detail.message || '').includes('expired')), {
+    status: expiredSignedPayloadStatus.parsed ? expiredSignedPayloadStatus.parsed.status : 'NO_JSON',
+    reasons: expiredSignedPayloadStatus.parsed && expiredSignedPayloadStatus.parsed.signed_payload
+      ? expiredSignedPayloadStatus.parsed.signed_payload.not_usable_reasons
+      : 'NO_JSON'
+  }));
+  writeTextFile(signedPath, JSON.stringify(signedPayload) + '\n');
 
   const trackedBeforeIssue = await regressionGitStatus(fixtureRoot);
   const verifySigned = await runFixtureBha(fixtureRoot, ['verify-signed-capability', '--file', '.bha/local/signed-push-capability.json']);
