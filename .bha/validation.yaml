@@ -173,12 +173,16 @@
           "unknown_capability_policy": "DENY"
         },
         "json_paths": {
+          "production_capability_types.0": "git_push",
+          "extension_policy.provider_deploy_release_default": "DENY",
           "enablement_gate.current_phase": "PREVIEW_STATUS_ONLY",
           "enablement_gate.new_production_capability_allowed": false,
           "enablement_gate.requires_new_explicit_objective": true,
           "enablement_gate.requires_verifier_evidence": true,
           "enablement_gate.requires_deny_tests_before_allow": true,
-          "enablement_gate.requires_replay_tests_before_allow": true
+          "enablement_gate.requires_replay_tests_before_allow": true,
+          "enablement_gate.forbidden_without_new_objective.0": "provider_call",
+          "types.git_push.evidence_policy.tracked": false
         },
         "has_keys": [
           "schema",
@@ -216,10 +220,14 @@
           "memory_writes_allowed": false
         },
         "json_paths": {
+          "local_only": true,
           "activation_gate.runtime_activation_allowed": false,
           "activation_gate.requires_new_explicit_objective": true,
           "activation_gate.requires_verifier_backed_workflow_model": true,
-          "activation_gate.requires_local_dry_run_evidence": true
+          "activation_gate.requires_local_dry_run_evidence": true,
+          "activation_gate.forbidden_without_new_objective.0": "automated_agent_spawn",
+          "activation_gate.forbidden_without_new_objective.2": "memory_write",
+          "activation_gate.forbidden_without_new_objective.3": "push"
         },
         "has_keys": [
           "schema",

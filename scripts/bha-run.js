@@ -4235,12 +4235,15 @@ async function handleAuditV1Stable(args) {
   const pushPrepCommand = validationCommandById(validation, 'push_prep_current_head_payload');
   const signedPayloadStatusCommand = validationCommandById(validation, 'signed_payload_status_readonly');
   const operatorSignerPreflightCommand = validationCommandById(validation, 'operator_signer_preflight_readonly');
+  const capabilityFrameworkStatusCommand = validationCommandById(validation, 'capability_framework_status_readonly');
+  const capabilityFrameworkJsonPaths = capabilityFrameworkStatusCommand && capabilityFrameworkStatusCommand.expect ? (capabilityFrameworkStatusCommand.expect.json_paths || {}) : {};
   const gateStatusJsonPaths = gateStatusCommand && gateStatusCommand.expect ? (gateStatusCommand.expect.json_paths || {}) : {};
   const recoverStatusJsonPaths = recoverStatusCommand && recoverStatusCommand.expect ? (recoverStatusCommand.expect.json_paths || {}) : {};
   const pushPrepJsonPaths = pushPrepCommand && pushPrepCommand.expect ? (pushPrepCommand.expect.json_paths || {}) : {};
   const signedPayloadStatusJsonPaths = signedPayloadStatusCommand && signedPayloadStatusCommand.expect ? (signedPayloadStatusCommand.expect.json_paths || {}) : {};
   const operatorSignerPreflightJsonPaths = operatorSignerPreflightCommand && operatorSignerPreflightCommand.expect ? (operatorSignerPreflightCommand.expect.json_paths || {}) : {};
   const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
+  const councilStatusJsonPaths = councilStatusCommand && councilStatusCommand.expect ? (councilStatusCommand.expect.json_paths || {}) : {};
   const stableExitCommand = validationCommandById(validation, 'stable_exit_status_readonly');
   const stableExitJsonPaths = stableExitCommand && stableExitCommand.expect ? (stableExitCommand.expect.json_paths || {}) : {};
   const stableExitReviewCommand = validationCommandById(validation, 'stable_exit_review_readonly');
@@ -4427,6 +4430,12 @@ async function handleAuditV1Stable(args) {
     'v2_capability_framework_preview_default_deny',
     'V2 capability framework preview exists but keeps unknown, provider, deploy, release, and non-git_push capability types denied.',
     fs.existsSync(CAPABILITY_FRAMEWORK_PATH) &&
+      Boolean(capabilityFrameworkStatusCommand &&
+      capabilityFrameworkStatusCommand.expect &&
+      capabilityFrameworkStatusCommand.expect.exit_code === 0 &&
+      capabilityFrameworkStatusCommand.expect.read_only === true &&
+      capabilityFrameworkStatusCommand.expect.recorded === false &&
+      policyAllowsArgv(policy, capabilityFrameworkStatusCommand.argv || [])) &&
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'Default deny') &&
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'git_push') &&
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'provider') &&
@@ -4444,9 +4453,17 @@ async function handleAuditV1Stable(args) {
       capabilityFramework().enablement_gate.requires_deny_tests_before_allow === true &&
       capabilityFramework().enablement_gate.requires_replay_tests_before_allow === true &&
       capabilityFramework().extension_policy.required_before_enablement.includes('verifier_evidence') &&
+      capabilityFrameworkJsonPaths['production_capability_types.0'] === 'git_push' &&
+      capabilityFrameworkJsonPaths['extension_policy.provider_deploy_release_default'] === 'DENY' &&
+      capabilityFrameworkJsonPaths['enablement_gate.new_production_capability_allowed'] === false &&
+      capabilityFrameworkJsonPaths['enablement_gate.forbidden_without_new_objective.0'] === 'provider_call' &&
+      capabilityFrameworkJsonPaths['types.git_push.evidence_policy.tracked'] === false &&
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'verifier evidence') &&
       fileContains(ROADMAP_PATH, 'verifier evidence'),
     {
+      validation_command_present: Boolean(capabilityFrameworkStatusCommand),
+      validation_command_policy_allowed: capabilityFrameworkStatusCommand ? policyAllowsArgv(policy, capabilityFrameworkStatusCommand.argv || []) : false,
+      validation_json_paths: capabilityFrameworkJsonPaths,
       framework_status_command: 'node scripts/bha-run.js capability-framework-status --format json',
       production_capability_types: capabilityFramework().production_capability_types,
       required_before_enablement: capabilityFramework().extension_policy.required_before_enablement,
@@ -4478,10 +4495,16 @@ async function handleAuditV1Stable(args) {
       councilRuntimeStatus().activation_gate &&
       councilRuntimeStatus().activation_gate.runtime_activation_allowed === false &&
       councilRuntimeStatus().activation_gate.requires_new_explicit_objective === true &&
-      councilRuntimeStatus().activation_gate.requires_verifier_backed_workflow_model === true,
+      councilRuntimeStatus().activation_gate.requires_verifier_backed_workflow_model === true &&
+      councilStatusJsonPaths.local_only === true &&
+      councilStatusJsonPaths['activation_gate.runtime_activation_allowed'] === false &&
+      councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.0'] === 'automated_agent_spawn' &&
+      councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.2'] === 'memory_write' &&
+      councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.3'] === 'push',
     {
       validation_command_present: Boolean(councilStatusCommand),
       policy_allowed: councilStatusCommand ? policyAllowsArgv(policy, councilStatusCommand.argv) : false,
+      validation_json_paths: councilStatusJsonPaths,
       runtime_state: councilRuntimeStatus().runtime_state,
       default_decision: councilRuntimeStatus().default_decision,
       external_side_effects_allowed: councilRuntimeStatus().external_side_effects_allowed,
