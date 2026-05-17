@@ -3235,6 +3235,34 @@ function fileContains(file, pattern) {
   return text.includes(String(pattern));
 }
 
+function requireModuleAudit(files) {
+  const allowedModules = new Set(['fs', 'path', 'crypto', 'child_process']);
+  const modules = [];
+  const dynamicRequireFiles = [];
+  for (const file of files) {
+    if (!fs.existsSync(file)) {
+      continue;
+    }
+    const text = readText(file);
+    const requireCallCount = Array.from(text.matchAll(/\brequire\s*\(/g)).length;
+    const literalMatches = Array.from(text.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g));
+    if (requireCallCount !== literalMatches.length) {
+      dynamicRequireFiles.push(rel(file));
+    }
+    for (const match of literalMatches) {
+      modules.push({ file: rel(file), module: match[1] });
+    }
+  }
+  const moduleNames = Array.from(new Set(modules.map((item) => item.module))).sort();
+  return {
+    allowed_modules: Array.from(allowedModules).sort(),
+    modules,
+    module_names: moduleNames,
+    disallowed_modules: moduleNames.filter((name) => !allowedModules.has(name)),
+    dynamic_require_files: dynamicRequireFiles
+  };
+}
+
 function validationCommandById(validation, id) {
   const commands = validation && Array.isArray(validation.required_commands)
     ? validation.required_commands
@@ -3354,6 +3382,7 @@ async function handleAuditV1Stable(args) {
   const recoverStatusCommand = validationCommandById(validation, 'recover_status_readonly');
   const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
+  const requireAudit = requireModuleAudit([RUN_SCRIPT, VERIFY_SCRIPT]);
   const requiredDenied = [
     'provider_call',
     'memory_write',
@@ -3480,8 +3509,15 @@ async function handleAuditV1Stable(args) {
       !fs.existsSync(path.join(ROOT, 'package-lock.json')) &&
       !fs.existsSync(path.join(ROOT, 'pnpm-lock.yaml')) &&
       !fs.existsSync(path.join(ROOT, 'yarn.lock')) &&
+      requireAudit.disallowed_modules.length === 0 &&
+      requireAudit.dynamic_require_files.length === 0 &&
       fileContains(STABILITY_PATH, 'Node.js built-in modules only'),
-    {},
+    {
+      allowed_modules: requireAudit.allowed_modules,
+      observed_modules: requireAudit.module_names,
+      disallowed_modules: requireAudit.disallowed_modules,
+      dynamic_require_files: requireAudit.dynamic_require_files
+    },
     ['scripts/bha-run.js', 'scripts/bha-verify.js', 'BHA_V1_STABILITY.md']
   ));
   checks.push(auditCheck(
