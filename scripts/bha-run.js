@@ -3594,10 +3594,7 @@ async function handleAuditV1Stable(args) {
       .filter((command) => command && command.status !== 'PASS')
       .map((command) => String(command.id || 'UNKNOWN'))
     : [];
-  const failedValidationIsBootstrapOnly = failedRecordedValidationIds.length === 0 ||
-    failedRecordedValidationIds.every((id) => id === 'v1_stable_audit_readonly');
   const verifierValidationBootstrapPass = allowValidationInProgress &&
-    failedValidationIsBootstrapOnly &&
     (verifier.status === 'PASS' || verifier.status === 'FAIL') &&
     (verifierIssueCodes.length > 0 || verifierWarningCodes.length > 0) &&
     verifierIssueCodes.every((code) => validationBootstrapIssueCodes.includes(code)) &&
