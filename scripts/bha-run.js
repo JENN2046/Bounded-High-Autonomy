@@ -4092,7 +4092,11 @@ async function handleAuditV1Stable(args) {
     'The long-term goal audit maps goal areas to artifacts while keeping proof, push, private-key, dependency, and V2 preview boundaries explicit.',
     fs.existsSync(LONG_TERM_GOAL_AUDIT_PATH) &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'Status: local Commander audit, not proof') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'Prompt-to-Artifact Checklist') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'Proof still comes from repository reality') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V1 stable local-first kernel is reliable') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V1.3 operator UX reduces signing') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V1.4 recovery/resume handles fresh clone') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V1 production capability scope remains `git_push` only') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V2 capability framework remains preview/default deny') &&
       fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V2+ Council Runtime remains read-only preview/status') &&
