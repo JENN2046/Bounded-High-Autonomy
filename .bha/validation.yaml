@@ -94,6 +94,7 @@
           "tracked_repo_write": false
         },
         "has_keys": [
+          "schema",
           "checks",
           "denied_capabilities",
           "fixture",
@@ -117,6 +118,7 @@
         "recorded": false,
         "read_only": true,
         "has_keys": [
+          "schema",
           "checks",
           "proof_sources",
           "verifier",
@@ -142,6 +144,7 @@
         "recorded": false,
         "read_only": true,
         "has_keys": [
+          "schema",
           "checks",
           "proof_sources",
           "verifier",
