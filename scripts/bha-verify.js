@@ -128,15 +128,39 @@ function trustedSigningKeys(policy) {
     if (item && typeof item === 'object') {
       return {
         id: String(item.id || item.key_id || ''),
+        purpose: item.purpose ? String(item.purpose) : null,
         public_key_pem: item.public_key_pem || item.publicKeyPem || null
       };
     }
-    return { id: String(item), public_key_pem: null };
+    return { id: String(item), purpose: null, public_key_pem: null };
   }).filter((item) => item.id);
 }
 
 function trustedSigningKey(policy, id) {
   return trustedSigningKeys(policy).find((item) => item.id === String(id));
+}
+
+function signingKeyPurposeAllowedForCapability(key, type) {
+  if (!key) {
+    return false;
+  }
+  if (String(type) === 'git_push') {
+    return key.purpose === 'owner';
+  }
+  return false;
+}
+
+function legacyCanonicalSelftestCapabilityIssue(event, key, requested) {
+  const timestamp = Date.parse(String((event || {}).ts || ''));
+  const cutoff = Date.parse('2026-05-15T00:00:00.000Z');
+  const signingKeyId = String((requested || {}).signing_key_id || '');
+  const capabilityId = String((requested || {}).capability_id || (requested || {}).id || '');
+  return key &&
+    key.purpose === 'selftest-only' &&
+    signingKeyId.startsWith('canonical-selftest-') &&
+    capabilityId.startsWith(`${signingKeyId}-`) &&
+    !Number.isNaN(timestamp) &&
+    timestamp < cutoff;
 }
 
 function capabilityRequestPayload(payload) {
@@ -649,11 +673,18 @@ function verifyCapabilityIssue(event, policy, state, capabilities, ledger, issue
     issues.push({ code: 'CAPABILITY_VALID_WITHOUT_TRUSTED_KEYS', severity: 'FAIL', message: 'dry-run v1 has no trusted signing keys but a capability was marked valid', event_hash: event.event_hash });
   }
   const key = trustedSigningKey(policy, requested.signing_key_id);
+  const historical = capabilityHistorical(capabilities, payload.capability_id);
   if (requested.signing_key_id && !trusted.has(String(requested.signing_key_id))) {
     issues.push({ code: 'UNKNOWN_SIGNING_KEY_MARKED_VALID', severity: 'FAIL', message: 'capability used an untrusted signing key', event_hash: event.event_hash });
   }
   if (requested.signing_key_id && trusted.has(String(requested.signing_key_id)) && !key.public_key_pem) {
     issues.push({ code: 'TRUSTED_SIGNING_KEY_HAS_NO_PUBLIC_KEY', severity: 'FAIL', message: 'trusted signing key has no public key', event_hash: event.event_hash });
+  }
+  if (!historical &&
+      key &&
+      !signingKeyPurposeAllowedForCapability(key, type) &&
+      !legacyCanonicalSelftestCapabilityIssue(event, key, requested)) {
+    issues.push({ code: 'CAPABILITY_SIGNING_KEY_PURPOSE_DENIED', severity: 'FAIL', message: `${key.purpose || 'UNSPECIFIED'} signing key cannot authorize ${type}`, event_hash: event.event_hash });
   }
   if (requested.payload_hash && requested.payload_hash !== capabilityPayloadHash(requested)) {
     issues.push({ code: 'CAPABILITY_PAYLOAD_HASH_MISMATCH', severity: 'FAIL', message: 'capability payload_hash mismatch', event_hash: event.event_hash });
@@ -661,7 +692,6 @@ function verifyCapabilityIssue(event, policy, state, capabilities, ledger, issue
   if (key && key.public_key_pem && !capabilitySignatureValid(requested, key)) {
     issues.push({ code: 'CAPABILITY_SIGNATURE_INVALID', severity: 'FAIL', message: 'capability signature is invalid', event_hash: event.event_hash });
   }
-  const historical = capabilityHistorical(capabilities, payload.capability_id);
   if (!historical && state && requested.run_id !== state.run_id) {
     issues.push({ code: 'CAPABILITY_RUN_ID_MISMATCH', severity: 'FAIL', message: 'valid capability run_id does not match state', event_hash: event.event_hash });
   }
@@ -1267,6 +1297,32 @@ function selfTestExpiredCapability() {
   return issues;
 }
 
+function selfTestCapabilityKeyPurposeDenied() {
+  const issues = [];
+  const keypair = crypto.generateKeyPairSync('ed25519');
+  const publicKeyPem = keypair.publicKey.export({ type: 'spki', format: 'pem' });
+  const policy = selfTestCapabilityPolicy();
+  policy.trusted_public_keys = [{
+    id: 'selftest-only-key',
+    purpose: 'selftest-only',
+    public_key_pem: publicKeyPem
+  }];
+  const payload = selfTestCapabilityIssuePayload('self-test-key-purpose');
+  payload.requested.signing_key_id = 'selftest-only-key';
+  payload.requested.policy_hash = policyHash(policy);
+  delete payload.requested.signature;
+  delete payload.requested.payload_hash;
+  payload.requested.payload_hash = capabilityPayloadHash(payload.requested);
+  payload.requested.signature = crypto.sign(
+    null,
+    Buffer.from(stable(capabilitySignablePayload(payload.requested))),
+    keypair.privateKey
+  ).toString('base64');
+  const event = selfTestCapabilityEvent('capability_issue', payload, 'key-purpose');
+  verifyCapabilityIssue(event, policy, { run_id: 'self-test-run' }, [], [], issues);
+  return issues;
+}
+
 function selfTestCapabilityReplay() {
   const issues = [];
   const issue = selfTestCapabilityEvent('capability_issue', selfTestCapabilityIssuePayload('self-test-replay'), 'replay-issue');
@@ -1447,6 +1503,7 @@ function handleSelfTest() {
       'CAPABILITY_POLICY_HASH_MISMATCH',
       'CAPABILITY_MISSION_HASH_MISMATCH'
     ]),
+    checkExpectedCodes('capability_signing_key_purpose_rejected', selfTestCapabilityKeyPurposeDenied(), ['CAPABILITY_SIGNING_KEY_PURPOSE_DENIED']),
     checkExpectedCodes('expired_capability_rejected', selfTestExpiredCapability(), ['CAPABILITY_EXPIRED']),
     checkExpectedCodes('capability_replay_rejected', selfTestCapabilityReplay(), ['CAPABILITY_REPLAY_DETECTED']),
     checkExpectedCodes('capability_context_mismatch_rejected', selfTestCapabilityContextMismatch(), [

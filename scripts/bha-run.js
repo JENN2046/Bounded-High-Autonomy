@@ -926,15 +926,33 @@ function trustedSigningKeys() {
     if (item && typeof item === 'object') {
       return {
         id: String(item.id || item.key_id || ''),
+        purpose: item.purpose ? String(item.purpose) : null,
         public_key_pem: item.public_key_pem || item.publicKeyPem || null
       };
     }
-    return { id: String(item), public_key_pem: null };
+    return { id: String(item), purpose: null, public_key_pem: null };
   }).filter((item) => item.id);
 }
 
 function findTrustedSigningKey(id) {
   return trustedSigningKeys().find((item) => item.id === String(id));
+}
+
+function signingKeyPurposeAllowedForCapability(key, type) {
+  if (!key) {
+    return false;
+  }
+  if (String(type) === 'git_push') {
+    return key.purpose === 'owner';
+  }
+  return false;
+}
+
+function signingKeyPurposeResult(key, type) {
+  return {
+    key_purpose: key && key.purpose ? key.purpose : 'UNSPECIFIED',
+    required_key_purpose: String(type) === 'git_push' ? 'owner' : 'UNSUPPORTED_CAPABILITY_TYPE'
+  };
 }
 
 function capabilityRequestPayload(payload) {
@@ -1031,6 +1049,10 @@ function validateCanonicalSignedCapability(payload) {
   }
   if (!key.public_key_pem) {
     return capabilityResult(payload, false, 'SIGNING_KEY_HAS_NO_PUBLIC_KEY');
+  }
+  const type = capabilityType(payload);
+  if (!signingKeyPurposeAllowedForCapability(key, type)) {
+    return capabilityResult(payload, false, 'CAPABILITY_SIGNING_KEY_PURPOSE_DENIED', signingKeyPurposeResult(key, type));
   }
   const computedHash = capabilityPayloadHash(payload);
   if (payload.payload_hash !== computedHash) {
@@ -1413,6 +1435,14 @@ async function buildPushPayload(remote, branch, keyId, expiresMinutes) {
   const key = findTrustedSigningKey(keyId);
   if (!key || !key.public_key_pem) {
     return { ok: false, error: 'unknown trusted signing key' };
+  }
+  if (!signingKeyPurposeAllowedForCapability(key, 'git_push')) {
+    return Object.assign({
+      ok: false,
+      status: 'BLOCKED',
+      error: 'signing key purpose is not allowed for git_push',
+      reason: 'CAPABILITY_SIGNING_KEY_PURPOSE_DENIED'
+    }, signingKeyPurposeResult(key, 'git_push'));
   }
   if (!await remoteExists(remote)) {
     return { ok: false, error: 'unknown remote' };
@@ -1903,6 +1933,32 @@ function prepushEvidenceGates(state, ledger, verify) {
   return { gates, rollback_checks: rollbackChecks };
 }
 
+function trackedGitRealityBindingFromHeads(currentHeadValue, checkpointHeadValue, closeoutHeadValue) {
+  const checkpointHead = checkpointHeadValue ? String(checkpointHeadValue) : null;
+  const closeoutHead = closeoutHeadValue ? String(closeoutHeadValue) : null;
+  return {
+    current_head: currentHeadValue || 'UNKNOWN',
+    checkpoint_head: checkpointHead || 'NOT_RECORDED',
+    checkpoint_matches_current_head: Boolean(checkpointHead && currentHeadValue && checkpointHead === currentHeadValue),
+    closeout_git_reality_head: closeoutHead || 'NOT_RECORDED',
+    closeout_matches_current_head: Boolean(closeoutHead && currentHeadValue && closeoutHead === currentHeadValue),
+    proof_boundary: 'Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding.'
+  };
+}
+
+function trackedGitRealityBinding(currentHeadValue, checkpoint, closeoutEvent) {
+  const closeoutGitReality = closeoutEvent &&
+    closeoutEvent.payload &&
+    closeoutEvent.payload.fact_groups &&
+    closeoutEvent.payload.fact_groups.git_reality &&
+    typeof closeoutEvent.payload.fact_groups.git_reality === 'object'
+    ? closeoutEvent.payload.fact_groups.git_reality
+    : null;
+  const checkpointHead = checkpoint && checkpoint.head ? checkpoint.head : null;
+  const closeoutHead = closeoutGitReality && closeoutGitReality.head ? closeoutGitReality.head : null;
+  return trackedGitRealityBindingFromHeads(currentHeadValue, checkpointHead, closeoutHead);
+}
+
 function firstFailedGate(checks) {
   for (const [key, value] of Object.entries(checks)) {
     if (value !== true) {
@@ -2333,6 +2389,9 @@ async function gateStatus(remote, branch) {
   const state = loadState();
   const ledger = readJsonl(LEDGER_PATH);
   const evidence = prepushEvidenceGates(state, ledger, verify);
+  const checkpoint = readCheckpointFile();
+  const closeoutEvent = state && state.closeout ? ledgerEventByHash(ledger, state.closeout.ledger_event_hash, 'closeout_completed') : null;
+  const gitRealityBinding = trackedGitRealityBinding(head, checkpoint, closeoutEvent);
   const capability = remote && branch && head
     ? await matchingConsumedCapability(remote, branch, head, { reserve: false })
     : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
@@ -2377,6 +2436,7 @@ async function gateStatus(remote, branch) {
       bha_private_key_access: false,
       bha_handles_only: ['unsigned payload file under .bha/local/', 'signed payload file under .bha/local/']
     },
+    tracked_git_reality: gitRealityBinding,
     next_action: action,
     next_commands: nextCommands,
     operator_handoff: await operatorPushHandoff(action, remote, branch, head, capability, nextCommands)
@@ -2482,7 +2542,9 @@ async function handleAuditV12(args) {
     'hook_status_installed_pass_readonly',
     'hook_status_validation_allows_blocked_local_setup',
     'gate_status_missing_local_payload_requests_generation',
-    'gate_status_flags_stale_local_payload_files'
+    'gate_status_flags_stale_local_payload_files',
+    'git_push_rejects_selftest_only_signing_key',
+    'gate_status_reports_evidence_time_git_heads'
   ];
   const missingRegressionIds = regressionIds.filter((id) => !fileContains(RUN_SCRIPT, id));
   checks.push(auditCheck(
@@ -2566,6 +2628,7 @@ async function handleAuditV12(args) {
       fileContains(RUN_SCRIPT, 'do not split paths') &&
       fileContains(RUN_SCRIPT, 'operator_controls_signer') &&
       fileContains(RUN_SCRIPT, 'bha_private_key_access: false') &&
+      fileContains(RUN_SCRIPT, 'CAPABILITY_SIGNING_KEY_PURPOSE_DENIED') &&
       fileContains(RUN_SCRIPT, 'private_key_required: false') &&
       fileContains(RUN_SCRIPT, 'resolveLocalFile(outPath)')),
     {
@@ -2611,6 +2674,8 @@ async function handleAuditV12(args) {
       fileContains(RUN_SCRIPT, 'tracked_verifier_facts') &&
       fileContains(RUN_SCRIPT, 'local_only_capability_facts') &&
       fileContains(RUN_SCRIPT, 'git_reality') &&
+      fileContains(RUN_SCRIPT, 'tracked_git_reality') &&
+      fileContains(RUN_SCRIPT, 'git_reality_binding') &&
       fileContains(RUN_SCRIPT, 'skipped_validation') &&
       fileContains(RUN_SCRIPT, 'remaining_risks') &&
       fileContains(RUN_SCRIPT, 'fresh_clone_recovery'),
@@ -2706,7 +2771,7 @@ function regressionMission() {
   };
 }
 
-function regressionPolicy(keyId, publicKeyPem) {
+function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
   return {
     schema: 'bha.policy.v1',
     metadata: {
@@ -2740,9 +2805,9 @@ function regressionPolicy(keyId, publicKeyPem) {
     actors: {},
     trusted_public_keys: [{
       id: keyId,
-      purpose: 'regression-selftest-only',
+      purpose: 'owner',
       public_key_pem: publicKeyPem
-    }],
+    }].concat(extraTrustedKeys || []),
     action_rules: {
       deny_commands: {
         network_commands: ['curl', 'wget', 'Invoke-WebRequest', 'Invoke-RestMethod'],
@@ -2833,9 +2898,9 @@ function falseExternalEffects() {
   };
 }
 
-function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem) {
+function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraTrustedKeys) {
   const mission = regressionMission();
-  const policy = regressionPolicy(keyId, publicKeyPem);
+  const policy = regressionPolicy(keyId, publicKeyPem, extraTrustedKeys);
   const validation = {
     schema: 'bha.validation.v1',
     version: '1.2.0-regression-fixture',
@@ -3062,10 +3127,17 @@ async function handleRegressionSelftest(args) {
   const keyId = `regression-selftest-${crypto.randomUUID()}`;
   const keypair = crypto.generateKeyPairSync('ed25519');
   const publicKeyPem = keypair.publicKey.export({ type: 'spki', format: 'pem' });
+  const selftestOnlyKeyId = `regression-selftest-only-${crypto.randomUUID()}`;
+  const selftestOnlyKeypair = crypto.generateKeyPairSync('ed25519');
+  const selftestOnlyPublicKeyPem = selftestOnlyKeypair.publicKey.export({ type: 'spki', format: 'pem' });
   const scratchParent = path.join(BHA_LOCAL_DIR, 'regression-selftest');
   const fixtureRoot = path.join(scratchParent, new Date().toISOString().replace(/[:.]/g, '-') + '-' + crypto.randomUUID());
   fs.mkdirSync(fixtureRoot, { recursive: true });
-  writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem);
+  writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, [{
+    id: selftestOnlyKeyId,
+    purpose: 'selftest-only',
+    public_key_pem: selftestOnlyPublicKeyPem
+  }]);
 
   const checks = [];
   const lf = 'alpha\nbeta\n';
@@ -3177,6 +3249,43 @@ async function handleRegressionSelftest(args) {
     staleSignedPayload = signCapabilityPayload(readJsonStrict(stalePayloadPath), keypair.privateKey);
     writeTextFile(staleSignedPath, JSON.stringify(staleSignedPayload) + '\n');
   }
+  const selftestOnlyMakePayload = await runFixtureBha(fixtureRoot, [
+    'make-push-payload',
+    '--remote',
+    'origin',
+    '--branch',
+    branch,
+    '--expires-minutes',
+    '20',
+    '--key-id',
+    selftestOnlyKeyId
+  ]);
+  const selftestOnlySignedPath = path.join(fixtureRoot, '.bha', 'local', 'selftest-only-signed-capability.json');
+  let selftestOnlySignedPayload = null;
+  let selftestOnlyVerify = { exit_code: 999, parsed: null };
+  if (stalePayload.exit_code === 0 && fs.existsSync(stalePayloadPath)) {
+    selftestOnlySignedPayload = Object.assign({}, readJsonStrict(stalePayloadPath), {
+      capability_id: `selftest-only-${crypto.randomUUID()}`,
+      signing_key_id: selftestOnlyKeyId
+    });
+    delete selftestOnlySignedPayload.signature;
+    delete selftestOnlySignedPayload.payload_hash;
+    selftestOnlySignedPayload = signCapabilityPayload(selftestOnlySignedPayload, selftestOnlyKeypair.privateKey);
+    writeTextFile(selftestOnlySignedPath, JSON.stringify(selftestOnlySignedPayload) + '\n');
+    selftestOnlyVerify = await runFixtureBha(fixtureRoot, ['verify-signed-capability', '--file', '.bha/local/selftest-only-signed-capability.json']);
+  }
+  checks.push(regressionCheck('git_push_rejects_selftest_only_signing_key', selftestOnlyMakePayload.exit_code === 2 &&
+    selftestOnlyMakePayload.parsed &&
+    selftestOnlyMakePayload.parsed.reason === 'CAPABILITY_SIGNING_KEY_PURPOSE_DENIED' &&
+    Boolean(selftestOnlySignedPayload) &&
+    selftestOnlyVerify.exit_code === 2 &&
+    selftestOnlyVerify.parsed &&
+    selftestOnlyVerify.parsed.reason === 'CAPABILITY_SIGNING_KEY_PURPOSE_DENIED', {
+    make_reason: selftestOnlyMakePayload.parsed ? selftestOnlyMakePayload.parsed.reason : 'NO_JSON',
+    verify_reason: selftestOnlyVerify.parsed ? selftestOnlyVerify.parsed.reason : 'NO_JSON',
+    key_purpose: selftestOnlyMakePayload.parsed ? selftestOnlyMakePayload.parsed.key_purpose : 'NO_JSON'
+  }));
+
   const advanceHead = await runCommand(['git', 'commit', '--allow-empty', '-m', 'advance head for stale payload check'], { cwd: fixtureRoot });
   const staleGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
   const staleHandoff = staleGateStatus.parsed && staleGateStatus.parsed.operator_handoff
@@ -3200,6 +3309,18 @@ async function handleRegressionSelftest(args) {
     unsigned_matches_current_context: staleStatus ? staleStatus.unsigned_matches_current_context : 'NO_JSON',
     signed_matches_current_context: staleStatus ? staleStatus.signed_matches_current_context : 'NO_JSON',
     stale_issue_count: staleIssues.length
+  }));
+
+  const trackedGitReality = staleGateStatus.parsed ? staleGateStatus.parsed.tracked_git_reality : null;
+  checks.push(regressionCheck('gate_status_reports_evidence_time_git_heads', staleGateStatus.exit_code === 0 &&
+    trackedGitReality &&
+    trackedGitReality.current_head &&
+    trackedGitReality.checkpoint_head &&
+    trackedGitReality.proof_boundary &&
+    trackedGitReality.proof_boundary.includes('evidence-time facts'), {
+    current_head: trackedGitReality ? trackedGitReality.current_head : 'NO_JSON',
+    checkpoint_head: trackedGitReality ? trackedGitReality.checkpoint_head : 'NO_JSON',
+    checkpoint_matches_current_head: trackedGitReality ? trackedGitReality.checkpoint_matches_current_head : 'NO_JSON'
   }));
 
   const verifyFixture = await runCommand([process.execPath, 'scripts/bha-verify.js'], { cwd: fixtureRoot });
@@ -3840,6 +3961,24 @@ async function handleCloseout(args) {
   const validationStatus = state && state.validation ? state.validation.status : 'NOT_RECORDED';
   const capabilitySummary = capabilityCloseoutSummary(capabilities, state, localCapabilities, localSessions);
   const changedFiles = gitStatus.ok ? changedFilesFromStatus(gitStatus.stdout) : [];
+  const currentGitHead = await currentHead();
+  const currentGitBranch = await currentBranch();
+  const checkpoint = readCheckpointFile();
+  const gitReality = gitStatus.ok ? {
+    branch: currentGitBranch || 'UNKNOWN',
+    head: currentGitHead || 'UNKNOWN',
+    clean: gitStatus.clean,
+    short: gitStatus.stdout.trim() || 'CLEAN'
+  } : {
+    branch: currentGitBranch || 'UNKNOWN',
+    head: currentGitHead || 'UNKNOWN',
+    clean: 'UNKNOWN'
+  };
+  const gitRealityBinding = trackedGitRealityBindingFromHeads(
+    currentGitHead,
+    checkpoint && checkpoint.head ? checkpoint.head : null,
+    gitReality.head
+  );
   const effects = forbiddenLedgerEffects(ledger, policy);
   const selftest = state && state.capability_selftest ? state.capability_selftest : null;
   const verifiedLedgerHeadHash = verify.parsed && verify.parsed.ledger_head_hash
@@ -3943,16 +4082,8 @@ async function handleCloseout(args) {
         required_for_tracked_verifier_pass: false,
         summary: capabilitySummary
       },
-      git_reality: gitStatus.ok ? {
-        branch: await currentBranch() || 'UNKNOWN',
-        head: await currentHead() || 'UNKNOWN',
-        clean: gitStatus.clean,
-        short: gitStatus.stdout.trim() || 'CLEAN'
-      } : {
-        branch: 'UNKNOWN',
-        head: 'UNKNOWN',
-        clean: 'UNKNOWN'
-      },
+      git_reality: gitReality,
+      git_reality_binding: gitRealityBinding,
       skipped_validation: state && state.validation && Array.isArray(state.validation.commands)
         ? state.validation.commands.filter((command) => command.status !== 'PASS').map((command) => command.id)
         : ['VALIDATION_NOT_RECORDED'],
