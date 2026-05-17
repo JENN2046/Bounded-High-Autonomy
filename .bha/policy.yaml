@@ -170,6 +170,35 @@
         "command": "node",
         "args": [
           "scripts/bha-run.js",
+          "stable-exit-status",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V1 stable candidate exit status"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "stable-exit-status",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json",
+          "--allow-validation-in-progress"
+        ],
+        "reason": "read-only V1 stable candidate exit status during validation bootstrap"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
           "audit-v1-stable",
           "--format",
           "json"

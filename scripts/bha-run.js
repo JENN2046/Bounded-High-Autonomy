@@ -2207,6 +2207,20 @@ async function verifierResult() {
   };
 }
 
+async function readOnlyJsonCommand(argv) {
+  const result = await runCommand(argv, {});
+  const parsed = parseJsonLine(result.stdout);
+  return {
+    argv,
+    ok: result.exit_code === 0 && parsed && parsed.ok === true,
+    exit_code: result.exit_code,
+    status: parsed && parsed.status ? parsed.status : 'UNKNOWN',
+    error: result.error || null,
+    stderr: truncate(result.stderr),
+    parsed
+  };
+}
+
 async function matchingConsumedCapability(remote, branch, head, options) {
   const reserve = options && options.reserve === true;
   const state = loadState();
@@ -3554,6 +3568,171 @@ async function handleCouncilStatus(args) {
   }, councilRuntimeStatus())));
 }
 
+async function handleStableExitStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const allowValidationInProgress = args.includes('--allow-validation-in-progress');
+  const remote = getOption(args, '--remote') || 'origin';
+  const branch = getOption(args, '--branch') || await currentBranch();
+  const stableAuditArgs = ['node', 'scripts/bha-run.js', 'audit-v1-stable', '--format', 'json'];
+  if (allowValidationInProgress) {
+    stableAuditArgs.push('--allow-validation-in-progress');
+  }
+  const stableAudit = await readOnlyJsonCommand(stableAuditArgs);
+  const v12Audit = await readOnlyJsonCommand(['node', 'scripts/bha-run.js', 'audit-v12', '--format', 'json']);
+  const verify = await verifierResult();
+  const verifier = verify.parsed || {};
+  const verifierWarnings = Array.isArray(verifier.warnings) ? verifier.warnings : [];
+  const verifierIssues = Array.isArray(verifier.issues) ? verifier.issues : [];
+  const gitStatus = await gitStatusShort();
+  const gate = await gateStatus(remote, branch);
+  const recover = await recoverStatus(remote, branch);
+  const framework = capabilityFramework();
+  const council = councilRuntimeStatus();
+  const strictVerifierPass = verifier.ok === true &&
+    verifier.status === 'PASS' &&
+    verifierIssues.length === 0 &&
+    verifierWarnings.length === 0;
+  const v2HoldLine = framework.default_decision === 'DENY' &&
+    framework.unknown_capability_policy === 'DENY' &&
+    Array.isArray(framework.production_capability_types) &&
+    framework.production_capability_types.length === 1 &&
+    framework.production_capability_types[0] === 'git_push' &&
+    council.runtime_state === 'PREVIEW_CONTRACT_ONLY' &&
+    council.external_side_effects_allowed === false &&
+    council.automated_agent_spawn_allowed === false &&
+    council.provider_calls_allowed === false &&
+    council.memory_writes_allowed === false;
+  const strictChecks = {
+    clean_worktree: gitStatus.clean === true,
+    verifier_pass: strictVerifierPass,
+    audit_v1_stable_pass: stableAudit.ok === true && stableAudit.status === 'PASS',
+    audit_v12_pass: v12Audit.ok === true && v12Audit.status === 'PASS',
+    recover_status_ready: recover.ok === true && recover.status === 'RECOVER_STATUS_READY',
+    gate_status_fail_closed_conditional_push: gate.ok === false &&
+      gate.status === 'BLOCKED' &&
+      gate.push_requirement &&
+      gate.push_requirement.required_now === false &&
+      gate.push_requirement.operator_controlled === true &&
+      gate.push_requirement.capability_required_for_real_push === true &&
+      gate.next_action_required_now === false,
+    signer_boundary_operator_controlled: gate.signer_boundary &&
+      gate.signer_boundary.operator_controls_signer === true &&
+      gate.signer_boundary.bha_private_key_access === false,
+    local_state_not_required_for_tracked_trust: recover.local_state &&
+      recover.local_state.required_for_tracked_verifier_pass === false,
+    v2_hold_line_preview_only: v2HoldLine
+  };
+  const bootstrapAllowedChecks = Object.assign({}, strictChecks, {
+    clean_worktree: allowValidationInProgress ? true : strictChecks.clean_worktree,
+    verifier_pass: allowValidationInProgress ? stableAudit.ok === true : strictChecks.verifier_pass,
+    recover_status_ready: allowValidationInProgress ? recover.local_state && recover.local_state.required_for_tracked_verifier_pass === false : strictChecks.recover_status_ready,
+    gate_status_fail_closed_conditional_push: allowValidationInProgress
+      ? Boolean(gate.push_requirement &&
+        gate.push_requirement.required_now === false &&
+        gate.push_requirement.operator_controlled === true &&
+        gate.push_requirement.capability_required_for_real_push === true)
+      : strictChecks.gate_status_fail_closed_conditional_push
+  });
+  const evaluatedChecks = allowValidationInProgress ? bootstrapAllowedChecks : strictChecks;
+  const blockingChecks = Object.keys(evaluatedChecks).filter((key) => evaluatedChecks[key] !== true);
+  const strictBlockingChecks = Object.keys(strictChecks).filter((key) => strictChecks[key] !== true);
+  const ok = blockingChecks.length === 0;
+  console.log(JSON.stringify({
+    schema: 'bha.stable_exit_status.v1',
+    ok,
+    status: ok ? 'PASS' : 'BLOCKED',
+    stage: 'V1_STABLE_CANDIDATE',
+    next_stage: ok ? 'V1_STABLE_EXIT_REVIEW_OR_NEXT_LOCAL_PLANNING' : 'LOCAL_TRUST_REPAIR',
+    recorded: false,
+    read_only: true,
+    remote,
+    branch: branch || 'UNKNOWN',
+    validation_in_progress_allowed: allowValidationInProgress,
+    validation_in_progress_override: allowValidationInProgress && strictBlockingChecks.length > 0 && blockingChecks.length === 0,
+    checks: evaluatedChecks,
+    strict_checks: strictChecks,
+    blocking_checks: blockingChecks,
+    strict_blocking_checks: strictBlockingChecks,
+    command_results: {
+      audit_v1_stable: {
+        ok: stableAudit.ok,
+        status: stableAudit.status,
+        exit_code: stableAudit.exit_code,
+        validation_in_progress_override: stableAudit.parsed ? stableAudit.parsed.validation_in_progress_override === true : null
+      },
+      audit_v12: {
+        ok: v12Audit.ok,
+        status: v12Audit.status,
+        exit_code: v12Audit.exit_code
+      },
+      verifier: {
+        ok: verify.ok,
+        status: verifier.status || 'UNKNOWN',
+        ledger_head_hash: verifier.ledger_head_hash || null,
+        issues: verifierIssues.length,
+        warnings: verifierWarnings.length
+      }
+    },
+    git_reality: {
+      clean: gitStatus.clean,
+      short: gitStatus.stdout.trim() || 'CLEAN'
+    },
+    gate_summary: {
+      ok: gate.ok,
+      status: gate.status,
+      next_action: gate.next_action,
+      next_action_required_now: gate.next_action_required_now,
+      next_action_condition: gate.next_action_condition,
+      push_requirement: gate.push_requirement,
+      tracked_git_reality: gate.tracked_git_reality,
+      local_payload_status: gate.operator_handoff ? gate.operator_handoff.local_payload_status : null
+    },
+    recovery_summary: {
+      ok: recover.ok,
+      status: recover.status,
+      local_state: recover.local_state,
+      git_push_recovery: recover.git_push_recovery
+    },
+    push_requirement: gate.push_requirement || {
+      required_now: false,
+      operator_controlled: true,
+      capability_required_for_real_push: true
+    },
+    signer_boundary: gate.signer_boundary || {
+      operator_controls_signer: true,
+      bha_private_key_access: false
+    },
+    v2_hold_line: {
+      production_capability_types: framework.production_capability_types,
+      default_decision: framework.default_decision,
+      unknown_capability_policy: framework.unknown_capability_policy,
+      council_runtime_state: council.runtime_state,
+      automated_agent_spawn_allowed: council.automated_agent_spawn_allowed,
+      provider_calls_allowed: council.provider_calls_allowed,
+      memory_writes_allowed: council.memory_writes_allowed
+    },
+    next_commands: ok ? [
+      'node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json',
+      'node scripts/bha-run.js gate-status --remote origin --branch master --format json'
+    ] : [
+      'node scripts/bha-run.js validate',
+      'node scripts/bha-run.js checkpoint --format json',
+      'node scripts/bha-run.js closeout --record --format json',
+      'node scripts/bha-verify.js',
+      'node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json'
+    ],
+    proof_boundary: 'stable-exit-status is read-only phase-readiness reporting. It does not push, issue or consume capability, read private keys, call providers, write memory, deploy, release, tag, publish packages, or turn prose into proof.'
+  }));
+  if (!ok) {
+    process.exitCode = 1;
+  }
+}
+
 async function handleAuditV1Stable(args) {
   const format = getOption(args, '--format') || 'json';
   if (format !== 'json') {
@@ -3579,6 +3758,8 @@ async function handleAuditV1Stable(args) {
     'VALIDATION_COMMAND_STALE',
     'VALIDATION_EXPECTATION_STALE',
     'VALIDATION_COMMAND_FAILED',
+    'VALIDATION_COMMAND_COUNT_MISMATCH',
+    'VALIDATION_COMMAND_MISSING',
     'CHECKPOINT_POLICY_HASH_MISMATCH',
     'UNVERIFIED_WORKTREE_CHANGE'
   ];
@@ -3615,6 +3796,7 @@ async function handleAuditV1Stable(args) {
   const signedPayloadStatusJsonPaths = signedPayloadStatusCommand && signedPayloadStatusCommand.expect ? (signedPayloadStatusCommand.expect.json_paths || {}) : {};
   const operatorSignerPreflightJsonPaths = operatorSignerPreflightCommand && operatorSignerPreflightCommand.expect ? (operatorSignerPreflightCommand.expect.json_paths || {}) : {};
   const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
+  const stableExitCommand = validationCommandById(validation, 'stable_exit_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const verifierSelftestCommand = validationCommandById(validation, 'verifier_selftest_negative_matrix');
   const requireAudit = requireModuleAudit([RUN_SCRIPT, VERIFY_SCRIPT]);
@@ -3914,6 +4096,30 @@ async function handleAuditV1Stable(args) {
       validation_command_policy_allowed: validationCommand ? policyAllowsArgv(policy, validationCommand.argv || []) : false
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
+  ));
+  checks.push(auditCheck(
+    'stable_exit_status_wired',
+    'stable-exit-status is read-only, policy-allowed, wired into validation, and documented as local phase readiness rather than proof or push authorization.',
+    Boolean(stableExitCommand &&
+      stableExitCommand.expect &&
+      stableExitCommand.expect.exit_code === 0 &&
+      stableExitCommand.expect.read_only === true &&
+      stableExitCommand.expect.recorded === false &&
+      stableExitCommand.expect.json_paths &&
+      stableExitCommand.expect.json_paths['push_requirement.required_now'] === false &&
+      stableExitCommand.expect.json_paths['signer_boundary.bha_private_key_access'] === false &&
+      policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'stable-exit-status', '--remote', 'origin', '--branch', 'master', '--format', 'json']) &&
+      policyAllowsArgv(policy, stableExitCommand.argv || []) &&
+      fileContains(RUN_SCRIPT, 'async function handleStableExitStatus') &&
+      fileContains(STABILITY_PATH, '`stable-exit-status` is a read-only phase-readiness report') &&
+      fileContains(ROADMAP_PATH, '`stable-exit-status` reports whether the V1 Stable Candidate is clean enough') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'stable-exit-status --remote')),
+    {
+      validation_command_present: Boolean(stableExitCommand),
+      strict_policy_allowed: policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'stable-exit-status', '--remote', 'origin', '--branch', 'master', '--format', 'json']),
+      validation_command_policy_allowed: stableExitCommand ? policyAllowsArgv(policy, stableExitCommand.argv || []) : false
+    },
+    ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js', 'BHA_V1_STABILITY.md', '.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md']
   ));
   checks.push(auditCheck(
     'verifier_pass_required_for_stable_audit',
@@ -7017,6 +7223,8 @@ async function main() {
       await handleCapabilityFrameworkStatus(args);
     } else if (command === 'council-status') {
       await handleCouncilStatus(args);
+    } else if (command === 'stable-exit-status') {
+      await handleStableExitStatus(args);
     } else if (command === 'audit-v1-stable') {
       await handleAuditV1Stable(args);
     } else if (command === 'audit-v12') {

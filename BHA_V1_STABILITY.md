@@ -89,11 +89,14 @@ node scripts/bha-run.js closeout --record --format json
 node scripts/bha-verify.js
 node scripts/bha-run.js audit-v12 --format json
 node scripts/bha-run.js audit-v1-stable --format json
+node scripts/bha-run.js stable-exit-status --remote 'origin' --branch 'master' --format json
 node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json
 node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json
 ```
 
 `gate-status` is expected to fail closed when no valid current consumed git_push capability exists. That is not a request to push. It means a git_push capability is needed only if the operator separately chooses a real push.
+
+`stable-exit-status` is a read-only phase-readiness report. It summarizes verifier, stable audit, V1.2 audit, recovery, gate, and V2 hold-line state so an operator can decide whether V1 Stable Candidate is clean enough for the next local planning stage. It does not issue, consume, reserve, sign, or push capability evidence.
 
 `node scripts/bha-run.js audit-v1-stable --format json` is the strict operator audit path. Operators should use the strict command, and its output should report `validation_in_progress_override=false` for stable local trust. The `--allow-validation-in-progress` flag is validation bootstrap only: it exists so `validate` can run the stable audit while validation inputs are being refreshed, and it must not be treated as the normal operator proof command.
 
