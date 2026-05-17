@@ -3754,6 +3754,9 @@ async function handleAuditV1Stable(args) {
       fileContains(RUN_SCRIPT, 'capability_flow_required_now: false') &&
       fileContains(RUN_SCRIPT, 'capability_flow_condition') &&
       fileContains(RUN_SCRIPT, 'Only required before an operator-chosen real git push.') &&
+      fileContains(STABILITY_PATH, '`json_paths` expectations') &&
+      fileContains(STABILITY_PATH, 'conditional push guidance') &&
+      fileContains(STABILITY_PATH, 'local-only') &&
       fileContains(RUN_SCRIPT, 'gate_status_next_action_context_is_conditional') &&
       fileContains(RUN_SCRIPT, 'operator_handoff_capability_flow_is_conditional') &&
       fileContains(RUN_SCRIPT, 'local_payload_recovery') &&

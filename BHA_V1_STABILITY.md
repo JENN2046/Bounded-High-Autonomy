@@ -45,6 +45,8 @@ Recovery status must explain missing, stale, expired, or otherwise unusable `.bh
 
 Payload status surfaces must expose both machine-readable `reason_codes` and human-readable `reason_details` for stale, expired, mismatched, or invalid local payload files. These fields are operator UX and recovery guidance, not proof by themselves.
 
+Validation may assert stable nested status fields with `json_paths` expectations. Those assertions are used for operator-facing invariants such as signer ownership, no BHA private-key access, conditional push guidance, and `.bha/local/` recovery being local-only.
+
 ## Post-Commit HEAD Boundary
 
 After a local commit, git `HEAD` changes even when verifier, validation, checkpoint, and closeout evidence remain clean. Checkpoint and closeout git heads are evidence-time facts; they must not be treated as the current commit identity.
