@@ -3192,8 +3192,12 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
     'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH'
   ]);
   const capabilityCommands = [
-    `node scripts/bha-run.js make-push-payload --remote ${remoteArg} --branch ${branchArg} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadArg}`,
-    `operator signs ${payloadPath} outside BHA and writes ${signedPath}`,
+    ...(canUseExistingPayload ? [] : [
+      `node scripts/bha-run.js make-push-payload --remote ${remoteArg} --branch ${branchArg} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadArg}`
+    ]),
+    canUseExistingPayload
+      ? `operator signs existing ${payloadPath} outside BHA and writes ${signedPath}`
+      : `operator signs ${payloadPath} outside BHA and writes ${signedPath}`,
     `$cap = "${signedPath}"`,
     `$id = "${capabilityId}"`,
     'node scripts/bha-run.js verify-signed-capability --file $cap',
@@ -3263,8 +3267,10 @@ async function gateStatus(remote, branch) {
   };
   const action = nextGateAction(checks, capability);
   const actionContext = gateNextActionContext(action);
-  const nextCommands = nextGateCommands(action, remote, branch);
+  const immediateCommands = nextGateCommands(action, remote, branch);
   const currentContext = currentPayloadContext(remote, branch, head, verify.parsed ? verify.parsed.ledger_head_hash : null);
+  const operatorHandoff = await operatorPushHandoff(action, remote, branch, head, capability, immediateCommands, currentContext);
+  const nextCommands = operatorHandoff.blocked_before_capability ? immediateCommands : operatorHandoff.single_line_commands;
   const pushStatus = await postPushStatus(remote, branch, head, capability, checks);
   return {
     ok: Object.values(checks).every(Boolean),
@@ -3307,7 +3313,7 @@ async function gateStatus(remote, branch) {
     next_action_condition: actionContext.next_action_condition,
     next_action_scope: actionContext.next_action_scope,
     next_commands: nextCommands,
-    operator_handoff: await operatorPushHandoff(action, remote, branch, head, capability, nextCommands, currentContext)
+    operator_handoff: operatorHandoff
   };
 }
 
@@ -3650,6 +3656,7 @@ async function handleAuditV1Stable(args) {
     'push_prep_print_next_command_single_line',
     'push_prep_write_handoff_local_only',
     'push_prep_rejects_local_symlink_escape',
+    'gate_status_uses_existing_current_unsigned_payload_before_signing',
     'gate_status_copyable_commands_quote_arguments',
     'operator_handoff_capability_flow_is_conditional',
     'gate_status_next_action_context_is_conditional'
@@ -5163,13 +5170,17 @@ async function handleRegressionSelftest(args) {
     gateCopyableCommands.some((commandText) => String(commandText).includes("--remote 'origin'")) &&
     gateCopyableCommands.some((commandText) => String(commandText).includes(`--branch '${branch}'`)) &&
     gateCopyableCommands.some((commandText) => String(commandText).includes("--out '.bha/local/push-payload.json'")) &&
-    gateCopyableCommands.some((commandText) => String(commandText).includes("--file '.bha/local/signed-push-capability.json'")), {
+    gateCopyableCommands.some((commandText) => String(commandText).includes("--file '.bha/local/signed-push-capability.json'") ||
+      String(commandText).includes('--file $cap')) &&
+    gateCopyableCommands.some((commandText) => String(commandText).includes('$cap = ')), {
     command_count: gateCopyableCommands.length,
     has_newline: gateCopyableCommands.some((commandText) => String(commandText).includes('\n')),
     quotes_remote: gateCopyableCommands.some((commandText) => String(commandText).includes("--remote 'origin'")),
     quotes_branch: gateCopyableCommands.some((commandText) => String(commandText).includes(`--branch '${branch}'`)),
     quotes_out: gateCopyableCommands.some((commandText) => String(commandText).includes("--out '.bha/local/push-payload.json'")),
-    quotes_file: gateCopyableCommands.some((commandText) => String(commandText).includes("--file '.bha/local/signed-push-capability.json'"))
+    quotes_file: gateCopyableCommands.some((commandText) => String(commandText).includes("--file '.bha/local/signed-push-capability.json'") ||
+      String(commandText).includes('--file $cap')),
+    cap_variable_present: gateCopyableCommands.some((commandText) => String(commandText).includes('$cap = '))
   }));
   checks.push(regressionCheck('signed_payload_status_readonly_reports_missing', missingSignedPayloadStatus.exit_code === 0 &&
     missingSignedPayloadStatus.parsed &&
@@ -5480,6 +5491,30 @@ async function handleRegressionSelftest(args) {
     handoff_path: pushPrepHandoff.parsed ? pushPrepHandoff.parsed.handoff_path : 'NO_JSON',
     tracked_before: trackedBeforeHandoff || 'CLEAN',
     tracked_after: trackedAfterHandoff || 'CLEAN'
+  }));
+  const currentUnsignedGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  const currentUnsignedHandoff = currentUnsignedGateStatus.parsed && currentUnsignedGateStatus.parsed.operator_handoff
+    ? currentUnsignedGateStatus.parsed.operator_handoff
+    : null;
+  const currentUnsignedStatus = currentUnsignedHandoff ? currentUnsignedHandoff.local_payload_status : null;
+  const currentUnsignedTopCommands = currentUnsignedGateStatus.parsed && Array.isArray(currentUnsignedGateStatus.parsed.next_commands)
+    ? currentUnsignedGateStatus.parsed.next_commands
+    : [];
+  const currentUnsignedHandoffCommands = currentUnsignedHandoff && Array.isArray(currentUnsignedHandoff.single_line_commands)
+    ? currentUnsignedHandoff.single_line_commands
+    : [];
+  checks.push(regressionCheck('gate_status_uses_existing_current_unsigned_payload_before_signing', currentUnsignedGateStatus.exit_code === 0 &&
+    currentUnsignedStatus &&
+    currentUnsignedStatus.unsigned_matches_current_context === true &&
+    currentUnsignedStatus.next_payload_action === 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA' &&
+    currentUnsignedTopCommands.length > 0 &&
+    currentUnsignedHandoffCommands.length > 0 &&
+    !String(currentUnsignedTopCommands[0]).includes('make-push-payload') &&
+    !String(currentUnsignedHandoffCommands[0]).includes('make-push-payload') &&
+    String(currentUnsignedHandoffCommands[0]).includes('existing .bha/local/push-payload.json'), {
+    next_payload_action: currentUnsignedStatus ? currentUnsignedStatus.next_payload_action : 'NO_JSON',
+    top_first_command: currentUnsignedTopCommands[0] || 'NO_COMMAND',
+    handoff_first_command: currentUnsignedHandoffCommands[0] || 'NO_COMMAND'
   }));
   const outsideLocalDir = path.join(fixtureRoot, '..', `outside-local-escape-${crypto.randomUUID()}`);
   const localEscapeLink = path.join(fixtureRoot, '.bha', 'local', 'escape-link');
