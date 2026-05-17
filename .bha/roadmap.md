@@ -34,15 +34,17 @@ Current verified state:
 - `node scripts/bha-verify.js` is expected to pass.
 - `node scripts/bha-run.js closeout --record --format json` records the closeout event when verifier and validation are passing.
 
-## V1.2 Kernel Hardening
+## V1 Stable Candidate Freeze
 
 Completed locally:
 - `regression-selftest` exercises V1.1 local-only push authorization invariants in an isolated `.bha/local/` fixture without reading or storing operator private keys.
 - Validation includes the V1.2 regression self-test so LF/CRLF hash stability, local-only `git_push` issue/consume evidence, preflight non-consumption, hook USED sessions, replay rejection, fresh clone verifier trust, and denied external capability classes are checked automatically.
 - `inspect`, `gate-status`, `checkpoint`, and `closeout` are the first local trusted-shell UX surfaces for Codex daily work.
 - `audit-v12` is a read-only artifact coverage audit that maps V1.2 requirements to repository files, recorded validation evidence, verifier status, and git reality.
+- `audit-v1-stable` freezes V1 hard boundaries, proof sources, V1-only production capability scope, V2 preview default-deny status, council preview no-automation status, and local reproduction documentation.
 - `push-prep`, `signed-payload-status`, and `operator-signer-preflight` guide the operator through current-HEAD unsigned payload generation and signed payload checks without BHA reading private key material.
 - `recover-status` explains fresh clone and missing `.bha/local/` recovery without treating local push capability evidence as tracked trust.
+- `recover-status` also reports stale, expired, mismatched, or otherwise unusable unsigned/signed payload files as local-only recovery context.
 - `capability-framework-status` reports the default-deny V2 capability preview and the deny/replay test gate for any future capability type.
 - `council-status` reports the V2+ Council Runtime preview contract as read-only, local-only coordination context, not proof.
 - Ledger writes are guarded by a local `.bha/local/ledger.lock` so concurrent local evidence writers fail closed instead of corrupting the hash chain.
@@ -70,16 +72,21 @@ Implemented:
 Explicitly not implemented:
 - Provider-call automation, memory-write automation, deploy/release/tag control, package publishing, database, web UI, CI platform, remote attestation, private key custody, automated multi-agent scheduling, or OS-level sandboxing.
 
-Final local acceptance commands:
+Stable candidate local acceptance commands:
 - `node scripts/bha-run.js validate`
+- `node scripts/bha-run.js checkpoint --format json`
+- `node scripts/bha-run.js closeout --record --format json`
 - `node scripts/bha-verify.js`
-- `node scripts/bha-run.js closeout --format json`
-- `node scripts/bha-run.js prepush-check --internal-git-hook origin`
+- `node scripts/bha-run.js audit-v12 --format json`
+- `node scripts/bha-run.js audit-v1-stable --format json`
+- `node scripts/bha-run.js recover-status --remote origin --branch master --format json`
+- `node scripts/bha-run.js gate-status --remote origin --branch master --format json`
 
 Expected final gate:
 - Verifier: `PASS` with no issues or warnings.
 - Closeout: `PASS`.
-- Prepush: `FAIL_CLOSED` unless a signed, consumed `git_push` capability matches the current run, remote, branch, HEAD, policy hash, mission hash, and ledger head.
+- Gate status: fail closed for real git_push authorization unless a signed, consumed `git_push` capability matches the current run, remote, branch, HEAD, policy hash, mission hash, and ledger head.
+- Push requirement: `required_now=false` unless the operator separately chooses a real push.
 
 ## V1 Operator Flow
 
@@ -89,8 +96,8 @@ Minimal local loop:
 3. Run `node scripts/bha-verify.js` and require `PASS` before trusting state.
 4. Run `node scripts/bha-run.js checkpoint --format json` when work should be resumable from files.
 5. Run `node scripts/bha-run.js closeout --format json --record` to record final evidence.
-6. For push, run `node scripts/bha-run.js make-push-payload --remote origin --branch master --expires-minutes 20 --key-id owner-main-pkcs8 --out .bha/local/push-payload.json`, sign the flat JSON outside BHA, write the signed JSON under `.bha/local/`, then run `verify-signed-capability --file`, `issue-capability --file`, and `consume-capability`. For `git_push`, issue/consume evidence is local-only.
-7. Run `node scripts/bha-run.js prepush-check --preflight --internal-git-hook origin` before `git push origin master`.
+6. Only if the operator separately chooses a real push, run `node scripts/bha-run.js push-prep --remote origin --branch master --expires-minutes 20 --key-id owner-main-pkcs8 --format json`, sign the flat JSON outside BHA, write the signed JSON under `.bha/local/`, then run `verify-signed-capability --file`, `issue-capability --file`, and `consume-capability`. For `git_push`, issue/consume evidence is local-only.
+7. Only before an operator-authorized real push, run `node scripts/bha-run.js prepush-check --preflight --internal-git-hook origin`; the actual `git push origin master` remains outside BHA and requires separate operator intent.
 
 Fresh clone note:
 - A fresh clone of the current remote can restore verifier trust by running `validate`, `checkpoint`, `closeout --record`, and `verify`.
@@ -109,28 +116,29 @@ Operator status:
 
 ## Next Tasks
 
-1. V1 stabilization
+1. V1 stable candidate maintenance
    - Keep verifier, validation, checkpoint, closeout, audit, and gate-status passing from a clean worktree.
    - Keep post-commit evidence-time HEAD mismatch explicit so operator knows when a fresh capability is needed.
    - Keep all proof claims tied to repository reality, ledger/state evidence, verifier, policy/mission hash, local-only capability evidence, and git reality.
+   - Keep roadmap, stability docs, validation, and audit checks aligned before treating V1 as frozen.
 
-2. V1.3 operator UX hardening
-   - Continue reducing stale payload and command-splitting mistakes.
+2. V1.3 operator UX freeze
+   - Keep stale payload and command-splitting mistakes machine-readable and human-readable.
    - Keep external signer ownership explicit and keep BHA limited to unsigned/signed payload files.
    - Keep push guidance conditional: BHA may explain how to prepare a current capability, but must not imply that a push is required now.
    - Add more recovery hints only when they do not weaken the private key or remote-action boundary.
 
-3. V1.4 recovery and resume
+3. V1.4 recovery and resume freeze
    - Keep fresh clone flows self-explanatory without requiring `.bha/local/`.
    - Keep local-only capability replay blocked after push and after USED sessions.
    - Keep checkpoint and closeout resume facts separated from proof claims.
 
-4. V2 capability framework
+4. V2 capability framework hold line
    - Keep `git_push` as the only production capability.
    - Require schema, binding, allowed command, evidence policy, deny tests, and replay tests before considering any new capability.
    - Keep provider, deploy, release, tag, package publish, memory write, and private key access denied by default.
 
-5. V2+ Council Runtime
+5. V2+ Council Runtime hold line
    - Keep the current status command as a contract preview only.
    - Do not add real automated scheduling until there is a local verifier-backed workflow model.
    - Treat Commander / Domain Leads / Worker / Verifier output as coordination context, not proof.
