@@ -1327,6 +1327,40 @@ function selfTestCapabilityKeyPurposeDenied() {
   return issues;
 }
 
+function selfTestUnsupportedCapabilityType() {
+  const issues = [];
+  const payload = selfTestCapabilityIssuePayload('self-test-unsupported-type', {
+    type: 'unknown_local_capability'
+  });
+  payload.capability_type = 'unknown_local_capability';
+  const event = selfTestCapabilityEvent('capability_issue', payload, 'unsupported-type');
+  verifyCapabilityIssue(event, selfTestCapabilityPolicy(), { run_id: 'self-test-run' }, [], [], issues);
+  return issues;
+}
+
+function selfTestDisallowedCapabilityType() {
+  const issues = [];
+  const policy = selfTestCapabilityPolicy();
+  policy.capability_rules.always_denied_v1 = ['provider_call'];
+  const payload = selfTestCapabilityIssuePayload('self-test-disallowed-type', {
+    type: 'provider_call',
+    command: 'openai models list'
+  });
+  payload.capability_type = 'provider_call';
+  const event = selfTestCapabilityEvent('capability_issue', payload, 'disallowed-type');
+  verifyCapabilityIssue(event, policy, { run_id: 'self-test-run' }, [], [], issues);
+  return issues;
+}
+
+function selfTestIncompleteCapabilityBinding() {
+  const issues = [];
+  const payload = selfTestCapabilityIssuePayload('self-test-incomplete-binding');
+  delete payload.requested.remote;
+  const event = selfTestCapabilityEvent('capability_issue', payload, 'incomplete-binding');
+  verifyCapabilityIssue(event, selfTestCapabilityPolicy(), { run_id: 'self-test-run' }, [], [], issues);
+  return issues;
+}
+
 function selfTestCapabilityReplay() {
   const issues = [];
   const issue = selfTestCapabilityEvent('capability_issue', selfTestCapabilityIssuePayload('self-test-replay'), 'replay-issue');
@@ -1508,6 +1542,9 @@ function handleSelfTest() {
       'CAPABILITY_MISSION_HASH_MISMATCH'
     ]),
     checkExpectedCodes('capability_signing_key_purpose_rejected', selfTestCapabilityKeyPurposeDenied(), ['CAPABILITY_SIGNING_KEY_PURPOSE_DENIED']),
+    checkExpectedCodes('unsupported_capability_type_rejected', selfTestUnsupportedCapabilityType(), ['UNSUPPORTED_CAPABILITY_MARKED_VALID']),
+    checkExpectedCodes('disallowed_capability_type_rejected', selfTestDisallowedCapabilityType(), ['DISALLOWED_CAPABILITY_VALID']),
+    checkExpectedCodes('incomplete_capability_binding_rejected', selfTestIncompleteCapabilityBinding(), ['CAPABILITY_BINDING_MISSING']),
     checkExpectedCodes('expired_capability_rejected', selfTestExpiredCapability(), ['CAPABILITY_EXPIRED']),
     checkExpectedCodes('capability_replay_rejected', selfTestCapabilityReplay(), ['CAPABILITY_REPLAY_DETECTED']),
     checkExpectedCodes('capability_context_mismatch_rejected', selfTestCapabilityContextMismatch(), [

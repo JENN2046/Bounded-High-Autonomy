@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-17T05-51-28-441Z",
-  "created_at": "2026-05-17T05:51:28.463Z",
+  "checkpoint_id": "checkpoint-2026-05-17T05-53-35-156Z",
+  "created_at": "2026-05-17T05:53:35.181Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,8 +13,8 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "master",
-  "head": "9a9ac9b2fcec4ae70c9e07361bf2dece387be100",
-  "ledger_head_hash": "5a477fe2f07107dbd6af9de4ee43e97829027ffa3fded9302d759cd370bd7f68",
+  "head": "98b57c612ab4ccc54308f6f70989489569a2eabf",
+  "ledger_head_hash": "d9fcb6f44101c5a63885a92aefa608c86abb9381a416c12bdc63a86a4214a201",
   "policy_hash": "fdae79a9bedaa42cefdf4b02376558895c81796357156af9aeca17fc1c01f91b",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
@@ -69,38 +69,22 @@
     },
     {
       "status": "M",
-      "path": ".bha/policy.yaml"
-    },
-    {
-      "status": "M",
       "path": ".bha/state.json"
     },
     {
       "status": "M",
-      "path": ".bha/validation.yaml"
-    },
-    {
-      "status": "M",
-      "path": "scripts/bha-run.js"
-    },
-    {
-      "status": "M",
       "path": "scripts/bha-verify.js"
-    },
-    {
-      "status": "??",
-      "path": "BHA_V2_CAPABILITY_FRAMEWORK.md"
     }
   ],
   "validation_run": {
     "status": "PASS",
-    "completed_at": "2026-05-17T05:51:23.660Z",
-    "ledger_event_hash": "5a477fe2f07107dbd6af9de4ee43e97829027ffa3fded9302d759cd370bd7f68",
+    "completed_at": "2026-05-17T05:53:30.662Z",
+    "ledger_event_hash": "d9fcb6f44101c5a63885a92aefa608c86abb9381a416c12bdc63a86a4214a201",
     "command_count": 39
   },
   "validation_not_run": [],
   "verifier_status": "PASS",
-  "verifier_ledger_head_hash": "5a477fe2f07107dbd6af9de4ee43e97829027ffa3fded9302d759cd370bd7f68",
+  "verifier_ledger_head_hash": "d9fcb6f44101c5a63885a92aefa608c86abb9381a416c12bdc63a86a4214a201",
   "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
@@ -135,9 +119,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "5a477fe2f07107dbd6af9de4ee43e97829027ffa3fded9302d759cd370bd7f68",
-    "checkpoint_event_hash": "66077da6528fba27eaa0dfa497e72cab951b037a40db492c66f6f9fa6d6f387e",
-    "final_ledger_head_hash": "66077da6528fba27eaa0dfa497e72cab951b037a40db492c66f6f9fa6d6f387e"
+    "verified_ledger_head_hash": "d9fcb6f44101c5a63885a92aefa608c86abb9381a416c12bdc63a86a4214a201",
+    "checkpoint_event_hash": "fbcc91d02d3091642819f6b12bd997132cac6b8eec95faaf0942bff6989a7647",
+    "final_ledger_head_hash": "fbcc91d02d3091642819f6b12bd997132cac6b8eec95faaf0942bff6989a7647"
   },
-  "ledger_event_hash": "66077da6528fba27eaa0dfa497e72cab951b037a40db492c66f6f9fa6d6f387e"
+  "ledger_event_hash": "fbcc91d02d3091642819f6b12bd997132cac6b8eec95faaf0942bff6989a7647"
 }
