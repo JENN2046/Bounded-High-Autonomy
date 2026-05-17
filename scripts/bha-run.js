@@ -3418,6 +3418,9 @@ async function handleAuditV1Stable(args) {
   const validationCommand = validationCommandById(validation, 'v1_stable_audit_readonly');
   const gateStatusCommand = validationCommandById(validation, 'gate_status_readonly');
   const recoverStatusCommand = validationCommandById(validation, 'recover_status_readonly');
+  const pushPrepCommand = validationCommandById(validation, 'push_prep_current_head_payload');
+  const signedPayloadStatusCommand = validationCommandById(validation, 'signed_payload_status_readonly');
+  const operatorSignerPreflightCommand = validationCommandById(validation, 'operator_signer_preflight_readonly');
   const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const verifierSelftestCommand = validationCommandById(validation, 'verifier_selftest_negative_matrix');
@@ -3473,6 +3476,19 @@ async function handleAuditV1Stable(args) {
     'fresh_clone_push_prep_generates_local_handoff'
   ];
   const missingFreshCloneRegressionIds = requiredFreshCloneRegressionIds
+    .filter((id) => !fileContains(RUN_SCRIPT, `'${id}'`) && !fileContains(RUN_SCRIPT, `"${id}"`));
+  const requiredOperatorUxRegressionIds = [
+    'push_prep_validation_wired',
+    'signed_payload_status_validation_wired',
+    'operator_signer_preflight_validation_wired',
+    'push_prep_writes_current_head_bound_payload',
+    'push_prep_powershell_command_quotes_arguments',
+    'push_prep_print_next_command_single_line',
+    'push_prep_write_handoff_local_only',
+    'operator_handoff_capability_flow_is_conditional',
+    'gate_status_next_action_context_is_conditional'
+  ];
+  const missingOperatorUxRegressionIds = requiredOperatorUxRegressionIds
     .filter((id) => !fileContains(RUN_SCRIPT, `'${id}'`) && !fileContains(RUN_SCRIPT, `"${id}"`));
   const checks = [];
   checks.push(auditCheck(
@@ -3717,6 +3733,29 @@ async function handleAuditV1Stable(args) {
       regression_selftest_validation_command_present: Boolean(regressionCommand)
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'operator_ux_handoff_regressions_covered',
+    'V1 operator UX freeze is covered by regressions for current-HEAD payload binding, single-line PowerShell handoff, local-only handoff writes, and conditional capability guidance.',
+    Boolean(regressionCommand &&
+      pushPrepCommand &&
+      signedPayloadStatusCommand &&
+      operatorSignerPreflightCommand &&
+      missingOperatorUxRegressionIds.length === 0 &&
+      fileContains(RUN_SCRIPT, 'command_has_newline') &&
+      fileContains(RUN_SCRIPT, '--print-next-command') &&
+      fileContains(RUN_SCRIPT, '--write-handoff') &&
+      fileContains(RUN_SCRIPT, 'postSignerPowerShellCommand') &&
+      fileContains(RUN_SCRIPT, 'powershell_safety')),
+    {
+      regression_selftest_validation_command_present: Boolean(regressionCommand),
+      push_prep_validation_command_present: Boolean(pushPrepCommand),
+      signed_payload_status_validation_command_present: Boolean(signedPayloadStatusCommand),
+      operator_signer_preflight_validation_command_present: Boolean(operatorSignerPreflightCommand),
+      required_regression_ids: requiredOperatorUxRegressionIds,
+      missing_regression_ids: missingOperatorUxRegressionIds
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml']
   ));
   checks.push(auditCheck(
     'fresh_clone_recovery_regressions_covered',
