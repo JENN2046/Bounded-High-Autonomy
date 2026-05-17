@@ -4369,6 +4369,36 @@ async function handleLongTermGoalStatus(args) {
       ['BHA_V2_COUNCIL_RUNTIME.md', 'scripts/bha-run.js', '.bha/validation.yaml']
     ),
     auditCheck(
+      'next_stage_transition_boundary',
+      'Next local planning may begin only from clean stable-exit evidence and never authorizes push or V2 enablement.',
+      reviewResult.ok === true &&
+        review.status === 'PASS' &&
+        nextPlanResult.ok === true &&
+        nextPlan.status === 'NEXT_LOCAL_PLAN_READY' &&
+        review.push_requirement &&
+        review.push_requirement.required_now === false &&
+        nextPlan.completion_boundary &&
+        nextPlan.completion_boundary.long_term_goal_complete === false &&
+        nextPlan.v2_hold_line &&
+        nextPlan.v2_hold_line.new_production_capability_allowed === false &&
+        nextPlan.v2_hold_line.council_runtime_activation_allowed === false,
+      {
+        stable_exit_review_status: review.status || 'UNKNOWN',
+        next_local_plan_status: nextPlan.status || 'UNKNOWN',
+        push_required_now: review.push_requirement ? review.push_requirement.required_now === true : null,
+        long_term_goal_complete: nextPlan.completion_boundary
+          ? nextPlan.completion_boundary.long_term_goal_complete === true
+          : null,
+        new_production_capability_allowed: nextPlan.v2_hold_line
+          ? nextPlan.v2_hold_line.new_production_capability_allowed === true
+          : null,
+        council_runtime_activation_allowed: nextPlan.v2_hold_line
+          ? nextPlan.v2_hold_line.council_runtime_activation_allowed === true
+          : null
+      },
+      ['.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md', 'scripts/bha-run.js']
+    ),
+    auditCheck(
       'long_term_status_wired',
       'long-term-goal-status is read-only, validation-wired, and explicitly not a proof replacement.',
       validationCommandPresent('long_term_goal_status_readonly') &&
