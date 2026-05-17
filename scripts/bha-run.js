@@ -4453,6 +4453,9 @@ async function handleLongTermGoalStatus(args) {
       missing_before_enablement: framework.test_requirements
         ? framework.test_requirements.missing_before_enablement || []
         : [],
+      non_enablement_reasons: framework.draft_artifacts
+        ? framework.draft_artifacts.non_enablement_reasons || []
+        : [],
       allowed_now: false
     },
     {
@@ -4470,6 +4473,9 @@ async function handleLongTermGoalStatus(args) {
         : false,
       missing_before_activation: council.test_requirements
         ? council.test_requirements.missing_before_activation || []
+        : [],
+      non_activation_reasons: council.draft_artifacts
+        ? council.draft_artifacts.non_activation_reasons || []
         : [],
       allowed_now: false
     }
@@ -5070,7 +5076,9 @@ async function handleAuditV1Stable(args) {
       longTermGoalCommand.expect.json_paths['current_local_state.v1_stable_candidate_ready'] === true &&
       longTermGoalCommand.expect.json_paths['future_work.0.status'] === 'FUTURE_REQUIRES_NEW_EXPLICIT_OBJECTIVE' &&
       longTermGoalCommand.expect.json_paths['future_work.0.coverage_complete'] === false &&
+      longTermGoalCommand.expect.json_paths['future_work.0.non_enablement_reasons.5'] === 'explicit_policy_change_missing' &&
       longTermGoalCommand.expect.json_paths['future_work.1.coverage_complete'] === false &&
+      longTermGoalCommand.expect.json_paths['future_work.1.non_activation_reasons.5'] === 'automated_spawn_provider_memory_and_remote_actions_forbidden' &&
       longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.id'] === 'next_stage_transition_boundary' &&
       longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.status'] === 'PASS' &&
       longTermGoalCommand.expect.json_paths['prompt_to_artifact_checklist.5.evidence.push_required_now'] === false &&
