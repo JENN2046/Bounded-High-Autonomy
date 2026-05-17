@@ -2731,6 +2731,7 @@ function reasonMessage(code) {
     CAPABILITY_POLICY_HASH_MISMATCH: 'Signed capability verification failed because the payload policy hash does not match current policy.',
     CAPABILITY_MISSION_HASH_MISMATCH: 'Signed capability verification failed because the payload mission hash does not match current mission.',
     CAPABILITY_EXPIRED: 'Signed capability has expired; generate and sign a fresh payload if the operator chooses a real push.',
+    PAYLOAD_EXPIRED: 'Local payload has expired; generate a fresh unsigned payload if the operator chooses a real push.',
     SIGNED_CAPABILITY_INVALID: 'Signed capability is not valid for the current gate context.'
   };
   return messages[code] || 'Payload is not usable for the current gate context; regenerate and sign a current payload if a real push is chosen.';
@@ -3009,6 +3010,9 @@ function localPayloadIssue(kind, summary) {
   if (Array.isArray(summary.context_mismatch_reasons)) {
     reasons.push(...summary.context_mismatch_reasons);
   }
+  if (summary.expiry && summary.expiry.expired === true) {
+    reasons.push('PAYLOAD_EXPIRED');
+  }
   if (summary.verification && summary.verification.ok !== true) {
     reasons.push(summary.verification.reason || 'SIGNED_CAPABILITY_INVALID');
   }
@@ -3034,7 +3038,8 @@ function localPayloadStatus(unsigned, signed) {
   const signedPresent = Boolean(signed && signed.exists === true && signed.json_valid === true);
   let nextPayloadAction = 'GENERATE_UNSIGNED_PAYLOAD_FOR_CURRENT_CONTEXT';
   if (issues.length) {
-    nextPayloadAction = unsignedPresent && unsigned.matches_current_context === true
+    const unsignedHasIssue = issues.some((issue) => issue.kind === 'unsigned_payload');
+    nextPayloadAction = !unsignedHasIssue && unsignedPresent && unsigned.matches_current_context === true
       ? 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA_REPLACING_STALE_SIGNED_PAYLOAD'
       : 'REGENERATE_UNSIGNED_PAYLOAD_AND_SIGN_CURRENT_CONTEXT';
   } else if (signedPresent && signed.verification && signed.verification.ok === true) {
@@ -5086,6 +5091,47 @@ async function handleRegressionSelftest(args) {
     missingCapabilityPreflight.parsed.status === 'FAIL_CLOSED' &&
     missingCapabilityPreflight.parsed.reason === 'NO_VALID_CONSUMED_GIT_PUSH_CAPABILITY', {
     reason: missingCapabilityPreflight.parsed ? missingCapabilityPreflight.parsed.reason : 'NO_JSON'
+  }));
+
+  const expiredUnsignedPayload = await runFixtureBha(fixtureRoot, [
+    'make-push-payload',
+    '--remote',
+    'origin',
+    '--branch',
+    branch,
+    '--expires-minutes',
+    '20',
+    '--key-id',
+    keyId,
+    '--out',
+    '.bha/local/push-payload.json'
+  ]);
+  const expiredUnsignedPath = path.join(fixtureRoot, '.bha', 'local', 'push-payload.json');
+  if (expiredUnsignedPayload.exit_code === 0 && fs.existsSync(expiredUnsignedPath)) {
+    const expiredPayload = readJsonStrict(expiredUnsignedPath);
+    expiredPayload.expires_at = '2000-01-01T00:00:00.000Z';
+    writeTextFile(expiredUnsignedPath, JSON.stringify(expiredPayload) + '\n');
+  }
+  const expiredUnsignedGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  const expiredUnsignedHandoff = expiredUnsignedGateStatus.parsed && expiredUnsignedGateStatus.parsed.operator_handoff
+    ? expiredUnsignedGateStatus.parsed.operator_handoff
+    : null;
+  const expiredUnsignedStatus = expiredUnsignedHandoff ? expiredUnsignedHandoff.local_payload_status : null;
+  const expiredUnsignedIssues = expiredUnsignedStatus && Array.isArray(expiredUnsignedStatus.not_usable_local_files)
+    ? expiredUnsignedStatus.not_usable_local_files
+    : [];
+  checks.push(regressionCheck('gate_status_flags_expired_unsigned_payload', expiredUnsignedPayload.exit_code === 0 &&
+    expiredUnsignedGateStatus.exit_code === 0 &&
+    expiredUnsignedStatus &&
+    expiredUnsignedStatus.unsigned_matches_current_context === true &&
+    expiredUnsignedStatus.next_payload_action === 'REGENERATE_UNSIGNED_PAYLOAD_AND_SIGN_CURRENT_CONTEXT' &&
+    expiredUnsignedStatus.reason_codes.includes('PAYLOAD_EXPIRED') &&
+    expiredUnsignedIssues.some((issue) => issue.kind === 'unsigned_payload' &&
+      issue.reasons.includes('PAYLOAD_EXPIRED') &&
+      Array.isArray(issue.reason_details) &&
+      issue.reason_details.some((detail) => detail.code === 'PAYLOAD_EXPIRED' && String(detail.message || '').includes('expired'))), {
+    unsigned_matches_current_context: expiredUnsignedStatus ? expiredUnsignedStatus.unsigned_matches_current_context : 'NO_JSON',
+    reason_codes: expiredUnsignedStatus ? expiredUnsignedStatus.reason_codes : 'NO_JSON'
   }));
 
   const makePayload = await runFixtureBha(fixtureRoot, [
