@@ -311,6 +311,7 @@
         "recorded": true,
         "read_only": false,
         "has_keys": [
+          "schema",
           "checkpoint",
           "checkpoint_binding",
           "event"

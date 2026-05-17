@@ -6642,6 +6642,7 @@ async function handleCheckpoint(args) {
       throw error;
     }
     console.log(JSON.stringify({
+      schema: 'bha.checkpoint_output.v1',
       ok: false,
       status: 'CHECKPOINT_BLOCKED',
       recorded: false,
@@ -6657,6 +6658,7 @@ async function handleCheckpoint(args) {
   checkpoint.checkpoint_binding.final_ledger_head_hash = event.event_hash;
   writeJson(CHECKPOINT_PATH, checkpoint);
   console.log(JSON.stringify({
+    schema: 'bha.checkpoint_output.v1',
     ok: true,
     status: 'CHECKPOINT_RECORDED',
     recorded: true,
