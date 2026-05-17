@@ -2712,11 +2712,35 @@ function capabilityFileSummary(localPath, remote, branch, head, signed, context)
   summary.matches_current_context = contextMismatchReasons.length === 0;
   if (contextMismatchReasons.length) {
     summary.context_mismatch_reasons = contextMismatchReasons;
+    summary.context_mismatch_details = reasonDetails(contextMismatchReasons);
   }
   if (signed === true) {
     summary.safe_to_print = 'signature and private key material are not included in this summary';
   }
   return summary;
+}
+
+function reasonMessage(code) {
+  const messages = {
+    REMOTE_MISMATCH: 'Payload is bound to a different git remote; regenerate it for the target remote before signing or using it.',
+    BRANCH_MISMATCH: 'Payload is bound to a different git branch; regenerate it for the target branch before signing or using it.',
+    HEAD_MISMATCH: 'Payload is bound to a different git HEAD; regenerate it for the current commit before signing or using it.',
+    LEDGER_HEAD_MISMATCH: 'Payload is bound to an older ledger head; regenerate it after current validation/checkpoint/closeout evidence is recorded.',
+    POLICY_HASH_MISMATCH: 'Payload is bound to a different policy hash; regenerate it under the current tracked policy.',
+    MISSION_HASH_MISMATCH: 'Payload is bound to a different mission hash; regenerate it under the current tracked mission.',
+    CAPABILITY_POLICY_HASH_MISMATCH: 'Signed capability verification failed because the payload policy hash does not match current policy.',
+    CAPABILITY_MISSION_HASH_MISMATCH: 'Signed capability verification failed because the payload mission hash does not match current mission.',
+    CAPABILITY_EXPIRED: 'Signed capability has expired; generate and sign a fresh payload if the operator chooses a real push.',
+    SIGNED_CAPABILITY_INVALID: 'Signed capability is not valid for the current gate context.'
+  };
+  return messages[code] || 'Payload is not usable for the current gate context; regenerate and sign a current payload if a real push is chosen.';
+}
+
+function reasonDetails(reasons) {
+  return Array.from(new Set(reasons || [])).map((code) => ({
+    code,
+    message: reasonMessage(code)
+  }));
 }
 
 async function handleSignedPayloadStatus(args) {
@@ -2972,6 +2996,7 @@ async function signedCapabilityFileSummary(localPath, remote, branch, head, cont
       notUsableReasons.push(result.reason || 'SIGNED_CAPABILITY_INVALID');
     }
     summary.not_usable_reasons = Array.from(new Set(notUsableReasons));
+    summary.not_usable_reason_details = reasonDetails(summary.not_usable_reasons);
   }
   return summary;
 }
@@ -2995,6 +3020,7 @@ function localPayloadIssue(kind, summary) {
     path: summary.path,
     capability_id: summary.capability_id || null,
     reasons: Array.from(new Set(reasons)),
+    reason_details: reasonDetails(reasons),
     action: 'regenerate payload for current head and sign outside BHA'
   };
 }
@@ -3016,6 +3042,7 @@ function localPayloadStatus(unsigned, signed) {
   } else if (unsignedPresent && unsigned.matches_current_context === true) {
     nextPayloadAction = 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA';
   }
+  const reasonCodes = Array.from(new Set(issues.flatMap((issue) => issue.reasons || [])));
   return {
     unsigned_present: unsignedPresent,
     signed_present: signedPresent,
@@ -3029,6 +3056,11 @@ function localPayloadStatus(unsigned, signed) {
       ? signed.verification.ok === true
       : null,
     not_usable_local_files: issues,
+    reason_codes: reasonCodes,
+    reason_details: reasonDetails(reasonCodes),
+    human_summary: issues.length
+      ? 'One or more local payload files are stale, expired, mismatched, or invalid for the current gate context.'
+      : 'No stale, expired, mismatched, or invalid local payload files were detected.',
     next_payload_action: nextPayloadAction
   };
 }
@@ -4985,7 +5017,10 @@ async function handleRegressionSelftest(args) {
     staleStatus.unsigned_matches_current_context === false &&
     staleStatus.signed_matches_current_context === false &&
     staleStatus.next_payload_action === 'REGENERATE_UNSIGNED_PAYLOAD_AND_SIGN_CURRENT_CONTEXT' &&
+    Array.isArray(staleStatus.reason_details) &&
+    staleStatus.reason_details.some((detail) => detail.code === 'HEAD_MISMATCH' && String(detail.message || '').includes('git HEAD')) &&
     staleIssues.some((issue) => issue.kind === 'unsigned_payload' && issue.reasons.includes('HEAD_MISMATCH')) &&
+    staleIssues.some((issue) => issue.kind === 'unsigned_payload' && Array.isArray(issue.reason_details) && issue.reason_details.some((detail) => detail.code === 'HEAD_MISMATCH')) &&
     staleIssues.some((issue) => issue.kind === 'signed_payload' && issue.reasons.includes('HEAD_MISMATCH')), {
     gate_action: staleGateStatus.parsed ? staleGateStatus.parsed.next_action : 'NO_JSON',
     unsigned_matches_current_context: staleStatus ? staleStatus.unsigned_matches_current_context : 'NO_JSON',
@@ -4999,7 +5034,9 @@ async function handleRegressionSelftest(args) {
     staleSignedPayloadStatus.parsed.signed_payload &&
     staleSignedPayloadStatus.parsed.signed_payload.matches_current_context === false &&
     Array.isArray(staleSignedPayloadStatus.parsed.signed_payload.not_usable_reasons) &&
-    staleSignedPayloadStatus.parsed.signed_payload.not_usable_reasons.includes('HEAD_MISMATCH'), {
+    staleSignedPayloadStatus.parsed.signed_payload.not_usable_reasons.includes('HEAD_MISMATCH') &&
+    Array.isArray(staleSignedPayloadStatus.parsed.signed_payload.not_usable_reason_details) &&
+    staleSignedPayloadStatus.parsed.signed_payload.not_usable_reason_details.some((detail) => detail.code === 'HEAD_MISMATCH' && String(detail.message || '').includes('git HEAD')), {
     status: staleSignedPayloadStatus.parsed ? staleSignedPayloadStatus.parsed.status : 'NO_JSON',
     reasons: staleSignedPayloadStatus.parsed && staleSignedPayloadStatus.parsed.signed_payload ? staleSignedPayloadStatus.parsed.signed_payload.not_usable_reasons : 'NO_JSON'
   }));
@@ -5015,6 +5052,9 @@ async function handleRegressionSelftest(args) {
     staleRecoverPayload.read_only === true &&
     staleRecoverPayload.stale_or_not_usable === true &&
     staleRecoverPayload.recovery_action === 'REGENERATE_UNSIGNED_PAYLOAD_AND_SIGN_CURRENT_CONTEXT' &&
+    staleRecoverPayload.local_payload_status &&
+    Array.isArray(staleRecoverPayload.local_payload_status.reason_details) &&
+    staleRecoverPayload.local_payload_status.reason_details.some((detail) => detail.code === 'HEAD_MISMATCH' && String(detail.message || '').includes('git HEAD')) &&
     staleRecoverIssues.some((issue) => issue.kind === 'unsigned_payload' && issue.reasons.includes('HEAD_MISMATCH')) &&
     staleRecoverIssues.some((issue) => issue.kind === 'signed_payload' && issue.reasons.includes('HEAD_MISMATCH')), {
     recovery_action: staleRecoverPayload ? staleRecoverPayload.recovery_action : 'NO_JSON',
