@@ -3300,9 +3300,9 @@ async function handleAuditV1Stable(args) {
   const failedValidationIsBootstrapOnly = failedRecordedValidationIds.length === 0 ||
     failedRecordedValidationIds.every((id) => id === 'v1_stable_audit_readonly');
   const verifierValidationBootstrapPass = allowValidationInProgress &&
-    verifier.status === 'FAIL' &&
     failedValidationIsBootstrapOnly &&
-    verifierIssueCodes.length > 0 &&
+    (verifier.status === 'PASS' || verifier.status === 'FAIL') &&
+    (verifierIssueCodes.length > 0 || verifierWarningCodes.length > 0) &&
     verifierIssueCodes.every((code) => validationBootstrapIssueCodes.includes(code)) &&
     verifierWarningCodes.every((code) => validationBootstrapWarningCodes.includes(code));
   const alwaysDenied = ((policy.capability_rules || {}).always_denied_v1 || []);
