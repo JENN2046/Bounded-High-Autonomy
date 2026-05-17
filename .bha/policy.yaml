@@ -12,6 +12,7 @@
       "BHA_DESIGN.md",
       "BHA_V1_STABILITY.md",
       "BHA_V2_CAPABILITY_FRAMEWORK.md",
+      "BHA_V2_COUNCIL_RUNTIME.md",
       "AGENTS.md",
       ".gitignore",
       ".bha/mission.yaml",
@@ -154,6 +155,16 @@
           "json"
         ],
         "reason": "read-only V2 capability framework status"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "council-status",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V2+ council runtime contract status"
       },
       {
         "command": "node",

@@ -16,6 +16,8 @@ const LEDGER_PATH = path.join(BHA_DIR, 'ledger.jsonl');
 const CAPABILITIES_PATH = path.join(BHA_DIR, 'capabilities.jsonl');
 const LOCAL_CAPABILITIES_PATH = path.join(BHA_LOCAL_DIR, 'capabilities.jsonl');
 const LOCAL_CAPABILITY_SESSIONS_PATH = path.join(BHA_LOCAL_DIR, 'capability-sessions.jsonl');
+const LEDGER_LOCK_PATH = path.join(BHA_LOCAL_DIR, 'ledger.lock');
+const LEDGER_LOCK_TIMEOUT_MS = 2000;
 const VALIDATION_PATH = path.join(BHA_DIR, 'validation.yaml');
 const ROLLBACK_PATH = path.join(BHA_DIR, 'rollback.md');
 const ROADMAP_PATH = path.join(BHA_DIR, 'roadmap.md');
@@ -26,6 +28,7 @@ const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
 const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
 const STABILITY_PATH = path.join(ROOT, 'BHA_V1_STABILITY.md');
 const CAPABILITY_FRAMEWORK_PATH = path.join(ROOT, 'BHA_V2_CAPABILITY_FRAMEWORK.md');
+const COUNCIL_RUNTIME_PATH = path.join(ROOT, 'BHA_V2_COUNCIL_RUNTIME.md');
 const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
 const GITIGNORE_PATH = path.join(ROOT, '.gitignore');
 
@@ -33,6 +36,7 @@ const VALIDATION_INPUTS = [
   DESIGN_PATH,
   STABILITY_PATH,
   CAPABILITY_FRAMEWORK_PATH,
+  COUNCIL_RUNTIME_PATH,
   AGENTS_PATH,
   GITIGNORE_PATH,
   MISSION_PATH,
@@ -58,6 +62,7 @@ function validationInputsForRoot(root) {
     path.join(root, 'BHA_DESIGN.md'),
     path.join(root, 'BHA_V1_STABILITY.md'),
     path.join(root, 'BHA_V2_CAPABILITY_FRAMEWORK.md'),
+    path.join(root, 'BHA_V2_COUNCIL_RUNTIME.md'),
     path.join(root, 'AGENTS.md'),
     path.join(root, '.gitignore'),
     path.join(root, '.bha', 'mission.yaml'),
@@ -184,7 +189,45 @@ function syncSleep(ms) {
 }
 
 function withLedgerLock(callback) {
-  return callback();
+  fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
+  const deadline = Date.now() + LEDGER_LOCK_TIMEOUT_MS;
+  let fd = null;
+  while (fd === null) {
+    try {
+      fd = fs.openSync(LEDGER_LOCK_PATH, 'wx');
+      fs.writeFileSync(fd, stable({
+        pid: process.pid,
+        acquired_at: new Date().toISOString()
+      }) + '\n', 'utf8');
+    } catch (error) {
+      if (error && error.code === 'EEXIST' && Date.now() < deadline) {
+        syncSleep(25);
+        continue;
+      }
+      if (error && error.code === 'EEXIST') {
+        throw new Error('ledger lock is held by another local BHA writer');
+      }
+      throw error;
+    }
+  }
+  try {
+    return callback();
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch (error) {
+        // Best effort close; unlink below is still attempted.
+      }
+    }
+    try {
+      fs.unlinkSync(LEDGER_LOCK_PATH);
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
 }
 
 function appendLedger(type, payload, mutateState) {
@@ -997,6 +1040,72 @@ function capabilityTypePolicy(type) {
     return { allowed: false, reason: 'CAPABILITY_TYPE_NOT_SUPPORTED', type: normalized };
   }
   return { allowed: true, reason: 'CAPABILITY_TYPE_SUPPORTED', type: normalized };
+}
+
+function councilRuntimeStatus() {
+  return {
+    schema: 'bha.council_runtime.v2.preview',
+    recorded: false,
+    read_only: true,
+    status: 'COUNCIL_RUNTIME_STATUS',
+    runtime_state: 'PREVIEW_CONTRACT_ONLY',
+    default_decision: 'NO_AUTOMATED_DELEGATION',
+    local_only: true,
+    external_side_effects_allowed: false,
+    automated_agent_spawn_allowed: false,
+    provider_calls_allowed: false,
+    memory_writes_allowed: false,
+    roles: [
+      {
+        id: 'commander',
+        responsibility: 'define task boundary, risk level, stop conditions, and next safe local step',
+        may_create_proof: false
+      },
+      {
+        id: 'domain_leads',
+        responsibility: 'split the local queue into bounded work items with clear ownership',
+        may_create_proof: false
+      },
+      {
+        id: 'worker',
+        responsibility: 'make the smallest local reversible change inside the accepted queue item',
+        may_create_proof: false
+      },
+      {
+        id: 'verifier',
+        responsibility: 'review diff, run local validation, and report pass, fail, or blocker',
+        may_create_proof: false
+      }
+    ],
+    loop: [
+      'commander_sets_boundary',
+      'domain_leads_split_queue',
+      'worker_executes_local_change',
+      'verifier_reviews_and_validates',
+      'commander_decides_continue_or_stop'
+    ],
+    stop_conditions: [
+      'completion',
+      'validation_failure_requiring_design_decision',
+      'missing_context',
+      'remote_or_side_effectful_boundary',
+      'credential_or_private_key_boundary',
+      'user_owned_work_risk'
+    ],
+    proof_boundary: 'Council role outputs, AGENTS.md, prompts, approvals, and closeout prose are not proof; proof still comes from repository reality, ledger/state evidence, verifier, policy/mission hash, local-only capability evidence when needed, and git reality.',
+    validation_contract: {
+      command: 'node scripts/bha-run.js council-status --format json',
+      expected: {
+        recorded: false,
+        read_only: true,
+        external_side_effects_allowed: false,
+        automated_agent_spawn_allowed: false,
+        provider_calls_allowed: false,
+        memory_writes_allowed: false
+      }
+    },
+    implementation_boundary: 'This command describes a local workflow contract only. It does not spawn sub-agents, call providers, write memory, push, deploy, release, tag, or publish packages.'
+  };
 }
 
 function disallowedCapabilityType(type) {
@@ -3086,6 +3195,18 @@ async function handleCapabilityFrameworkStatus(args) {
   }, framework)));
 }
 
+async function handleCouncilStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  console.log(JSON.stringify(Object.assign({
+    ok: true
+  }, councilRuntimeStatus())));
+}
+
 async function handleAuditV1Stable(args) {
   const format = getOption(args, '--format') || 'json';
   if (format !== 'json') {
@@ -3225,6 +3346,7 @@ async function handleAuditV1Stable(args) {
     proof_sources: [
       'BHA_V1_STABILITY.md',
       'BHA_V2_CAPABILITY_FRAMEWORK.md',
+      'BHA_V2_COUNCIL_RUNTIME.md',
       '.bha/policy.yaml',
       '.bha/validation.yaml',
       '.bha/state.json',
@@ -3266,10 +3388,12 @@ async function handleAuditV12(args) {
   const operatorSignerPreflightCommand = validationCommandById(validation, 'operator_signer_preflight_readonly');
   const recoverStatusCommand = validationCommandById(validation, 'recover_status_readonly');
   const capabilityFrameworkCommand = validationCommandById(validation, 'capability_framework_status_readonly');
+  const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
   const auditArgv = ['node', 'scripts/bha-run.js', 'audit-v12', '--format', 'json'];
 
   const regressionIds = [
     'validation_input_hash_lf_crlf_stable',
+    'ledger_writer_lock_blocks_parallel_append',
     'missing_local_consumed_capability_fail_closed',
     'git_push_issue_consume_write_only_bha_local',
     'issue_consume_leave_tracked_worktree_unchanged',
@@ -3304,6 +3428,7 @@ async function handleAuditV12(args) {
     'operator_signer_preflight_accepts_external_key_path_without_reading_key',
     'recover_status_validation_wired',
     'capability_framework_status_validation_wired',
+    'council_status_validation_wired',
     'unknown_capability_type_rejected',
     'disallowed_provider_capability_type_rejected',
     'incomplete_git_push_capability_rejected',
@@ -3361,14 +3486,16 @@ async function handleAuditV12(args) {
       verifier_status: verify.parsed ? verify.parsed.status : 'UNKNOWN',
       issues: verify.parsed && Array.isArray(verify.parsed.issues) ? verify.parsed.issues.length : 'UNKNOWN',
       warnings: verify.parsed && Array.isArray(verify.parsed.warnings) ? verify.parsed.warnings.length : 'UNKNOWN',
-      validation_inputs_fresh: state.validation ? state.validation.inputs_hash === validationInputsHash() : false
+      validation_inputs_fresh: state.validation ? state.validation.inputs_hash === validationInputsHash() : false,
+      git_clean: gitStatus.ok ? gitStatus.clean : 'UNKNOWN'
     },
     ['.bha/state.json', '.bha/ledger.jsonl', 'scripts/bha-verify.js']
   ));
   checks.push(auditCheck(
     'current_trust_state_passes_when_fresh',
     'When the repository is not mid-change, verifier should pass with fresh validation and no warnings.',
-    Boolean((state.validation && state.validation.inputs_hash !== validationInputsHash()) ||
+    Boolean((gitStatus.ok && !gitStatus.clean) ||
+      (state.validation && state.validation.inputs_hash !== validationInputsHash()) ||
       (verify.ok &&
       verify.parsed &&
       verify.parsed.status === 'PASS' &&
@@ -3404,6 +3531,7 @@ async function handleAuditV12(args) {
       fileContains(RUN_SCRIPT, 'signed-payload-status') &&
       fileContains(RUN_SCRIPT, 'operator-signer-preflight') &&
       fileContains(RUN_SCRIPT, 'recover-status') &&
+      fileContains(RUN_SCRIPT, 'council-status') &&
       fileContains(RUN_SCRIPT, 'BHA_PRIVATE_KEY_PATH') &&
       fileContains(RUN_SCRIPT, 'private_key_material_read: false') &&
       fileContains(RUN_SCRIPT, 'single_line_commands') &&
@@ -3426,6 +3554,7 @@ async function handleAuditV12(args) {
       operator_signer_preflight_validation_command_present: Boolean(operatorSignerPreflightCommand),
       recover_status_validation_command_present: Boolean(recoverStatusCommand),
       capability_framework_status_validation_command_present: Boolean(capabilityFrameworkCommand),
+      council_status_validation_command_present: Boolean(councilStatusCommand),
       inspect_recorded_status: recordedValidationCommand(state, 'inspect_readonly') ? recordedValidationCommand(state, 'inspect_readonly').status : 'MISSING'
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', '.bha/state.json']
@@ -3452,6 +3581,32 @@ async function handleAuditV12(args) {
       test_requirements: capabilityFramework().test_requirements
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
+  ));
+  checks.push(auditCheck(
+    'council_status_validation_wired',
+    'V2+ council runtime status is read-only, local-only, side-effect-free, policy-allowed, and wired into validation.',
+    Boolean(councilStatusCommand &&
+      councilStatusCommand.expect &&
+      councilStatusCommand.expect.exit_code === 0 &&
+      councilStatusCommand.expect.read_only === true &&
+      councilStatusCommand.expect.recorded === false &&
+      policyAllowsArgv(policy, councilStatusCommand.argv) &&
+      fs.existsSync(COUNCIL_RUNTIME_PATH) &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'Council Runtime') &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'not proof') &&
+      councilRuntimeStatus().external_side_effects_allowed === false &&
+      councilRuntimeStatus().automated_agent_spawn_allowed === false &&
+      councilRuntimeStatus().provider_calls_allowed === false &&
+      councilRuntimeStatus().memory_writes_allowed === false),
+    {
+      validation_command_present: Boolean(councilStatusCommand),
+      policy_allowed: councilStatusCommand ? policyAllowsArgv(policy, councilStatusCommand.argv) : false,
+      runtime_state: councilRuntimeStatus().runtime_state,
+      automated_agent_spawn_allowed: councilRuntimeStatus().automated_agent_spawn_allowed,
+      provider_calls_allowed: councilRuntimeStatus().provider_calls_allowed,
+      memory_writes_allowed: councilRuntimeStatus().memory_writes_allowed
+    },
+    ['BHA_V2_COUNCIL_RUNTIME.md', '.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
   ));
   checks.push(auditCheck(
     'hook_status_validation_local_setup_not_proof',
@@ -3612,6 +3767,7 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
         'BHA_DESIGN.md',
         'BHA_V1_STABILITY.md',
         'BHA_V2_CAPABILITY_FRAMEWORK.md',
+        'BHA_V2_COUNCIL_RUNTIME.md',
         'AGENTS.md',
         '.gitignore',
         '.bha/mission.yaml',
@@ -3743,6 +3899,7 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
   writeTextFile(path.join(fixtureRoot, 'BHA_DESIGN.md'), '# Regression Fixture Design\n\nLocal deterministic evidence fixture.\n');
   writeTextFile(path.join(fixtureRoot, 'BHA_V1_STABILITY.md'), '# Regression Fixture Stability\n\nProof comes from repository reality, ledger/state evidence, verifier, policy/mission hash, local-only capability evidence, and git reality.\n');
   writeTextFile(path.join(fixtureRoot, 'BHA_V2_CAPABILITY_FRAMEWORK.md'), '# Regression Fixture Capability Framework\n\nDefault deny capability framework preview. git_push is the only enabled production capability.\n');
+  writeTextFile(path.join(fixtureRoot, 'BHA_V2_COUNCIL_RUNTIME.md'), '# Regression Fixture Council Runtime\n\nCouncil Runtime role output is coordination context and not proof.\n');
   writeTextFile(path.join(fixtureRoot, '.bha', 'roadmap.md'), '# Regression Fixture Roadmap\n\nKeep proof local and deterministic.\n');
   writeTextFile(path.join(fixtureRoot, '.bha', 'rollback.md'), regressionRollbackText());
   writeTextFile(path.join(fixtureRoot, '.githooks', 'pre-push'), '#!/bin/sh\nnode scripts/bha-run.js prepush-check --internal-git-hook "$@"\n');
@@ -3993,6 +4150,23 @@ async function handleRegressionSelftest(args) {
     bare_remote: gitBareRemote.exit_code,
     remote_set_url: gitRemoteLocal.exit_code
   }));
+  const fixtureLedgerLock = path.join(fixtureRoot, '.bha', 'local', 'ledger.lock');
+  writeTextFile(fixtureLedgerLock, stable({ held_by: 'regression-selftest' }) + '\n');
+  const checkpointWhileLocked = await runFixtureBha(fixtureRoot, ['checkpoint', '--format', 'json']);
+  try {
+    fs.unlinkSync(fixtureLedgerLock);
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+  checks.push(regressionCheck('ledger_writer_lock_blocks_parallel_append', checkpointWhileLocked.exit_code === 1 &&
+    ((checkpointWhileLocked.parsed &&
+    String(checkpointWhileLocked.parsed.error || '').includes('ledger lock')) ||
+    String(checkpointWhileLocked.stderr || '').includes('ledger lock')), {
+    exit_code: checkpointWhileLocked.exit_code,
+    error: checkpointWhileLocked.parsed ? checkpointWhileLocked.parsed.error : truncate(checkpointWhileLocked.stderr)
+  }));
 
   const trackedBeforeHookStatus = await regressionGitStatus(fixtureRoot);
   const hookStatusUninstalled = await runFixtureBha(fixtureRoot, ['hook-status', '--format', 'json']);
@@ -4227,6 +4401,26 @@ async function handleRegressionSelftest(args) {
     default_decision: frameworkStatus.parsed ? frameworkStatus.parsed.default_decision : 'NO_JSON',
     production_capability_types: frameworkStatus.parsed ? frameworkStatus.parsed.production_capability_types : 'NO_JSON',
     test_requirements: frameworkStatus.parsed ? frameworkStatus.parsed.test_requirements : 'NO_JSON'
+  }));
+  const councilStatus = await runFixtureBha(fixtureRoot, ['council-status', '--format', 'json']);
+  checks.push(regressionCheck('council_status_validation_wired', Boolean(rootValidation &&
+    rootValidation.required_commands &&
+    validationCommandById(rootValidation, 'council_status_readonly') &&
+    councilStatus.exit_code === 0 &&
+    councilStatus.parsed &&
+    councilStatus.parsed.status === 'COUNCIL_RUNTIME_STATUS' &&
+    councilStatus.parsed.recorded === false &&
+    councilStatus.parsed.read_only === true &&
+    councilStatus.parsed.external_side_effects_allowed === false &&
+    councilStatus.parsed.automated_agent_spawn_allowed === false &&
+    councilStatus.parsed.provider_calls_allowed === false &&
+    councilStatus.parsed.memory_writes_allowed === false &&
+    String(councilStatus.parsed.proof_boundary || '').includes('not proof')), {
+    validation_command_present: Boolean(validationCommandById(rootValidation, 'council_status_readonly')),
+    runtime_state: councilStatus.parsed ? councilStatus.parsed.runtime_state : 'NO_JSON',
+    automated_agent_spawn_allowed: councilStatus.parsed ? councilStatus.parsed.automated_agent_spawn_allowed : 'NO_JSON',
+    provider_calls_allowed: councilStatus.parsed ? councilStatus.parsed.provider_calls_allowed : 'NO_JSON',
+    memory_writes_allowed: councilStatus.parsed ? councilStatus.parsed.memory_writes_allowed : 'NO_JSON'
   }));
   const unknownCapabilityPayload = pushPrepPayload ? Object.assign({}, pushPrepPayload, {
     id: `unknown-${crypto.randomUUID()}`,
@@ -5602,6 +5796,8 @@ async function main() {
       await handleGateStatus(args);
     } else if (command === 'capability-framework-status') {
       await handleCapabilityFrameworkStatus(args);
+    } else if (command === 'council-status') {
+      await handleCouncilStatus(args);
     } else if (command === 'audit-v1-stable') {
       await handleAuditV1Stable(args);
     } else if (command === 'audit-v12') {

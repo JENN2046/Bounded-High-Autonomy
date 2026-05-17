@@ -177,6 +177,39 @@
       }
     },
     {
+      "id": "council_status_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "council-status",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "COUNCIL_RUNTIME_STATUS",
+        "recorded": false,
+        "read_only": true,
+        "json": {
+          "runtime_state": "PREVIEW_CONTRACT_ONLY",
+          "default_decision": "NO_AUTOMATED_DELEGATION",
+          "external_side_effects_allowed": false,
+          "automated_agent_spawn_allowed": false,
+          "provider_calls_allowed": false,
+          "memory_writes_allowed": false
+        },
+        "has_keys": [
+          "roles",
+          "loop",
+          "stop_conditions",
+          "proof_boundary",
+          "validation_contract",
+          "implementation_boundary"
+        ]
+      }
+    },
+    {
       "id": "closeout_preview_readonly",
       "argv": [
         "node",
