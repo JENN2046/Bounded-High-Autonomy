@@ -23,6 +23,8 @@ V1 is the smallest local-first BHA kernel that should remain reliable, repeatabl
 
 BHA must never read, print, log, store, or infer private key material. The signer is controlled by the operator. BHA handles only unsigned and signed payload files.
 
+Push guidance is conditional. Status and handoff commands may describe how to prepare local git_push capability files, but they must keep `required_now=false` unless the operator chooses a real git push.
+
 ## Proof Sources
 
 Trusted proof comes from:

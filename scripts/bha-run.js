@@ -237,6 +237,9 @@ function appendLedger(type, payload, mutateState) {
     const policy = loadPolicy();
     const state = loadState();
     const head = ledgerHead();
+    const resolvedPayload = typeof payload === 'function'
+      ? payload({ mission, policy, state, head })
+      : payload;
     const event = {
       schema: 'bha.ledger.event.v1',
       run_id: state.run_id || mission.run_id,
@@ -248,7 +251,7 @@ function appendLedger(type, payload, mutateState) {
       type,
       actor: 'bha-run',
       prev_hash: head.hash || 'GENESIS',
-      payload
+      payload: resolvedPayload
     };
     event.event_hash = eventHash(event);
     fs.appendFileSync(LEDGER_PATH, stable(event) + '\n', 'utf8');
@@ -3257,6 +3260,9 @@ async function handleAuditV1Stable(args) {
   const denyCommands = ((policy.action_rules || {}).deny_commands || {});
   const auditArgv = ['node', 'scripts/bha-run.js', 'audit-v1-stable', '--format', 'json'];
   const validationCommand = validationCommandById(validation, 'v1_stable_audit_readonly');
+  const gateStatusCommand = validationCommandById(validation, 'gate_status_readonly');
+  const recoverStatusCommand = validationCommandById(validation, 'recover_status_readonly');
+  const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const requiredDenied = [
     'provider_call',
     'memory_write',
@@ -3369,6 +3375,39 @@ async function handleAuditV1Stable(args) {
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
   ));
+  checks.push(auditCheck(
+    'conditional_push_guidance_freeze_wired',
+    'V1 push guidance is machine-readable and conditional: BHA may prepare local capability files, but push capability is required only when the operator chooses a real git push.',
+    Boolean(gateStatusCommand &&
+      recoverStatusCommand &&
+      regressionCommand &&
+      gateStatusCommand.expect &&
+      Array.isArray(gateStatusCommand.expect.has_keys) &&
+      gateStatusCommand.expect.has_keys.includes('next_action_required_now') &&
+      gateStatusCommand.expect.has_keys.includes('next_action_condition') &&
+      gateStatusCommand.expect.has_keys.includes('next_action_scope') &&
+      gateStatusCommand.expect.has_keys.includes('push_requirement') &&
+      gateStatusCommand.expect.has_keys.includes('operator_handoff') &&
+      recoverStatusCommand.expect &&
+      Array.isArray(recoverStatusCommand.expect.has_keys) &&
+      recoverStatusCommand.expect.has_keys.includes('git_push_recovery') &&
+      fileContains(RUN_SCRIPT, 'push_requirement: {') &&
+      fileContains(RUN_SCRIPT, 'required_now: false') &&
+      fileContains(RUN_SCRIPT, 'operator_chosen_git_push') &&
+      fileContains(RUN_SCRIPT, 'capability_flow_required_now: false') &&
+      fileContains(RUN_SCRIPT, 'capability_flow_condition') &&
+      fileContains(RUN_SCRIPT, 'Only required before an operator-chosen real git push.') &&
+      fileContains(RUN_SCRIPT, 'gate_status_next_action_context_is_conditional') &&
+      fileContains(RUN_SCRIPT, 'operator_handoff_capability_flow_is_conditional') &&
+      fileContains(RUN_SCRIPT, 'fresh_clone_recover_status_explains_missing_local_capability') &&
+      fileContains(STABILITY_PATH, 'Push guidance is conditional')),
+    {
+      gate_status_validation_command_present: Boolean(gateStatusCommand),
+      recover_status_validation_command_present: Boolean(recoverStatusCommand),
+      regression_selftest_validation_command_present: Boolean(regressionCommand)
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
+  ));
 
   const failed = checks.filter((check) => check.status !== 'PASS');
   console.log(JSON.stringify({
@@ -3429,6 +3468,7 @@ async function handleAuditV12(args) {
   const regressionIds = [
     'validation_input_hash_lf_crlf_stable',
     'ledger_writer_lock_blocks_parallel_append',
+    'checkpoint_closeout_ledger_head_race_fail_closed',
     'missing_local_consumed_capability_fail_closed',
     'git_push_issue_consume_write_only_bha_local',
     'issue_consume_leave_tracked_worktree_unchanged',
@@ -4205,6 +4245,14 @@ async function handleRegressionSelftest(args) {
     String(checkpointWhileLocked.stderr || '').includes('ledger lock')), {
     exit_code: checkpointWhileLocked.exit_code,
     error: checkpointWhileLocked.parsed ? checkpointWhileLocked.parsed.error : truncate(checkpointWhileLocked.stderr)
+  }));
+  checks.push(regressionCheck('checkpoint_closeout_ledger_head_race_fail_closed',
+    fileContains(RUN_SCRIPT, 'CHECKPOINT_LEDGER_HEAD_CHANGED_BEFORE_APPEND') &&
+    fileContains(RUN_SCRIPT, 'CLOSEOUT_LEDGER_HEAD_CHANGED_BEFORE_APPEND') &&
+    fileContains(RUN_SCRIPT, "typeof payload === 'function'"), {
+    checkpoint_guard: fileContains(RUN_SCRIPT, 'CHECKPOINT_LEDGER_HEAD_CHANGED_BEFORE_APPEND'),
+    closeout_guard: fileContains(RUN_SCRIPT, 'CLOSEOUT_LEDGER_HEAD_CHANGED_BEFORE_APPEND'),
+    locked_payload_factory: fileContains(RUN_SCRIPT, "typeof payload === 'function'")
   }));
 
   const trackedBeforeHookStatus = await regressionGitStatus(fixtureRoot);
@@ -5456,6 +5504,7 @@ async function handleCheckpoint(args) {
   const policy = loadPolicy();
   const state = loadState();
   const head = ledgerHead();
+  const expectedLedgerHeadHash = head.hash || 'GENESIS';
   const branch = await currentBranch();
   const current = await currentHead();
   const gitStatus = await gitStatusShort();
@@ -5482,7 +5531,7 @@ async function handleCheckpoint(args) {
     workspace: rel(ROOT) || '.',
     branch: branch || 'UNKNOWN',
     head: current || 'UNKNOWN',
-    ledger_head_hash: head.hash || 'GENESIS',
+    ledger_head_hash: expectedLedgerHeadHash,
     policy_hash: policyHash(policy),
     mission_hash: missionHash(mission),
     completed: validationCommands.filter((command) => command.status === 'PASS').map((command) => command.id),
@@ -5522,25 +5571,49 @@ async function handleCheckpoint(args) {
     },
     stop_conditions: mission.hard_stop_conditions || [],
     checkpoint_binding: {
-      verified_ledger_head_hash: head.hash || 'GENESIS',
+      verified_ledger_head_hash: expectedLedgerHeadHash,
       checkpoint_event_hash: 'SELF_EVENT_HASH',
       final_ledger_head_hash: 'SELF_EVENT_HASH'
     }
   };
-  const event = appendLedger('checkpoint_written', checkpoint, (nextState, checkpointEvent) => {
-    nextState.last_checkpoint = {
-      checkpoint_id: checkpoint.checkpoint_id,
-      created_at: checkpointEvent.ts,
-      ledger_event_hash: checkpointEvent.event_hash,
-      verified_ledger_head_hash: checkpoint.ledger_head_hash,
-      checkpoint_event_hash: checkpointEvent.event_hash,
-      final_ledger_head_hash: checkpointEvent.event_hash,
-      path: rel(CHECKPOINT_PATH),
-      policy_hash: checkpointEvent.policy_hash,
-      mission_hash: checkpointEvent.mission_hash
-    };
-    nextState.last_checkpoint_id = checkpoint.checkpoint_id;
-  });
+  let event;
+  try {
+    event = appendLedger('checkpoint_written', ({ head: lockedHead }) => {
+      const lockedHeadHash = lockedHead.hash || 'GENESIS';
+      if (lockedHeadHash !== expectedLedgerHeadHash) {
+        throw new Error('CHECKPOINT_LEDGER_HEAD_CHANGED_BEFORE_APPEND');
+      }
+      checkpoint.ledger_head_hash = lockedHeadHash;
+      checkpoint.checkpoint_binding.verified_ledger_head_hash = lockedHeadHash;
+      return checkpoint;
+    }, (nextState, checkpointEvent) => {
+      nextState.last_checkpoint = {
+        checkpoint_id: checkpoint.checkpoint_id,
+        created_at: checkpointEvent.ts,
+        ledger_event_hash: checkpointEvent.event_hash,
+        verified_ledger_head_hash: checkpoint.ledger_head_hash,
+        checkpoint_event_hash: checkpointEvent.event_hash,
+        final_ledger_head_hash: checkpointEvent.event_hash,
+        path: rel(CHECKPOINT_PATH),
+        policy_hash: checkpointEvent.policy_hash,
+        mission_hash: checkpointEvent.mission_hash
+      };
+      nextState.last_checkpoint_id = checkpoint.checkpoint_id;
+    });
+  } catch (error) {
+    if (!error || error.message !== 'CHECKPOINT_LEDGER_HEAD_CHANGED_BEFORE_APPEND') {
+      throw error;
+    }
+    console.log(JSON.stringify({
+      ok: false,
+      status: 'CHECKPOINT_BLOCKED',
+      recorded: false,
+      read_only: false,
+      reason: error && error.message ? error.message : 'CHECKPOINT_RECORD_FAILED'
+    }));
+    process.exitCode = 3;
+    return;
+  }
   checkpoint.ledger_event_hash = event.event_hash;
   checkpoint.created_at = event.ts;
   checkpoint.checkpoint_binding.checkpoint_event_hash = event.event_hash;
@@ -5798,19 +5871,41 @@ async function handleCloseout(args) {
       fact_groups: report.fact_groups,
       fresh_clone_recovery: report.fresh_clone_recovery
     };
-    const event = appendLedger('closeout_completed', closeoutPayload, (nextState, closeoutEvent) => {
-      nextState.closeout = {
-        status: 'PASS',
-        completed_at: closeoutEvent.ts,
-        ledger_event_hash: closeoutEvent.event_hash,
-        verified_ledger_head_hash: verifiedLedgerHeadHash,
-        closeout_event_hash: closeoutEvent.event_hash,
-        final_ledger_head_hash: closeoutEvent.event_hash,
-        validation_ledger_event_hash: closeoutPayload.validation_ledger_event_hash,
-        policy_hash: closeoutEvent.policy_hash,
-        mission_hash: closeoutEvent.mission_hash
-      };
-    });
+    let event;
+    try {
+      event = appendLedger('closeout_completed', ({ head: lockedHead }) => {
+        const lockedHeadHash = lockedHead.hash || 'GENESIS';
+        if (lockedHeadHash !== finalLedgerHeadHash || lockedHeadHash !== verifiedLedgerHeadHash) {
+          throw new Error('CLOSEOUT_LEDGER_HEAD_CHANGED_BEFORE_APPEND');
+        }
+        closeoutPayload.closeout_binding.verified_ledger_head_hash = lockedHeadHash;
+        return closeoutPayload;
+      }, (nextState, closeoutEvent) => {
+        nextState.closeout = {
+          status: 'PASS',
+          completed_at: closeoutEvent.ts,
+          ledger_event_hash: closeoutEvent.event_hash,
+          verified_ledger_head_hash: closeoutPayload.closeout_binding.verified_ledger_head_hash,
+          closeout_event_hash: closeoutEvent.event_hash,
+          final_ledger_head_hash: closeoutEvent.event_hash,
+          validation_ledger_event_hash: closeoutPayload.validation_ledger_event_hash,
+          policy_hash: closeoutEvent.policy_hash,
+          mission_hash: closeoutEvent.mission_hash
+        };
+      });
+    } catch (error) {
+      if (!error || error.message !== 'CLOSEOUT_LEDGER_HEAD_CHANGED_BEFORE_APPEND') {
+        throw error;
+      }
+      report.ok = false;
+      report.status = 'CLOSEOUT_BLOCKED';
+      report.closeout_status = 'BLOCKED';
+      report.blockers = ['LEDGER_HEAD_CHANGED_BEFORE_APPEND'];
+      report.reason = error && error.message ? error.message : 'CLOSEOUT_RECORD_FAILED';
+      console.log(JSON.stringify(report));
+      process.exitCode = 3;
+      return;
+    }
 
     report.status = 'CLOSEOUT_RECORDED';
     report.recorded = true;
