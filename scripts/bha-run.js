@@ -2999,6 +2999,7 @@ async function recoverStatus(remote, branch) {
   const unsignedPayload = capabilityFileSummary('.bha/local/push-payload.json', targetRemote, targetBranch, head, false, currentContext);
   const signedPayload = await signedCapabilityFileSummary('.bha/local/signed-push-capability.json', targetRemote, targetBranch, head, currentContext);
   const payloadStatus = localPayloadStatus(unsignedPayload, signedPayload);
+  const recoveryCommands = recoveryGitPushNextCommands(payloadStatus, targetRemote, targetBranch);
   return {
     ok: verifierPass,
     status: verifierPass ? 'RECOVER_STATUS_READY' : 'RECOVER_STATUS_BLOCKED',
@@ -3042,16 +3043,30 @@ async function recoverStatus(remote, branch) {
       current_capability_status: hasUsableCapability.ok === true ? 'READY' : 'MISSING_OR_NOT_USABLE',
       reason: hasUsableCapability.ok === true ? null : hasUsableCapability.reason,
       local_only: true,
-      next_commands: [
-        `node scripts/bha-run.js push-prep --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --expires-minutes 20 --key-id owner-main-pkcs8 --format json --write-handoff`,
-        `node scripts/bha-run.js operator-signer-preflight --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --format json`,
-        'operator signs .bha/local/push-payload.json outside BHA and writes .bha/local/signed-push-capability.json',
-        `node scripts/bha-run.js signed-payload-status --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --format json`,
-        `node scripts/bha-run.js gate-status --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --format json`
-      ]
+      next_commands: recoveryCommands
     },
     proof_boundary: '.bha/local/ is local-only capability evidence and is not required for tracked verifier trust; fresh clones must regenerate local git_push capability evidence before pushing.'
   };
+}
+
+function recoveryGitPushNextCommands(payloadStatus, targetRemote, targetBranch) {
+  const remoteArg = powerShellSingleQuote(targetRemote || 'origin');
+  const branchArg = powerShellSingleQuote(targetBranch || 'master');
+  const currentUnsignedReady = payloadStatus &&
+    payloadStatus.unsigned_matches_current_context === true &&
+    (payloadStatus.next_payload_action === 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA' ||
+      payloadStatus.next_payload_action === 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA_REPLACING_STALE_SIGNED_PAYLOAD');
+  return [
+    ...(currentUnsignedReady ? [] : [
+      `node scripts/bha-run.js push-prep --remote ${remoteArg} --branch ${branchArg} --expires-minutes 20 --key-id owner-main-pkcs8 --format json --write-handoff`
+    ]),
+    `node scripts/bha-run.js operator-signer-preflight --remote ${remoteArg} --branch ${branchArg} --format json`,
+    currentUnsignedReady
+      ? 'operator signs existing .bha/local/push-payload.json outside BHA and writes .bha/local/signed-push-capability.json'
+      : 'operator signs .bha/local/push-payload.json outside BHA and writes .bha/local/signed-push-capability.json',
+    `node scripts/bha-run.js signed-payload-status --remote ${remoteArg} --branch ${branchArg} --format json`,
+    `node scripts/bha-run.js gate-status --remote ${remoteArg} --branch ${branchArg} --format json`
+  ];
 }
 
 async function handleRecoverStatus(args) {
@@ -3657,6 +3672,7 @@ async function handleAuditV1Stable(args) {
     'push_prep_write_handoff_local_only',
     'push_prep_rejects_local_symlink_escape',
     'gate_status_uses_existing_current_unsigned_payload_before_signing',
+    'recover_status_uses_existing_current_unsigned_payload_before_signing',
     'gate_status_copyable_commands_quote_arguments',
     'operator_handoff_capability_flow_is_conditional',
     'gate_status_next_action_context_is_conditional'
@@ -3934,14 +3950,15 @@ async function handleAuditV1Stable(args) {
       fileContains(RUN_SCRIPT, 'Only required before an operator-chosen real git push.') &&
       fileContains(STABILITY_PATH, '`json_paths` expectations') &&
       fileContains(STABILITY_PATH, 'conditional push guidance') &&
-      fileContains(STABILITY_PATH, 'sign that existing `.bha/local/push-payload.json`') &&
+      fileContains(STABILITY_PATH, 'gate and recovery handoff should tell the operator to sign that existing `.bha/local/push-payload.json`') &&
       fileContains(STABILITY_PATH, 'local-only') &&
       fileContains(RUN_SCRIPT, 'gate_status_next_action_context_is_conditional') &&
       fileContains(RUN_SCRIPT, 'operator_handoff_capability_flow_is_conditional') &&
       fileContains(RUN_SCRIPT, 'gate_status_uses_existing_current_unsigned_payload_before_signing') &&
+      fileContains(RUN_SCRIPT, 'recover_status_uses_existing_current_unsigned_payload_before_signing') &&
       fileContains(RUN_SCRIPT, 'local_payload_recovery') &&
       fileContains(RUN_SCRIPT, 'fresh_clone_recover_status_explains_missing_local_capability') &&
-      fileContains(ROADMAP_PATH, 'sign that existing unsigned payload') &&
+      fileContains(ROADMAP_PATH, '`gate-status` and `recover-status` tell the operator to sign that existing unsigned payload') &&
       fileContains(STABILITY_PATH, 'Push guidance is conditional')),
     {
       gate_status_validation_command_present: Boolean(gateStatusCommand),
@@ -5518,6 +5535,25 @@ async function handleRegressionSelftest(args) {
     next_payload_action: currentUnsignedStatus ? currentUnsignedStatus.next_payload_action : 'NO_JSON',
     top_first_command: currentUnsignedTopCommands[0] || 'NO_COMMAND',
     handoff_first_command: currentUnsignedHandoffCommands[0] || 'NO_COMMAND'
+  }));
+  const currentUnsignedRecoverStatus = await runFixtureBha(fixtureRoot, ['recover-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  const currentUnsignedRecoverCommands = currentUnsignedRecoverStatus.parsed &&
+    currentUnsignedRecoverStatus.parsed.git_push_recovery &&
+    Array.isArray(currentUnsignedRecoverStatus.parsed.git_push_recovery.next_commands)
+    ? currentUnsignedRecoverStatus.parsed.git_push_recovery.next_commands
+    : [];
+  checks.push(regressionCheck('recover_status_uses_existing_current_unsigned_payload_before_signing', currentUnsignedRecoverStatus.exit_code === 0 &&
+    currentUnsignedRecoverStatus.parsed &&
+    currentUnsignedRecoverStatus.parsed.local_payload_recovery &&
+    currentUnsignedRecoverStatus.parsed.local_payload_recovery.recovery_action === 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA' &&
+    currentUnsignedRecoverCommands.length > 0 &&
+    !String(currentUnsignedRecoverCommands[0]).includes('push-prep') &&
+    currentUnsignedRecoverCommands.some((commandText) => String(commandText).includes('operator-signer-preflight')) &&
+    currentUnsignedRecoverCommands.some((commandText) => String(commandText).includes('operator signs existing .bha/local/push-payload.json')), {
+    recovery_action: currentUnsignedRecoverStatus.parsed && currentUnsignedRecoverStatus.parsed.local_payload_recovery
+      ? currentUnsignedRecoverStatus.parsed.local_payload_recovery.recovery_action
+      : 'NO_JSON',
+    first_command: currentUnsignedRecoverCommands[0] || 'NO_COMMAND'
   }));
   const outsideLocalDir = path.join(fixtureRoot, '..', `outside-local-escape-${crypto.randomUUID()}`);
   const localEscapeLink = path.join(fixtureRoot, '.bha', 'local', 'escape-link');
