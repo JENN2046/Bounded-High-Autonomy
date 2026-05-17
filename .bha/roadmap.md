@@ -138,16 +138,15 @@ Stage transition rule:
 
 ## Next Stage Stop-Gate Queue
 
-Claim status: proposed next-stage execution order. The queue is blocked by current repository reality until dirty tracked files are validated, checkpointed, closeout-recorded, and committed or otherwise resolved.
+Claim status: proposed next-stage execution order. Current repository state is intentionally not embedded here because git `HEAD`, worktree cleanliness, and verifier status change after commits and evidence repair.
 
 Current state check:
 
-- Verified: the local branch is `master`.
-- Verified: `HEAD` is `18dfa2a` and `origin/master` is `db27bfc` in the local commit graph.
-- Inferred: the local branch is two commits ahead of `origin/master`.
-- Verified: `AGENTS.md` is currently dirty.
-- Verified: `node scripts/bha-verify.js` currently fails because validation inputs changed and `AGENTS.md` is an unverified worktree change.
-- Proposed next safe action: finish the local documentation update, run validation, record checkpoint and closeout if validation passes, then decide whether to commit the tracked evidence repair.
+- Verified facts must come from the latest local commands, not this roadmap prose.
+- Required commands: `git status --short --branch`, `git log --oneline --decorate -n 8`, `node scripts/bha-verify.js`, `node scripts/bha-run.js stable-exit-status --remote 'origin' --branch 'master' --format json`, and `node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json`.
+- If tracked files are dirty, treat them as unverified until validation, checkpoint, closeout, and verifier evidence are refreshed.
+- If the verifier fails, use the verifier issue codes as the repair target before moving to the next stop gate.
+- If the worktree is clean and stable-exit passes, continue to the next planning gate without treating this roadmap as proof.
 
 Stop-gate order:
 

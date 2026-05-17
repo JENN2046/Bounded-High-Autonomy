@@ -1016,6 +1016,39 @@ async function handleExec(args) {
     process.exitCode = 2;
     return;
   }
+  if (!statusBefore.ok) {
+    appendLedger('command_execution', {
+      command: scrubArgv(argv),
+      spawned: false,
+      shell: false,
+      exit_code: null,
+      signal: null,
+      error: statusBefore.error || 'git status before exec failed',
+      file_changes: [],
+      git_status: {
+        before: {
+          ok: statusBefore.ok,
+          exit_code: statusBefore.exit_code,
+          error: statusBefore.error || null,
+          stderr: truncate(statusBefore.stderr),
+          files: statusBefore.files
+        },
+        after: null
+      },
+      path_allowlist_enforced: false,
+      disallowed_file_changes: [],
+      status: 'HALT_GIT_STATUS_BEFORE_UNAVAILABLE'
+    });
+    console.log(JSON.stringify({
+      ok: false,
+      status: 'HALT_GIT_STATUS_BEFORE_UNAVAILABLE',
+      allowed: false,
+      spawned: false,
+      reason: 'git status before exec failed'
+    }));
+    process.exitCode = 5;
+    return;
+  }
   const result = await runCommand(argv, { inherit: true });
   const statusAfter = await gitStatusPorcelainV2();
   const fileChanges = statusBefore.ok && statusAfter.ok ? fileChangesAfterExec(statusBefore, statusAfter, policy) : [];
@@ -3369,7 +3402,7 @@ function consumeCapabilityRecord(id, forAction, remote, branch, head, localOnly)
     const requested = issue.payload.requested || {};
     const existingConsumed = validCapabilityConsumes(events, id);
     const existingSessions = validCapabilitySessions(events, id);
-    const validation = validateCapabilityRequest(requested, issue.payload.capability_type, state, events, { checkLedgerHead: false });
+    const validation = validateCapabilityRequest(requested, issue.payload.capability_type, state, events);
     if (issue.payload.valid !== true || validation.valid !== true) {
       reason = validation.reason || issue.payload.reason || 'CAPABILITY_INVALID';
     } else if (capabilityRevoked(events, id)) {
@@ -3546,7 +3579,7 @@ function matchingConsumedCapabilityCore(remote, branch, head, reserve) {
     if (!issue) {
       return { ok: false, reason: 'CAPABILITY_TICKET_MISSING', capability_id: id };
     }
-    const validation = validateCapabilityRequest(requested, issue.payload.capability_type, state, events, { checkLedgerHead: false });
+    const validation = validateCapabilityRequest(requested, issue.payload.capability_type, state, events);
     if (validation.valid !== true) {
       return { ok: false, reason: validation.reason, capability_id: id };
     }
@@ -8328,12 +8361,40 @@ async function handleRegressionSelftest(args) {
     descendant_file_allowed: fileAllowedByPolicy('scripts/bha-run.js/nested', policyForPathCheck),
     protected_descendant_detected: fileProtectedByPolicy('.git/config', policyForPathCheck)
   }));
+  const disabledLedgerHeadNeedle = 'checkLedgerHead' + ': false';
   checks.push(regressionCheck('local_consume_read_validate_append_under_capability_lock',
     fileContains(RUN_SCRIPT, "withCapabilityLock(() => consumeCapabilityRecord") &&
     fileContains(RUN_SCRIPT, "appendLocalCapabilityEventUnlocked('capability_consume'") &&
-    fileContains(RUN_SCRIPT, 'const existingConsumed = validCapabilityConsumes(events, id)'), {
+    fileContains(RUN_SCRIPT, 'const existingConsumed = validCapabilityConsumes(events, id)') &&
+    !fileContains(RUN_SCRIPT, disabledLedgerHeadNeedle), {
     locked_consume_path: fileContains(RUN_SCRIPT, "withCapabilityLock(() => consumeCapabilityRecord"),
-    unlocked_append_inside_record: fileContains(RUN_SCRIPT, "appendLocalCapabilityEventUnlocked('capability_consume'")
+    unlocked_append_inside_record: fileContains(RUN_SCRIPT, "appendLocalCapabilityEventUnlocked('capability_consume'"),
+    ledger_head_check_not_disabled: !fileContains(RUN_SCRIPT, disabledLedgerHeadNeedle)
+  }));
+  checks.push(regressionCheck('git_push_capability_requires_current_ledger_head',
+    fileContains(RUN_SCRIPT, 'CAPABILITY_LEDGER_HEAD_MISMATCH') &&
+    fileContains(RUN_SCRIPT, 'validateCapabilityRequest(requested, issue.payload.capability_type, state, events)') &&
+    !fileContains(RUN_SCRIPT, disabledLedgerHeadNeedle), {
+    mismatch_reason_present: fileContains(RUN_SCRIPT, 'CAPABILITY_LEDGER_HEAD_MISMATCH'),
+    consume_validation_uses_default_ledger_head_check: fileContains(RUN_SCRIPT, 'validateCapabilityRequest(requested, issue.payload.capability_type, state, events)'),
+    ledger_head_check_not_disabled: !fileContains(RUN_SCRIPT, disabledLedgerHeadNeedle)
+  }));
+  checks.push(regressionCheck('exec_fails_closed_without_initial_git_status',
+    fileContains(RUN_SCRIPT, 'HALT_GIT_STATUS_BEFORE_UNAVAILABLE') &&
+    fileContains(RUN_SCRIPT, 'path_allowlist_enforced: false') &&
+    fileContains(RUN_SCRIPT, "reason: 'git status before exec failed'") &&
+    fileContains(RUN_SCRIPT, 'process.exitCode = 5'), {
+    halt_status_present: fileContains(RUN_SCRIPT, 'HALT_GIT_STATUS_BEFORE_UNAVAILABLE'),
+    no_path_allowlist_claim_without_status: fileContains(RUN_SCRIPT, 'path_allowlist_enforced: false'),
+    fail_closed_exit_code: fileContains(RUN_SCRIPT, 'process.exitCode = 5')
+  }));
+  checks.push(regressionCheck('roadmap_current_state_is_procedural_not_snapshot',
+    fileContains(ROADMAP_PATH, 'Current repository state is intentionally not embedded') &&
+    !fileContains(ROADMAP_PATH, '`HEAD` is `18dfa2a`') &&
+    !fileContains(ROADMAP_PATH, '`AGENTS.md` is currently dirty'), {
+    procedural_state_note: fileContains(ROADMAP_PATH, 'Current repository state is intentionally not embedded'),
+    stale_head_snapshot_removed: !fileContains(ROADMAP_PATH, '`HEAD` is `18dfa2a`'),
+    stale_dirty_snapshot_removed: !fileContains(ROADMAP_PATH, '`AGENTS.md` is currently dirty')
   }));
   checks.push(regressionCheck('verify_record_detects_stale_ledger_head',
     fileContains(RUN_SCRIPT, 'VERIFIER_STALE_LEDGER_HEAD') &&
