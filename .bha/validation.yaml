@@ -263,6 +263,41 @@
       }
     },
     {
+      "id": "push_prep_current_head_payload",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "push-prep",
+        "--remote",
+        "origin",
+        "--branch",
+        "master",
+        "--expires-minutes",
+        "20",
+        "--key-id",
+        "owner-main-pkcs8",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "PUSH_PREP_READY_FOR_OPERATOR_SIGNER",
+        "recorded": false,
+        "read_only": false,
+        "has_keys": [
+          "payload_path",
+          "head",
+          "head_bound",
+          "signer_boundary",
+          "local_payload_status_before",
+          "local_payload_status_after",
+          "operator_next_step",
+          "hard_boundaries"
+        ]
+      }
+    },
+    {
       "id": "verify_signed_reject_nested_envelope",
       "argv": [
         "node",

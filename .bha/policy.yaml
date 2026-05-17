@@ -246,6 +246,24 @@
       },
       {
         "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "push-prep",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--expires-minutes",
+          "20",
+          "--key-id",
+          "owner-main-pkcs8",
+          "--format",
+          "json"
+        ],
+        "reason": "local git_push unsigned payload preparation under .bha/local"
+      },
+      {
+        "command": "node",
         "args_prefix": [
           "scripts/bha-run.js",
           "verify-signed-capability",

@@ -1546,6 +1546,107 @@ async function handleMakePushPayload(args) {
   console.log(JSON.stringify(built.payload));
 }
 
+function powerShellSingleQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function postSignerPowerShellCommand(capabilityId, remote, branch, signedPath) {
+  const targetRemote = remote || 'origin';
+  const targetBranch = branch || 'master';
+  const signed = signedPath || '.bha/local/signed-push-capability.json';
+  const remoteArg = powerShellSingleQuote(targetRemote);
+  const branchArg = powerShellSingleQuote(targetBranch);
+  return [
+    `$cap = ${powerShellSingleQuote(signed)}`,
+    `$id = ${powerShellSingleQuote(capabilityId || '<capability_id from push-payload>')}`,
+    'node scripts/bha-run.js verify-signed-capability --file $cap',
+    'node scripts/bha-run.js issue-capability --file $cap',
+    `node scripts/bha-run.js consume-capability --id $id --for git_push --remote ${remoteArg} --branch ${branchArg}`,
+    `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${remoteArg}`
+  ].join('; ');
+}
+
+async function handlePushPrep(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const remote = getOption(args, '--remote');
+  const branch = getOption(args, '--branch');
+  const keyId = getOption(args, '--key-id');
+  const expiresMinutesRaw = getOption(args, '--expires-minutes');
+  const expiresMinutes = Number(expiresMinutesRaw);
+  const payloadPath = '.bha/local/push-payload.json';
+  const signedPath = '.bha/local/signed-push-capability.json';
+  const head = await currentHead();
+  const verifier = await verifierResult();
+  const contextBefore = currentPayloadContext(remote, branch, head, verifier.parsed ? verifier.parsed.ledger_head_hash : null);
+  const unsignedBefore = capabilityFileSummary(payloadPath, remote, branch, head, false, contextBefore);
+  const signedBefore = await signedCapabilityFileSummary(signedPath, remote, branch, head, contextBefore);
+  const localPayloadStatusBefore = localPayloadStatus(unsignedBefore, signedBefore);
+  const built = await buildPushPayload(remote, branch, keyId, expiresMinutes);
+  if (built.ok !== true) {
+    console.log(JSON.stringify(Object.assign({
+      status: 'BLOCKED',
+      recorded: false,
+      read_only: false,
+      local_only_write_attempted: false,
+      local_payload_status_before: localPayloadStatusBefore
+    }, built)));
+    process.exitCode = 2;
+    return;
+  }
+  let resolved;
+  try {
+    resolved = resolveLocalFile(payloadPath);
+  } catch (error) {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: error.message }));
+    process.exitCode = 2;
+    return;
+  }
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, JSON.stringify(built.payload) + '\n', 'utf8');
+  const contextAfter = currentPayloadContext(remote, branch, built.payload.head, built.payload.ledger_head_hash);
+  const unsignedAfter = capabilityFileSummary(payloadPath, remote, branch, built.payload.head, false, contextAfter);
+  const signedAfter = await signedCapabilityFileSummary(signedPath, remote, branch, built.payload.head, contextAfter);
+  console.log(JSON.stringify({
+    ok: true,
+    status: 'PUSH_PREP_READY_FOR_OPERATOR_SIGNER',
+    recorded: false,
+    read_only: false,
+    local_only: true,
+    schema: 'bha.push_prep.v1',
+    payload_path: rel(resolved),
+    signed_payload_path: signedPath,
+    capability_id: built.payload.capability_id,
+    head: built.payload.head,
+    current_head: built.current_head,
+    head_bound: built.payload.head === built.current_head,
+    ledger_head_hash: built.payload.ledger_head_hash,
+    private_key_required: false,
+    signer_boundary: {
+      operator_controls_signer: true,
+      bha_private_key_access: false,
+      bha_handles_only: ['unsigned payload file under .bha/local/', 'signed payload file under .bha/local/']
+    },
+    local_payload_status_before: localPayloadStatusBefore,
+    local_payload_status_after: localPayloadStatus(unsignedAfter, signedAfter),
+    operator_next_step: {
+      signer: `Operator signs ${payloadPath} outside BHA and writes ${signedPath}.`,
+      powershell_after_signing: postSignerPowerShellCommand(built.payload.capability_id, remote, branch, signedPath),
+      safety: 'PowerShell command is emitted as one line; do not split paths, --flags, or arguments.'
+    },
+    hard_boundaries: [
+      'BHA does not read, print, record, store, or write private key material',
+      'BHA only writes the unsigned payload file under .bha/local/ during push-prep',
+      'the signed payload file is produced by an operator-controlled signer outside BHA',
+      'push-prep does not issue, consume, reserve, push, deploy, release, tag, publish, call providers, or write memory'
+    ]
+  }));
+}
+
 async function handleGitPushCapabilityFlow(args) {
   const format = getOption(args, '--format') || 'json';
   if (format !== 'json') {
@@ -2191,8 +2292,20 @@ function readLocalJsonFileSummary(localPath) {
   }
 }
 
-function capabilityFileSummary(localPath, remote, branch, head, signed) {
+function currentPayloadContext(remote, branch, head, ledgerHeadHash) {
+  return {
+    remote,
+    branch,
+    head,
+    ledger_head_hash: ledgerHeadHash || null,
+    policy_hash: policyHash(),
+    mission_hash: missionHash()
+  };
+}
+
+function capabilityFileSummary(localPath, remote, branch, head, signed, context) {
   const file = readLocalJsonFileSummary(localPath);
+  const currentContext = context || currentPayloadContext(remote, branch, head, null);
   const payload = file.value && typeof file.value === 'object' && !Array.isArray(file.value)
     ? file.value
     : null;
@@ -2217,15 +2330,25 @@ function capabilityFileSummary(localPath, remote, branch, head, signed) {
   summary.signature_present = Boolean(payload.signature);
   summary.payload_hash_present = Boolean(payload.payload_hash);
   const contextMismatchReasons = [];
-  if (payload.remote !== remote) {
+  if (payload.remote !== currentContext.remote) {
     contextMismatchReasons.push('REMOTE_MISMATCH');
   }
-  if (payload.branch !== branch) {
+  if (payload.branch !== currentContext.branch) {
     contextMismatchReasons.push('BRANCH_MISMATCH');
   }
-  if (payload.head !== head) {
+  if (payload.head !== currentContext.head) {
     contextMismatchReasons.push('HEAD_MISMATCH');
   }
+  if (currentContext.ledger_head_hash && payload.ledger_head_hash !== currentContext.ledger_head_hash) {
+    contextMismatchReasons.push('LEDGER_HEAD_MISMATCH');
+  }
+  if (currentContext.policy_hash && payload.policy_hash !== currentContext.policy_hash) {
+    contextMismatchReasons.push('POLICY_HASH_MISMATCH');
+  }
+  if (currentContext.mission_hash && payload.mission_hash !== currentContext.mission_hash) {
+    contextMismatchReasons.push('MISSION_HASH_MISMATCH');
+  }
+  summary.current_context = currentContext;
   summary.matches_current_context = contextMismatchReasons.length === 0;
   if (contextMismatchReasons.length) {
     summary.context_mismatch_reasons = contextMismatchReasons;
@@ -2236,8 +2359,8 @@ function capabilityFileSummary(localPath, remote, branch, head, signed) {
   return summary;
 }
 
-async function signedCapabilityFileSummary(localPath, remote, branch, head) {
-  const summary = capabilityFileSummary(localPath, remote, branch, head, true);
+async function signedCapabilityFileSummary(localPath, remote, branch, head, context) {
+  const summary = capabilityFileSummary(localPath, remote, branch, head, true, context);
   if (!summary.exists || !summary.json_valid) {
     return summary;
   }
@@ -2298,7 +2421,9 @@ function localPayloadStatus(unsigned, signed) {
   const signedPresent = signed && signed.exists === true && signed.json_valid === true;
   let nextPayloadAction = 'GENERATE_UNSIGNED_PAYLOAD_FOR_CURRENT_CONTEXT';
   if (issues.length) {
-    nextPayloadAction = 'REGENERATE_UNSIGNED_PAYLOAD_AND_SIGN_CURRENT_CONTEXT';
+    nextPayloadAction = unsignedPresent && unsigned.matches_current_context === true
+      ? 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA_REPLACING_STALE_SIGNED_PAYLOAD'
+      : 'REGENERATE_UNSIGNED_PAYLOAD_AND_SIGN_CURRENT_CONTEXT';
   } else if (signedPresent && signed.verification && signed.verification.ok === true) {
     nextPayloadAction = 'USE_CURRENT_SIGNED_PAYLOAD_IF_GATE_CHECKS_PASS';
   } else if (unsignedPresent && unsigned.matches_current_context === true) {
@@ -2321,11 +2446,12 @@ function localPayloadStatus(unsigned, signed) {
   };
 }
 
-async function operatorPushHandoff(action, remote, branch, head, capability, immediateCommands) {
+async function operatorPushHandoff(action, remote, branch, head, capability, immediateCommands, context) {
   const payloadPath = '.bha/local/push-payload.json';
   const signedPath = '.bha/local/signed-push-capability.json';
-  const unsigned = capabilityFileSummary(payloadPath, remote, branch, head, false);
-  const signed = await signedCapabilityFileSummary(signedPath, remote, branch, head);
+  const currentContext = context || currentPayloadContext(remote, branch, head, null);
+  const unsigned = capabilityFileSummary(payloadPath, remote, branch, head, false, currentContext);
+  const signed = await signedCapabilityFileSummary(signedPath, remote, branch, head, currentContext);
   const payloadStatus = localPayloadStatus(unsigned, signed);
   const canUseExistingPayload = action === 'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY' &&
     unsigned.matches_current_context &&
@@ -2371,6 +2497,7 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
       cap: signedPath,
       id: capabilityId
     },
+    next_powershell_command: postSignerPowerShellCommand(capabilityId, remote, branch, signedPath),
     single_line_commands: singleLineCommands,
     capability_commands_when_unblocked: capabilityCommands,
     notes: [
@@ -2409,6 +2536,7 @@ async function gateStatus(remote, branch) {
   };
   const action = nextGateAction(checks, capability);
   const nextCommands = nextGateCommands(action, remote, branch);
+  const currentContext = currentPayloadContext(remote, branch, head, verify.parsed ? verify.parsed.ledger_head_hash : null);
   return {
     ok: Object.values(checks).every(Boolean),
     status: Object.values(checks).every(Boolean) ? 'READY' : 'BLOCKED',
@@ -2439,7 +2567,7 @@ async function gateStatus(remote, branch) {
     tracked_git_reality: gitRealityBinding,
     next_action: action,
     next_commands: nextCommands,
-    operator_handoff: await operatorPushHandoff(action, remote, branch, head, capability, nextCommands)
+    operator_handoff: await operatorPushHandoff(action, remote, branch, head, capability, nextCommands, currentContext)
   };
 }
 
@@ -2518,6 +2646,7 @@ async function handleAuditV12(args) {
   const v12Recorded = recordedValidationCommand(state, 'v12_regression_selftest');
   const inspectCommand = validationCommandById(validation, 'inspect_readonly');
   const hookCommand = validationCommandById(validation, 'hook_status_readonly');
+  const pushPrepCommand = validationCommandById(validation, 'push_prep_current_head_payload');
   const auditArgv = ['node', 'scripts/bha-run.js', 'audit-v12', '--format', 'json'];
 
   const regressionIds = [
@@ -2541,6 +2670,11 @@ async function handleAuditV12(args) {
     'hook_status_uninstalled_blocked_readonly',
     'hook_status_installed_pass_readonly',
     'hook_status_validation_allows_blocked_local_setup',
+    'push_prep_writes_current_head_bound_payload',
+    'push_prep_leaves_tracked_worktree_unchanged',
+    'push_prep_powershell_command_quotes_arguments',
+    'gate_status_flags_unsigned_payload_stale_after_local_evidence_advances',
+    'push_prep_validation_wired',
     'gate_status_missing_local_payload_requests_generation',
     'gate_status_flags_stale_local_payload_files',
     'git_push_rejects_selftest_only_signing_key',
@@ -2622,7 +2756,10 @@ async function handleAuditV12(args) {
       fileContains(RUN_SCRIPT, 'async function handleHookStatus') &&
       fileContains(RUN_SCRIPT, 'next_commands') &&
       fileContains(RUN_SCRIPT, 'operator_handoff') &&
+      fileContains(RUN_SCRIPT, 'async function handlePushPrep') &&
+      fileContains(RUN_SCRIPT, 'postSignerPowerShellCommand') &&
       fileContains(RUN_SCRIPT, 'single_line_commands') &&
+      fileContains(RUN_SCRIPT, 'next_powershell_command') &&
       fileContains(RUN_SCRIPT, 'local_payload_status') &&
       fileContains(RUN_SCRIPT, 'not_usable_local_files') &&
       fileContains(RUN_SCRIPT, 'do not split paths') &&
@@ -2634,6 +2771,7 @@ async function handleAuditV12(args) {
     {
       inspect_validation_command_present: Boolean(inspectCommand),
       hook_status_validation_command_present: Boolean(hookCommand),
+      push_prep_validation_command_present: Boolean(pushPrepCommand),
       inspect_recorded_status: recordedValidationCommand(state, 'inspect_readonly') ? recordedValidationCommand(state, 'inspect_readonly').status : 'MISSING'
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', '.bha/state.json']
@@ -2700,6 +2838,17 @@ async function handleAuditV12(args) {
       policy_allowed: policyAllowsArgv(policy, auditArgv)
     },
     ['.bha/policy.yaml', '.bha/validation.yaml']
+  ));
+  checks.push(auditCheck(
+    'push_prep_policy_and_validation_wired',
+    'push-prep writes only .bha/local/push-payload.json, is allowed by policy, and is wired into validation.',
+    Boolean(pushPrepCommand && policyAllowsArgv(policy, pushPrepCommand.argv)),
+    {
+      validation_command_present: Boolean(pushPrepCommand),
+      argv: pushPrepCommand ? pushPrepCommand.argv : null,
+      policy_allowed: pushPrepCommand ? policyAllowsArgv(policy, pushPrepCommand.argv) : false
+    },
+    ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
   ));
 
   const failed = checks.filter((check) => check.status !== 'PASS');
@@ -3200,6 +3349,7 @@ async function handleRegressionSelftest(args) {
 
   const rootValidation = readJsonStrict(VALIDATION_PATH);
   const rootHookCommand = validationCommandById(rootValidation, 'hook_status_readonly');
+  const rootPushPrepCommand = validationCommandById(rootValidation, 'push_prep_current_head_payload');
   const hookExpect = rootHookCommand && rootHookCommand.expect ? rootHookCommand.expect : {};
   checks.push(regressionCheck('hook_status_validation_allows_blocked_local_setup', Boolean(rootHookCommand &&
     hookExpect.exit_code === 0 &&
@@ -3210,6 +3360,16 @@ async function handleRegressionSelftest(args) {
     validation_command_present: Boolean(rootHookCommand),
     requires_ok: Object.prototype.hasOwnProperty.call(hookExpect, 'ok'),
     requires_status: Object.prototype.hasOwnProperty.call(hookExpect, 'status')
+  }));
+  checks.push(regressionCheck('push_prep_validation_wired', Boolean(rootPushPrepCommand &&
+    rootPushPrepCommand.expect &&
+    rootPushPrepCommand.expect.exit_code === 0 &&
+    rootPushPrepCommand.expect.ok === true &&
+    rootPushPrepCommand.expect.status === 'PUSH_PREP_READY_FOR_OPERATOR_SIGNER' &&
+    rootPushPrepCommand.expect.read_only === false &&
+    rootPushPrepCommand.expect.recorded === false), {
+    validation_command_present: Boolean(rootPushPrepCommand),
+    status: rootPushPrepCommand && rootPushPrepCommand.expect ? rootPushPrepCommand.expect.status : 'MISSING'
   }));
 
   const branchResult = await runCommand(['git', 'branch', '--show-current'], { cwd: fixtureRoot });
@@ -3228,6 +3388,91 @@ async function handleRegressionSelftest(args) {
     signed_present: missingPayloadStatus ? missingPayloadStatus.signed_present : 'NO_JSON',
     next_payload_action: missingPayloadStatus ? missingPayloadStatus.next_payload_action : 'NO_JSON'
   }));
+
+  const pushPrepTrackedBefore = await regressionGitStatus(fixtureRoot);
+  const pushPrep = await runFixtureBha(fixtureRoot, [
+    'push-prep',
+    '--remote',
+    'origin',
+    '--branch',
+    branch,
+    '--expires-minutes',
+    '20',
+    '--key-id',
+    keyId,
+    '--format',
+    'json'
+  ]);
+  const pushPrepTrackedAfter = await regressionGitStatus(fixtureRoot);
+  const pushPrepPayloadPath = path.join(fixtureRoot, '.bha', 'local', 'push-payload.json');
+  const pushPrepPayload = fs.existsSync(pushPrepPayloadPath) ? readJsonStrict(pushPrepPayloadPath) : null;
+  const pushPrepHead = await runCommand(['git', 'rev-parse', 'HEAD'], { cwd: fixtureRoot });
+  checks.push(regressionCheck('push_prep_writes_current_head_bound_payload', pushPrep.exit_code === 0 &&
+    pushPrep.parsed &&
+    pushPrep.parsed.status === 'PUSH_PREP_READY_FOR_OPERATOR_SIGNER' &&
+    pushPrep.parsed.payload_path === '.bha/local/push-payload.json' &&
+    pushPrep.parsed.head_bound === true &&
+    pushPrep.parsed.signer_boundary &&
+    pushPrep.parsed.signer_boundary.operator_controls_signer === true &&
+    pushPrep.parsed.signer_boundary.bha_private_key_access === false &&
+    pushPrep.parsed.operator_next_step &&
+    typeof pushPrep.parsed.operator_next_step.powershell_after_signing === 'string' &&
+    !pushPrep.parsed.operator_next_step.powershell_after_signing.includes('\n') &&
+    pushPrepPayload &&
+    pushPrepPayload.head === pushPrepHead.stdout.trim(), {
+    status: pushPrep.parsed ? pushPrep.parsed.status : 'NO_JSON',
+    payload_path: pushPrep.parsed ? pushPrep.parsed.payload_path : 'NO_JSON',
+    head_bound: pushPrep.parsed ? pushPrep.parsed.head_bound : 'NO_JSON',
+    command_has_newline: pushPrep.parsed && pushPrep.parsed.operator_next_step
+      ? pushPrep.parsed.operator_next_step.powershell_after_signing.includes('\n')
+      : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('push_prep_leaves_tracked_worktree_unchanged', pushPrepTrackedBefore === pushPrepTrackedAfter, {
+    before: pushPrepTrackedBefore || 'CLEAN',
+    after: pushPrepTrackedAfter || 'CLEAN'
+  }));
+  const pushPrepPowerShellCommand = pushPrep.parsed && pushPrep.parsed.operator_next_step
+    ? pushPrep.parsed.operator_next_step.powershell_after_signing
+    : '';
+  checks.push(regressionCheck('push_prep_powershell_command_quotes_arguments', typeof pushPrepPowerShellCommand === 'string' &&
+    !pushPrepPowerShellCommand.includes('\n') &&
+    pushPrepPowerShellCommand.includes("--remote 'origin'") &&
+    pushPrepPowerShellCommand.includes(`--branch '${branch}'`) &&
+    pushPrepPowerShellCommand.includes("$cap = '.bha/local/signed-push-capability.json'"), {
+    command_has_newline: typeof pushPrepPowerShellCommand === 'string'
+      ? pushPrepPowerShellCommand.includes('\n')
+      : 'NO_JSON',
+    quotes_remote: typeof pushPrepPowerShellCommand === 'string'
+      ? pushPrepPowerShellCommand.includes("--remote 'origin'")
+      : 'NO_JSON',
+    quotes_branch: typeof pushPrepPowerShellCommand === 'string'
+      ? pushPrepPowerShellCommand.includes(`--branch '${branch}'`)
+      : 'NO_JSON'
+  }));
+
+  const evidenceAdvanceCheckpoint = await runFixtureBha(fixtureRoot, ['checkpoint', '--format', 'json']);
+  const evidenceAdvanceCloseout = await runFixtureBha(fixtureRoot, ['closeout', '--record', '--format', 'json']);
+  const staleUnsignedGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  const staleUnsignedHandoff = staleUnsignedGateStatus.parsed && staleUnsignedGateStatus.parsed.operator_handoff
+    ? staleUnsignedGateStatus.parsed.operator_handoff
+    : null;
+  const staleUnsignedStatus = staleUnsignedHandoff ? staleUnsignedHandoff.local_payload_status : null;
+  const staleUnsignedIssues = staleUnsignedStatus && Array.isArray(staleUnsignedStatus.not_usable_local_files)
+    ? staleUnsignedStatus.not_usable_local_files
+    : [];
+  checks.push(regressionCheck('gate_status_flags_unsigned_payload_stale_after_local_evidence_advances', evidenceAdvanceCheckpoint.exit_code === 0 &&
+    evidenceAdvanceCloseout.exit_code === 0 &&
+    staleUnsignedGateStatus.exit_code === 0 &&
+    staleUnsignedStatus &&
+    staleUnsignedStatus.unsigned_matches_current_context === false &&
+    staleUnsignedIssues.some((issue) => issue.kind === 'unsigned_payload' && issue.reasons.includes('LEDGER_HEAD_MISMATCH')), {
+    checkpoint_exit_code: evidenceAdvanceCheckpoint.exit_code,
+    closeout_exit_code: evidenceAdvanceCloseout.exit_code,
+    unsigned_matches_current_context: staleUnsignedStatus ? staleUnsignedStatus.unsigned_matches_current_context : 'NO_JSON',
+    stale_issue_count: staleUnsignedIssues.length
+  }));
+  await runCommand(['git', 'add', '.bha/checkpoint.json', '.bha/ledger.jsonl', '.bha/state.json'], { cwd: fixtureRoot });
+  await runCommand(['git', 'commit', '-m', 'record evidence advance for stale payload check'], { cwd: fixtureRoot });
 
   const stalePayload = await runFixtureBha(fixtureRoot, [
     'make-push-payload',
@@ -4229,6 +4474,8 @@ async function main() {
       await handleCloseout(args);
     } else if (command === 'make-push-payload') {
       await handleMakePushPayload(args);
+    } else if (command === 'push-prep') {
+      await handlePushPrep(args);
     } else if (command === 'git-push-capability-flow') {
       await handleGitPushCapabilityFlow(args);
     } else if (command === 'rollback-drill') {
