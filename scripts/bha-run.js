@@ -2260,8 +2260,8 @@ async function postPushStatus(remote, branch, head, capability, checks) {
     used_session_event_hash: usedSession ? usedSession.event_hash : null,
     remote_tracking: remoteTracking,
     next_operator_meaning: replayBlocked
-      ? 'The previous one-use git_push capability has been used; generate and sign a new capability before another push.'
-      : (prePushReady ? 'A valid consumed git_push capability is ready for one push.' : 'Generate, sign, issue, and consume a git_push capability before pushing.')
+      ? 'The previous one-use git_push capability has been used; if the operator chooses another real push, generate and sign a new capability first.'
+      : (prePushReady ? 'A valid consumed git_push capability is ready if the operator chooses to push once.' : 'No push is required now; if the operator chooses a real push, generate, sign, issue, and consume a git_push capability first.')
   };
 }
 
@@ -3447,6 +3447,7 @@ async function handleAuditV12(args) {
     'signed_payload_status_validation_wired',
     'gate_status_reports_post_push_status',
     'gate_status_reports_push_requirement_boundary',
+    'gate_status_operator_meaning_is_conditional',
     'local_git_push_replay_fail_closed_after_used_session',
     'gate_status_missing_local_payload_requests_generation',
     'gate_status_flags_stale_local_payload_files',
@@ -4308,6 +4309,15 @@ async function handleRegressionSelftest(args) {
     String(missingPayloadGateStatus.parsed.push_requirement.reason || '').includes('never requires'), {
     required_now: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.push_requirement ? missingPayloadGateStatus.parsed.push_requirement.required_now : 'NO_JSON',
     operator_controlled: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.push_requirement ? missingPayloadGateStatus.parsed.push_requirement.operator_controlled : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('gate_status_operator_meaning_is_conditional', missingPayloadGateStatus.exit_code === 0 &&
+    missingPayloadGateStatus.parsed &&
+    missingPayloadGateStatus.parsed.post_push_status &&
+    String(missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning || '').includes('No push is required now') &&
+    String(missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning || '').includes('if the operator chooses a real push'), {
+    next_operator_meaning: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.post_push_status
+      ? missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning
+      : 'NO_JSON'
   }));
   checks.push(regressionCheck('signed_payload_status_readonly_reports_missing', missingSignedPayloadStatus.exit_code === 0 &&
     missingSignedPayloadStatus.parsed &&
