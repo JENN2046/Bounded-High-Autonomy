@@ -4150,7 +4150,8 @@ async function handleAuditV1Stable(args) {
       fileContains(STABILITY_PATH, 'validation bootstrap only') &&
       fileContains(STABILITY_PATH, 'Operators should use the strict command') &&
       fileContains(STABILITY_PATH, 'validation_in_progress_override=false') &&
-      fileContains(RUN_SCRIPT, 'validation_in_progress_override: verifierValidationBootstrapPass'),
+      fileContains(RUN_SCRIPT, 'validation_in_progress_override: verifierValidationBootstrapPass') &&
+      fileContains(RUN_SCRIPT, 'stable_audit_bootstrap_allows_prior_validation_failure_ids'),
     {
       validation_command_uses_bootstrap_flag: validationCommand && Array.isArray(validationCommand.argv)
         ? validationCommand.argv.includes('--allow-validation-in-progress')
@@ -5162,6 +5163,17 @@ async function handleRegressionSelftest(args) {
     rootRecoverStatusCommand.expect.recorded === false), {
     validation_command_present: Boolean(rootRecoverStatusCommand),
     read_only: rootRecoverStatusCommand && rootRecoverStatusCommand.expect ? rootRecoverStatusCommand.expect.read_only : 'MISSING'
+  }));
+  const obsoleteBootstrapIdGate = 'failedValidation' + 'IsBootstrapOnly';
+  checks.push(regressionCheck('stable_audit_bootstrap_allows_prior_validation_failure_ids',
+    fileContains(RUN_SCRIPT, 'validationBootstrapIssueCodes') &&
+    fileContains(RUN_SCRIPT, 'failed_recorded_validation_ids: failedRecordedValidationIds') &&
+    fileContains(RUN_SCRIPT, 'validation_in_progress_override: verifierValidationBootstrapPass') &&
+    !fileContains(RUN_SCRIPT, obsoleteBootstrapIdGate), {
+    issue_code_allowlist_present: fileContains(RUN_SCRIPT, 'validationBootstrapIssueCodes'),
+    reports_failed_recorded_validation_ids: fileContains(RUN_SCRIPT, 'failed_recorded_validation_ids: failedRecordedValidationIds'),
+    override_evidence_present: fileContains(RUN_SCRIPT, 'validation_in_progress_override: verifierValidationBootstrapPass'),
+    gates_on_failed_validation_id: fileContains(RUN_SCRIPT, obsoleteBootstrapIdGate)
   }));
 
   const branchResult = await runCommand(['git', 'branch', '--show-current'], { cwd: fixtureRoot });
