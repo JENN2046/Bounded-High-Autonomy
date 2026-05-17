@@ -45,6 +45,12 @@ Recovery status must explain missing, stale, expired, or otherwise unusable `.bh
 
 Payload status surfaces must expose both machine-readable `reason_codes` and human-readable `reason_details` for stale, expired, mismatched, or invalid local payload files. These fields are operator UX and recovery guidance, not proof by themselves.
 
+## Post-Commit HEAD Boundary
+
+After a local commit, git `HEAD` changes even when verifier, validation, checkpoint, and closeout evidence remain clean. Checkpoint and closeout git heads are evidence-time facts; they must not be treated as the current commit identity.
+
+The current commit identity comes from git reality and, before a real operator-chosen push, a freshly generated and signed git_push capability bound to the current `HEAD`, ledger head, policy hash, and mission hash. Existing `.bha/local/` payloads from an older commit must be reported as stale with machine-readable reasons such as `HEAD_MISMATCH` and `LEDGER_HEAD_MISMATCH`, plus human-readable `reason_details`.
+
 ## Not Proof
 
 These can guide workflow but are not proof:

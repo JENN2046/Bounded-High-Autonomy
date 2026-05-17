@@ -3816,6 +3816,22 @@ async function handleAuditV1Stable(args) {
     ['BHA_V1_STABILITY.md']
   ));
   checks.push(auditCheck(
+    'post_commit_head_boundary_documented',
+    'V1 stable docs and runtime keep evidence-time checkpoint/closeout git heads separate from current git reality and stale local payload recovery.',
+    fileContains(STABILITY_PATH, 'Post-Commit HEAD Boundary') &&
+      fileContains(STABILITY_PATH, 'Checkpoint and closeout git heads are evidence-time facts') &&
+      fileContains(STABILITY_PATH, 'HEAD_MISMATCH') &&
+      fileContains(STABILITY_PATH, 'LEDGER_HEAD_MISMATCH') &&
+      fileContains(RUN_SCRIPT, 'tracked_git_reality') &&
+      fileContains(RUN_SCRIPT, 'checkpoint_matches_current_head') &&
+      fileContains(RUN_SCRIPT, 'closeout_matches_current_head') &&
+      fileContains(RUN_SCRIPT, 'Payload is bound to a different git HEAD') &&
+      fileContains(RUN_SCRIPT, 'Payload is bound to an older ledger head') &&
+      fileContains(ROADMAP_PATH, 'post-commit evidence-time HEAD mismatch explicit'),
+    {},
+    ['BHA_V1_STABILITY.md', 'scripts/bha-run.js', '.bha/roadmap.md']
+  ));
+  checks.push(auditCheck(
     'stable_audit_bootstrap_boundary_documented',
     'The validation-in-progress stable audit flag is documented as validation bootstrap only, not the operator strict audit path.',
     fileContains(STABILITY_PATH, '--allow-validation-in-progress') &&
