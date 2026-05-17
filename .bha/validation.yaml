@@ -182,6 +182,10 @@
           "enablement_gate.requires_deny_tests_before_allow": true,
           "enablement_gate.requires_replay_tests_before_allow": true,
           "enablement_gate.forbidden_without_new_objective.0": "provider_call",
+          "test_requirements.current_coverage.enablement_coverage_complete": false,
+          "test_requirements.current_coverage.validation_commands.0": "v12_regression_selftest",
+          "test_requirements.missing_before_enablement.0": "future_capability_schema",
+          "test_requirements.missing_before_enablement.7": "explicit_policy_change",
           "types.git_push.evidence_policy.tracked": false
         },
         "has_keys": [

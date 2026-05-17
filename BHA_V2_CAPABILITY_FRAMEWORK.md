@@ -52,6 +52,8 @@ Before any new capability can move from preview to enabled, it must have:
 
 The framework status command reports these requirements so operator/Codex can see that new capability types are not enabled by documentation alone.
 
+`capability-framework-status` must report future capability enablement coverage as incomplete until a future capability schema, binding, allowed command, evidence policy, deny tests, replay tests, verifier evidence, and explicit policy change exist.
+
 ## Enablement Gate
 
 `capability-framework-status` must report `enablement_gate.new_production_capability_allowed=false` until a new explicit objective adds a schema, binding, allowed command, evidence policy, deny tests, replay tests, verifier evidence, and policy change. Planning and test design can continue locally, but provider calls, deploy, release, tag, package publish, memory write, private key access, and production write remain forbidden without a new objective.

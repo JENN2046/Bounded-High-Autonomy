@@ -1108,8 +1108,19 @@ function capabilityFramework() {
           'v12_regression_selftest',
           'verifier_selftest_negative_matrix',
           'capability_framework_status_readonly'
-        ]
-      }
+        ],
+        enablement_coverage_complete: false
+      },
+      missing_before_enablement: [
+        'future_capability_schema',
+        'future_capability_binding',
+        'future_allowed_command',
+        'future_evidence_policy',
+        'future_deny_tests',
+        'future_replay_tests',
+        'future_verifier_evidence',
+        'explicit_policy_change'
+      ]
     },
     types: {
       git_push: {
@@ -4682,8 +4693,12 @@ async function handleAuditV1Stable(args) {
       capabilityFrameworkJsonPaths['extension_policy.provider_deploy_release_default'] === 'DENY' &&
       capabilityFrameworkJsonPaths['enablement_gate.new_production_capability_allowed'] === false &&
       capabilityFrameworkJsonPaths['enablement_gate.forbidden_without_new_objective.0'] === 'provider_call' &&
+      capabilityFrameworkJsonPaths['test_requirements.current_coverage.enablement_coverage_complete'] === false &&
+      capabilityFrameworkJsonPaths['test_requirements.missing_before_enablement.0'] === 'future_capability_schema' &&
+      capabilityFrameworkJsonPaths['test_requirements.missing_before_enablement.7'] === 'explicit_policy_change' &&
       capabilityFrameworkJsonPaths['types.git_push.evidence_policy.tracked'] === false &&
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'verifier evidence') &&
+      fileContains(CAPABILITY_FRAMEWORK_PATH, 'enablement coverage as incomplete') &&
       fileContains(ROADMAP_PATH, 'verifier evidence'),
     {
       validation_command_present: Boolean(capabilityFrameworkStatusCommand),
