@@ -3265,6 +3265,7 @@ async function handleAuditV1Stable(args) {
     return;
   }
   const allowValidationInProgress = args.includes('--allow-validation-in-progress');
+  const state = loadState();
   const policy = loadPolicy();
   const validation = readJsonStrict(VALIDATION_PATH);
   const verify = await verifierResult();
@@ -3288,8 +3289,18 @@ async function handleAuditV1Stable(args) {
     verifier.status === 'PASS' &&
     verifierIssues.length === 0 &&
     verifierWarnings.length === 0;
+  const failedRecordedValidationIds = state &&
+    state.validation &&
+    Array.isArray(state.validation.commands)
+    ? state.validation.commands
+      .filter((command) => command && command.status !== 'PASS')
+      .map((command) => String(command.id || 'UNKNOWN'))
+    : [];
+  const failedValidationIsBootstrapOnly = failedRecordedValidationIds.length === 0 ||
+    failedRecordedValidationIds.every((id) => id === 'v1_stable_audit_readonly');
   const verifierValidationBootstrapPass = allowValidationInProgress &&
     verifier.status === 'FAIL' &&
+    failedValidationIsBootstrapOnly &&
     verifierIssueCodes.length > 0 &&
     verifierIssueCodes.every((code) => validationBootstrapIssueCodes.includes(code)) &&
     verifierWarningCodes.every((code) => validationBootstrapWarningCodes.includes(code));
@@ -3458,6 +3469,7 @@ async function handleAuditV1Stable(args) {
       warnings: verifierWarnings.length,
       issue_codes: verifierIssueCodes,
       warning_codes: verifierWarningCodes,
+      failed_recorded_validation_ids: failedRecordedValidationIds,
       validation_in_progress_override: verifierValidationBootstrapPass
     },
     ['.bha/state.json', '.bha/ledger.jsonl', 'scripts/bha-verify.js']
