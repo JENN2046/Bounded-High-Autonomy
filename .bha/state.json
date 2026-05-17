@@ -2,16 +2,16 @@
   "schema": "bha.state.v1",
   "version": "1.0.0",
   "run_id": "bha-dry-run-v1",
-  "updated_at": "2026-05-17T10:27:44.867Z",
-  "ledger_head_hash": "c137aeae8d8c5562ee3181431c40ed463407428c009518b55d9cd88250ecf419",
-  "ledger_event_count": 8227,
+  "updated_at": "2026-05-17T10:32:26.621Z",
+  "ledger_head_hash": "9e1cccb634175c1f044fac2ce9d1e73dea3acaa096511de1153e203e57d49270",
+  "ledger_event_count": 8289,
   "validation": {
     "status": "PASS",
-    "completed_at": "2026-05-17T10:27:34.905Z",
-    "inputs_hash": "26c2fa06d160bd62151dd2ed4ccef1c845a80063a2c950123dc90e033e8fd7a7",
+    "completed_at": "2026-05-17T10:32:21.539Z",
+    "inputs_hash": "ffef4a33993db02fe96ac7ed520d69f7282bd486112e802fa864d5ab486f7b41",
     "policy_hash": "4ddab7b4249b1fb4a4cf93f0ba92eaa4fffe60635df1867d706d1a9beeb8d186",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
-    "ledger_event_hash": "bdb9fa10717cec43b72ec8306b199a9722e5bfcf6584bd9aa138b935f789a0a3",
+    "ledger_event_hash": "2f50b754a4666d72475b63fce0ffa7788dcd9b57680bf6c746700b0db73ad3db",
     "commands": [
       {
         "id": "git_diff_check",
@@ -378,6 +378,7 @@
             "push_requirement.required_now": false,
             "push_requirement.operator_controlled": true,
             "signer_boundary.bha_private_key_access": false,
+            "gate_summary.tracked_git_reality.proof_boundary": "Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding.",
             "v2_hold_line.default_decision": "DENY",
             "v2_hold_line.unknown_capability_policy": "DENY",
             "v2_hold_line.capability_enablement_allowed": false,
@@ -897,7 +898,8 @@
             "local_state.required_for_tracked_verifier_pass": false,
             "local_payload_recovery.read_only": true,
             "git_push_recovery.required_now": false,
-            "git_push_recovery.local_only": true
+            "git_push_recovery.local_only": true,
+            "tracked_git_reality.proof_boundary": "Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding."
           },
           "has_keys": [
             "schema",
@@ -1444,7 +1446,8 @@
             "push_requirement.required_now": false,
             "push_requirement.operator_controlled": true,
             "operator_handoff.capability_flow_required_now": false,
-            "signer_boundary.bha_private_key_access": false
+            "signer_boundary.bha_private_key_access": false,
+            "tracked_git_reality.proof_boundary": "Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding."
           },
           "has_keys": [
             "schema",
@@ -1626,25 +1629,25 @@
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "closeout": {
     "status": "PASS",
-    "completed_at": "2026-05-17T10:27:44.867Z",
-    "ledger_event_hash": "c137aeae8d8c5562ee3181431c40ed463407428c009518b55d9cd88250ecf419",
-    "verified_ledger_head_hash": "d9de1911758e9e42515947aeffdae5636356e7c0bfea8c0108dc85ff6a6b6ef6",
-    "closeout_event_hash": "c137aeae8d8c5562ee3181431c40ed463407428c009518b55d9cd88250ecf419",
-    "final_ledger_head_hash": "c137aeae8d8c5562ee3181431c40ed463407428c009518b55d9cd88250ecf419",
-    "validation_ledger_event_hash": "bdb9fa10717cec43b72ec8306b199a9722e5bfcf6584bd9aa138b935f789a0a3",
+    "completed_at": "2026-05-17T10:32:26.621Z",
+    "ledger_event_hash": "9e1cccb634175c1f044fac2ce9d1e73dea3acaa096511de1153e203e57d49270",
+    "verified_ledger_head_hash": "4d84a529d5ed59291f41d241c7b789c8be1020158b21fedd8cdb576232e85ca4",
+    "closeout_event_hash": "9e1cccb634175c1f044fac2ce9d1e73dea3acaa096511de1153e203e57d49270",
+    "final_ledger_head_hash": "9e1cccb634175c1f044fac2ce9d1e73dea3acaa096511de1153e203e57d49270",
+    "validation_ledger_event_hash": "2f50b754a4666d72475b63fce0ffa7788dcd9b57680bf6c746700b0db73ad3db",
     "policy_hash": "4ddab7b4249b1fb4a4cf93f0ba92eaa4fffe60635df1867d706d1a9beeb8d186",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
   },
   "last_checkpoint": {
-    "checkpoint_id": "checkpoint-2026-05-17T10-27-40-785Z",
-    "created_at": "2026-05-17T10:27:40.847Z",
-    "ledger_event_hash": "d9de1911758e9e42515947aeffdae5636356e7c0bfea8c0108dc85ff6a6b6ef6",
-    "verified_ledger_head_hash": "bdb9fa10717cec43b72ec8306b199a9722e5bfcf6584bd9aa138b935f789a0a3",
-    "checkpoint_event_hash": "d9de1911758e9e42515947aeffdae5636356e7c0bfea8c0108dc85ff6a6b6ef6",
-    "final_ledger_head_hash": "d9de1911758e9e42515947aeffdae5636356e7c0bfea8c0108dc85ff6a6b6ef6",
+    "checkpoint_id": "checkpoint-2026-05-17T10-32-25-798Z",
+    "created_at": "2026-05-17T10:32:25.863Z",
+    "ledger_event_hash": "4d84a529d5ed59291f41d241c7b789c8be1020158b21fedd8cdb576232e85ca4",
+    "verified_ledger_head_hash": "2f50b754a4666d72475b63fce0ffa7788dcd9b57680bf6c746700b0db73ad3db",
+    "checkpoint_event_hash": "4d84a529d5ed59291f41d241c7b789c8be1020158b21fedd8cdb576232e85ca4",
+    "final_ledger_head_hash": "4d84a529d5ed59291f41d241c7b789c8be1020158b21fedd8cdb576232e85ca4",
     "path": ".bha/checkpoint.json",
     "policy_hash": "4ddab7b4249b1fb4a4cf93f0ba92eaa4fffe60635df1867d706d1a9beeb8d186",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
   },
-  "last_checkpoint_id": "checkpoint-2026-05-17T10-27-40-785Z"
+  "last_checkpoint_id": "checkpoint-2026-05-17T10-32-25-798Z"
 }

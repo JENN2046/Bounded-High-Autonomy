@@ -257,6 +257,7 @@
           "push_requirement.required_now": false,
           "push_requirement.operator_controlled": true,
           "signer_boundary.bha_private_key_access": false,
+          "gate_summary.tracked_git_reality.proof_boundary": "Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding.",
           "v2_hold_line.default_decision": "DENY",
           "v2_hold_line.unknown_capability_policy": "DENY",
           "v2_hold_line.capability_enablement_allowed": false,
@@ -655,7 +656,8 @@
           "local_state.required_for_tracked_verifier_pass": false,
           "local_payload_recovery.read_only": true,
           "git_push_recovery.required_now": false,
-          "git_push_recovery.local_only": true
+          "git_push_recovery.local_only": true,
+          "tracked_git_reality.proof_boundary": "Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding."
         },
         "has_keys": [
           "schema",
@@ -993,7 +995,8 @@
           "push_requirement.required_now": false,
           "push_requirement.operator_controlled": true,
           "operator_handoff.capability_flow_required_now": false,
-          "signer_boundary.bha_private_key_access": false
+          "signer_boundary.bha_private_key_access": false,
+          "tracked_git_reality.proof_boundary": "Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding."
         },
         "has_keys": [
           "schema",

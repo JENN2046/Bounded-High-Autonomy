@@ -4242,6 +4242,7 @@ async function handleAuditV1Stable(args) {
   const operatorSignerPreflightJsonPaths = operatorSignerPreflightCommand && operatorSignerPreflightCommand.expect ? (operatorSignerPreflightCommand.expect.json_paths || {}) : {};
   const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
   const stableExitCommand = validationCommandById(validation, 'stable_exit_status_readonly');
+  const stableExitJsonPaths = stableExitCommand && stableExitCommand.expect ? (stableExitCommand.expect.json_paths || {}) : {};
   const stableExitReviewCommand = validationCommandById(validation, 'stable_exit_review_readonly');
   const nextLocalPlanCommand = validationCommandById(validation, 'next_local_plan_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
@@ -4249,6 +4250,7 @@ async function handleAuditV1Stable(args) {
   const requireAudit = requireModuleAudit([RUN_SCRIPT, VERIFY_SCRIPT]);
   const dependencyAudit = dependencySurfaceAudit();
   const privateKeyAudit = operatorSignerPrivateKeyAudit();
+  const evidenceTimeHeadProofBoundary = 'Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding.';
   const requiredDenied = [
     'provider_call',
     'memory_write',
@@ -4868,8 +4870,15 @@ async function handleAuditV1Stable(args) {
       fileContains(RUN_SCRIPT, 'recover_status_reports_evidence_time_git_heads') &&
       fileContains(RUN_SCRIPT, 'Payload is bound to a different git HEAD') &&
       fileContains(RUN_SCRIPT, 'Payload is bound to an older ledger head') &&
-      fileContains(ROADMAP_PATH, 'post-commit evidence-time HEAD mismatch explicit'),
-    {},
+      fileContains(ROADMAP_PATH, 'post-commit evidence-time HEAD mismatch explicit') &&
+      stableExitJsonPaths['gate_summary.tracked_git_reality.proof_boundary'] === evidenceTimeHeadProofBoundary &&
+      gateStatusJsonPaths['tracked_git_reality.proof_boundary'] === evidenceTimeHeadProofBoundary &&
+      recoverStatusJsonPaths['tracked_git_reality.proof_boundary'] === evidenceTimeHeadProofBoundary,
+    {
+      stable_exit_validation_asserts_boundary: stableExitJsonPaths['gate_summary.tracked_git_reality.proof_boundary'] === evidenceTimeHeadProofBoundary,
+      gate_status_validation_asserts_boundary: gateStatusJsonPaths['tracked_git_reality.proof_boundary'] === evidenceTimeHeadProofBoundary,
+      recover_status_validation_asserts_boundary: recoverStatusJsonPaths['tracked_git_reality.proof_boundary'] === evidenceTimeHeadProofBoundary
+    },
     ['BHA_V1_STABILITY.md', 'scripts/bha-run.js', '.bha/roadmap.md']
   ));
   checks.push(auditCheck(
