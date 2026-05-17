@@ -2494,7 +2494,12 @@ async function handlePrepushCheck(args) {
   const preflight = args.includes('--preflight');
   const hookArgs = args.filter((arg) => arg !== '--record' && arg !== '--preflight');
   if (hookArgs[0] !== '--internal-git-hook') {
-    console.log(JSON.stringify({ ok: false, status: 'FAIL_CLOSED', reason: 'missing internal hook marker' }));
+    console.log(JSON.stringify({
+      schema: 'bha.prepush_check.v1',
+      ok: false,
+      status: 'FAIL_CLOSED',
+      reason: 'missing internal hook marker'
+    }));
     process.exitCode = 1;
     return;
   }
@@ -2543,6 +2548,7 @@ async function handlePrepushCheck(args) {
     });
   }
   console.log(JSON.stringify({
+    schema: 'bha.prepush_check.v1',
     ok,
     status: ok ? 'ALLOW' : 'FAIL_CLOSED',
     reason: ok ? 'ALLOW' : (capability.reason || firstFailedGate(checks) || 'PREPUSH_GATE_FAILED'),

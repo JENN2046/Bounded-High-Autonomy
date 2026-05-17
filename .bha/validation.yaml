@@ -863,6 +863,7 @@
         "read_only": true,
         "recorded": false,
         "has_keys": [
+          "schema",
           "reason",
           "checks",
           "evidence_gates",
@@ -886,6 +887,7 @@
         "recorded": false,
         "preflight": true,
         "has_keys": [
+          "schema",
           "reason",
           "checks",
           "evidence_gates",
