@@ -160,7 +160,8 @@
         "scripts/bha-run.js",
         "audit-v2-preview",
         "--format",
-        "json"
+        "json",
+        "--allow-validation-in-progress"
       ],
       "expect": {
         "exit_code": 0,
@@ -173,11 +174,14 @@
           "framework_summary.production_capability_types.0": "git_push",
           "framework_summary.machine_readable_draft_status": "DRAFT_NON_ENABLING",
           "framework_summary.deny_replay_matrix_status": "MACHINE_READABLE_PREVIEW",
+          "framework_summary.deny_replay_matrix_cases_pass": true,
           "framework_summary.new_production_capability_allowed": false,
           "council_summary.runtime_state": "PREVIEW_CONTRACT_ONLY",
           "council_summary.dry_run_model_status": "DRAFT_NON_ACTIVATING",
           "council_summary.runtime_activation_allowed": false,
-          "council_summary.automated_agent_spawn_allowed": false
+          "council_summary.automated_agent_spawn_allowed": false,
+          "validation_in_progress_allowed": true,
+          "verifier_gate.accepted": true
         },
         "has_keys": [
           "schema",
@@ -230,6 +234,9 @@
           "machine_readable_draft.evidence_policy.draft_evidence_is_authorization": false,
           "deny_replay_test_matrix.status": "MACHINE_READABLE_PREVIEW",
           "deny_replay_test_matrix.coverage_complete": false,
+          "deny_replay_test_matrix.case_results_pass": true,
+          "deny_replay_test_matrix.case_results.0.status": "PASS",
+          "deny_replay_test_matrix.case_results.8.status": "PASS",
           "verifier_evidence_contract.verifier_must_reject_incomplete_preview_schema": true,
           "verifier_evidence_contract.draft_evidence_is_authorization": false,
           "test_requirements.current_coverage.enablement_coverage_complete": false,

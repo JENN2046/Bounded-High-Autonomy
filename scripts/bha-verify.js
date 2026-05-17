@@ -119,6 +119,48 @@ function readJsonl(file, issues, code) {
   return events;
 }
 
+function validationCommandById(validation, id) {
+  const commands = validation && Array.isArray(validation.required_commands)
+    ? validation.required_commands
+    : [];
+  return commands.find((command) => command && command.id === id) || null;
+}
+
+function policyAllowsArgv(policy, argv) {
+  const rules = policy && policy.action_rules && Array.isArray(policy.action_rules.allow)
+    ? policy.action_rules.allow
+    : [];
+  return rules.some((rule) => {
+    if (!rule || String(rule.command || '') !== String(argv[0] || '')) {
+      return false;
+    }
+    if (Array.isArray(rule.args)) {
+      return stable(rule.args) === stable(argv.slice(1));
+    }
+    if (Array.isArray(rule.args_prefix)) {
+      const prefix = rule.args_prefix;
+      return stable(argv.slice(1, 1 + prefix.length)) === stable(prefix);
+    }
+    return false;
+  });
+}
+
+function commandHasJsonPath(command, pathName, expected) {
+  const actual = command &&
+    command.expect &&
+    command.expect.json_paths
+    ? command.expect.json_paths[pathName]
+    : undefined;
+  return stable(actual) === stable(expected);
+}
+
+function commandHasKey(command, key) {
+  return Boolean(command &&
+    command.expect &&
+    Array.isArray(command.expect.has_keys) &&
+    command.expect.has_keys.includes(key));
+}
+
 function eventHash(event) {
   const copy = Object.assign({}, event);
   delete copy.event_hash;
@@ -1108,13 +1150,16 @@ async function verifyUnverifiedWorktree(files, issues, warnings) {
   }
 }
 
-function verifyV2PreviewContractsFromText(runSource, frameworkDoc, councilDoc, issues) {
+function verifyV2PreviewContractsFromArtifacts(runSource, frameworkDoc, councilDoc, validation, policy, issues) {
   const requiredRunTokens = [
+    'handleAuditV2Preview',
     'machine_readable_draft',
     'bha.capability_schema.v2.preview',
     'deny_replay_test_matrix',
+    'case_results_pass',
     'verifier_evidence_contract',
     'verifier_must_reject_incomplete_preview_schema',
+    'verifier_gate_clean_or_explicit_bootstrap',
     'dry_run_model',
     'bha.council_dry_run.v2.preview',
     'role_boundary_matrix',
@@ -1127,6 +1172,85 @@ function verifyV2PreviewContractsFromText(runSource, frameworkDoc, councilDoc, i
       code: 'V2_CAPABILITY_PREVIEW_SCHEMA_INCOMPLETE',
       severity: 'FAIL',
       message: `V2 preview machine-readable contract is missing ${missingRunTokens.join(', ')}`
+    });
+  }
+  const auditCommand = validationCommandById(validation, 'audit_v2_preview_readonly');
+  const frameworkCommand = validationCommandById(validation, 'capability_framework_status_readonly');
+  const councilCommand = validationCommandById(validation, 'council_status_readonly');
+  const structuredMissing = [];
+  if (!auditCommand) {
+    structuredMissing.push('audit_v2_preview_readonly');
+  } else {
+    if (!policyAllowsArgv(policy, auditCommand.argv || [])) {
+      structuredMissing.push('audit_v2_preview_policy_allow');
+    }
+    [
+      ['framework_summary.machine_readable_draft_status', 'DRAFT_NON_ENABLING'],
+      ['framework_summary.deny_replay_matrix_status', 'MACHINE_READABLE_PREVIEW'],
+      ['framework_summary.deny_replay_matrix_cases_pass', true],
+      ['framework_summary.new_production_capability_allowed', false],
+      ['council_summary.dry_run_model_status', 'DRAFT_NON_ACTIVATING'],
+      ['council_summary.runtime_activation_allowed', false],
+      ['validation_in_progress_allowed', true],
+      ['verifier_gate.accepted', true]
+    ].forEach(([pathName, expected]) => {
+      if (!commandHasJsonPath(auditCommand, pathName, expected)) {
+        structuredMissing.push(`audit:${pathName}`);
+      }
+    });
+  }
+  if (!frameworkCommand) {
+    structuredMissing.push('capability_framework_status_readonly');
+  } else {
+    [
+      ['machine_readable_draft.status', 'DRAFT_NON_ENABLING'],
+      ['machine_readable_draft.authorization_effect', false],
+      ['machine_readable_draft.schema_draft.schema', 'bha.capability_schema.v2.preview'],
+      ['deny_replay_test_matrix.status', 'MACHINE_READABLE_PREVIEW'],
+      ['deny_replay_test_matrix.case_results_pass', true],
+      ['deny_replay_test_matrix.case_results.0.status', 'PASS'],
+      ['deny_replay_test_matrix.case_results.8.status', 'PASS'],
+      ['verifier_evidence_contract.verifier_must_reject_incomplete_preview_schema', true],
+      ['verifier_evidence_contract.draft_evidence_is_authorization', false]
+    ].forEach(([pathName, expected]) => {
+      if (!commandHasJsonPath(frameworkCommand, pathName, expected)) {
+        structuredMissing.push(`framework:${pathName}`);
+      }
+    });
+    ['machine_readable_draft', 'deny_replay_test_matrix', 'verifier_evidence_contract'].forEach((key) => {
+      if (!commandHasKey(frameworkCommand, key)) {
+        structuredMissing.push(`framework_key:${key}`);
+      }
+    });
+  }
+  if (!councilCommand) {
+    structuredMissing.push('council_status_readonly');
+  } else {
+    [
+      ['dry_run_model.schema', 'bha.council_dry_run.v2.preview'],
+      ['dry_run_model.status', 'DRAFT_NON_ACTIVATING'],
+      ['dry_run_model.authorization_effect', false],
+      ['role_boundary_matrix.0.may_grant_remote_authority', false],
+      ['role_boundary_matrix.0.may_create_proof', false],
+      ['role_boundary_matrix.0.may_spawn_agents', false],
+      ['activation_regression_matrix.status', 'MACHINE_READABLE_PREVIEW'],
+      ['activation_regression_matrix.coverage_complete', false]
+    ].forEach(([pathName, expected]) => {
+      if (!commandHasJsonPath(councilCommand, pathName, expected)) {
+        structuredMissing.push(`council:${pathName}`);
+      }
+    });
+    ['dry_run_model', 'role_boundary_matrix', 'activation_regression_matrix'].forEach((key) => {
+      if (!commandHasKey(councilCommand, key)) {
+        structuredMissing.push(`council_key:${key}`);
+      }
+    });
+  }
+  if (structuredMissing.length > 0) {
+    issues.push({
+      code: 'V2_CAPABILITY_PREVIEW_SCHEMA_INCOMPLETE',
+      severity: 'FAIL',
+      message: `V2 preview structured validation contract is missing ${structuredMissing.join(', ')}`
     });
   }
   const requiredFrameworkTokens = [
@@ -1163,10 +1287,12 @@ function verifyV2PreviewContractsFromText(runSource, frameworkDoc, councilDoc, i
 }
 
 function verifyV2PreviewContracts(issues) {
-  verifyV2PreviewContractsFromText(
+  verifyV2PreviewContractsFromArtifacts(
     fs.existsSync(RUN_SCRIPT) ? readText(RUN_SCRIPT) : '',
     fs.existsSync(CAPABILITY_FRAMEWORK_PATH) ? readText(CAPABILITY_FRAMEWORK_PATH) : '',
     fs.existsSync(COUNCIL_RUNTIME_PATH) ? readText(COUNCIL_RUNTIME_PATH) : '',
+    fs.existsSync(VALIDATION_PATH) ? readJsonStrict(VALIDATION_PATH) : null,
+    fs.existsSync(POLICY_PATH) ? readJsonStrict(POLICY_PATH) : null,
     issues
   );
 }
@@ -1584,10 +1710,12 @@ function selfTestCloseoutStateNotLatest() {
 
 function selfTestIncompleteV2PreviewContract() {
   const issues = [];
-  verifyV2PreviewContractsFromText(
+  verifyV2PreviewContractsFromArtifacts(
     'function capabilityFramework() { return {}; }',
     'Default deny only',
     'Status: preview contract only',
+    { required_commands: [] },
+    { action_rules: { allow: [] } },
     issues
   );
   return issues;

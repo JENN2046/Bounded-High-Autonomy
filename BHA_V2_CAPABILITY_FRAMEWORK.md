@@ -68,9 +68,9 @@ The machine-readable schema draft is `bha.capability_schema.v2.preview`. It incl
 - evidence policy: draft evidence is not authorization, verifier-readable evidence is required before allow, and tracked/local scope must be declared explicitly
 - replay policy: one-use or session policy is required, and duplicate consume, USED session, and stale session cases fail closed
 
-The deny/replay matrix is also machine-readable. It must include unknown type, disallowed type, incomplete binding, stale binding, wrong policy hash, wrong mission hash, expired, replayed, and overbroad command cases before any future allow path is considered.
+The deny/replay matrix is also machine-readable and executable in preview mode. It must include unknown type, disallowed type, incomplete binding, stale binding, wrong policy hash, wrong mission hash, expired, replayed, and overbroad command cases before any future allow path is considered. Each case records the expected reason, observed reason, pass/fail status, and `authorization_effect=false`.
 
-The verifier evidence contract is explicit: incomplete preview schema is a verifier failure, draft evidence is not authorization, and future authorization requires policy allow, verifier evidence, and validation wiring.
+The verifier evidence contract is explicit: incomplete preview schema is a verifier failure, draft evidence is not authorization, `audit-v2-preview` is verifier-gated in strict mode, and future authorization requires policy allow, verifier evidence, and validation wiring.
 
 The current draft explicitly does not provide:
 

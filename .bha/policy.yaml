@@ -309,7 +309,8 @@
           "scripts/bha-run.js",
           "audit-v2-preview",
           "--format",
-          "json"
+          "json",
+          "--allow-validation-in-progress"
         ],
         "reason": "read-only V2 preview hardening audit"
       },

@@ -1031,6 +1031,165 @@ function capabilityType(payload) {
   return String(payload.type || payload.for || payload.capability || '').trim();
 }
 
+function capabilityTypePolicyFromLists(type, productionTypes, alwaysDenied) {
+  const normalized = String(type || '').trim();
+  if (!normalized) {
+    return { allowed: false, reason: 'CAPABILITY_TYPE_MISSING', type: normalized };
+  }
+  if ((alwaysDenied || []).includes(normalized)) {
+    return { allowed: false, reason: 'DISALLOWED_CAPABILITY_TYPE', type: normalized };
+  }
+  if (!(productionTypes || []).includes(normalized)) {
+    return { allowed: false, reason: 'CAPABILITY_TYPE_NOT_SUPPORTED', type: normalized };
+  }
+  return { allowed: true, reason: 'CAPABILITY_TYPE_SUPPORTED', type: normalized };
+}
+
+function evaluateV2PreviewDraftCapability(draft, options) {
+  const opts = options || {};
+  const productionTypes = opts.productionTypes || [];
+  const alwaysDenied = opts.alwaysDenied || [];
+  const policy = opts.policy || loadPolicy();
+  const mission = opts.mission || loadMission();
+  const state = opts.state || loadState();
+  const usedIds = new Set((opts.usedCapabilityIds || []).map((id) => String(id)));
+  const typePolicy = capabilityTypePolicyFromLists(draft && draft.type, productionTypes, alwaysDenied);
+  if (typePolicy.allowed !== true) {
+    return { ok: false, reason: typePolicy.reason };
+  }
+  const binding = draft && draft.binding && typeof draft.binding === 'object' && !Array.isArray(draft.binding)
+    ? draft.binding
+    : null;
+  if (!binding || !binding.run_id || !binding.policy_hash || !binding.mission_hash || !binding.expires_at) {
+    return { ok: false, reason: 'CAPABILITY_BINDING_MISSING' };
+  }
+  if (binding.policy_hash !== policyHash(policy)) {
+    return { ok: false, reason: 'CAPABILITY_POLICY_HASH_MISMATCH' };
+  }
+  if (binding.mission_hash !== missionHash(mission)) {
+    return { ok: false, reason: 'CAPABILITY_MISSION_HASH_MISMATCH' };
+  }
+  if (isExpired(binding.expires_at)) {
+    return { ok: false, reason: 'CAPABILITY_EXPIRED' };
+  }
+  if (binding.stale === true || binding.head === 'STALE_HEAD' || binding.ledger_head_hash === 'STALE_LEDGER_HEAD') {
+    return { ok: false, reason: 'CAPABILITY_BINDING_STALE' };
+  }
+  if (usedIds.has(String(draft.capability_id || draft.id || ''))) {
+    return { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED' };
+  }
+  if (draft.type === 'git_push') {
+    const expectedCommand = `git push ${binding.remote} ${binding.branch}`;
+    if (draft.allowed_command !== expectedCommand) {
+      return { ok: false, reason: 'CAPABILITY_COMMAND_OVERBROAD' };
+    }
+  } else if (draft.allowed_command) {
+    return { ok: false, reason: 'CAPABILITY_COMMAND_OVERBROAD' };
+  }
+  if (binding.run_id !== state.run_id) {
+    return { ok: false, reason: 'CAPABILITY_RUN_ID_MISMATCH' };
+  }
+  return { ok: false, reason: 'PREVIEW_DRAFT_NOT_AUTHORIZATION' };
+}
+
+function v2PreviewDenyReplayCaseResults(productionTypes, alwaysDenied) {
+  const policy = loadPolicy();
+  const mission = loadMission();
+  const state = loadState();
+  const baseBinding = {
+    run_id: state.run_id,
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
+    expires_at: '9999-12-31T23:59:59.000Z',
+    remote: 'origin',
+    branch: 'master',
+    head: 'PREVIEW_HEAD',
+    ledger_head_hash: 'PREVIEW_LEDGER_HEAD'
+  };
+  const base = {
+    schema: 'bha.capability_schema.v2.preview',
+    capability_id: 'preview-negative-base',
+    type: 'git_push',
+    binding: baseBinding,
+    allowed_command: 'git push origin master',
+    one_use_or_session_policy: 'one_use',
+    evidence_policy: { draft_evidence_is_authorization: false },
+    signing_key_purpose: 'owner',
+    replay_policy: 'block'
+  };
+  const withBase = (patch) => Object.assign({}, base, patch || {}, {
+    binding: Object.assign({}, baseBinding, patch && patch.binding ? patch.binding : {})
+  });
+  const cases = [
+    {
+      id: 'unknown_type',
+      expected: 'CAPABILITY_TYPE_NOT_SUPPORTED',
+      draft: withBase({ capability_id: 'preview-unknown', type: 'future_unknown' })
+    },
+    {
+      id: 'disallowed_type',
+      expected: 'DISALLOWED_CAPABILITY_TYPE',
+      draft: withBase({ capability_id: 'preview-provider', type: 'provider_call' })
+    },
+    {
+      id: 'incomplete_binding',
+      expected: 'CAPABILITY_BINDING_MISSING',
+      draft: Object.assign({}, base, { capability_id: 'preview-incomplete', binding: null })
+    },
+    {
+      id: 'stale_binding',
+      expected: 'CAPABILITY_BINDING_STALE',
+      draft: withBase({ capability_id: 'preview-stale', binding: { stale: true } })
+    },
+    {
+      id: 'wrong_policy_hash',
+      expected: 'CAPABILITY_POLICY_HASH_MISMATCH',
+      draft: withBase({ capability_id: 'preview-wrong-policy', binding: { policy_hash: 'wrong-policy-hash' } })
+    },
+    {
+      id: 'wrong_mission_hash',
+      expected: 'CAPABILITY_MISSION_HASH_MISMATCH',
+      draft: withBase({ capability_id: 'preview-wrong-mission', binding: { mission_hash: 'wrong-mission-hash' } })
+    },
+    {
+      id: 'expired',
+      expected: 'CAPABILITY_EXPIRED',
+      draft: withBase({ capability_id: 'preview-expired', binding: { expires_at: '2000-01-01T00:00:00.000Z' } })
+    },
+    {
+      id: 'replay',
+      expected: 'CAPABILITY_REPLAY_DETECTED',
+      draft: withBase({ capability_id: 'preview-replay' }),
+      usedCapabilityIds: ['preview-replay']
+    },
+    {
+      id: 'overbroad_command',
+      expected: 'CAPABILITY_COMMAND_OVERBROAD',
+      draft: withBase({
+        capability_id: 'preview-overbroad',
+        allowed_command: 'git push origin master && gh release create'
+      })
+    }
+  ];
+  return cases.map((item) => {
+    const observed = evaluateV2PreviewDraftCapability(item.draft, {
+      productionTypes,
+      alwaysDenied,
+      policy,
+      mission,
+      state,
+      usedCapabilityIds: item.usedCapabilityIds || []
+    }).reason;
+    return {
+      id: item.id,
+      expected: item.expected,
+      observed,
+      status: observed === item.expected ? 'PASS' : 'FAIL',
+      authorization_effect: false
+    };
+  });
+}
+
 function capabilityFramework() {
   const policy = loadPolicy();
   const rules = policy.capability_rules || {};
@@ -1064,6 +1223,7 @@ function capabilityFramework() {
     { id: 'replay', expected: 'CAPABILITY_REPLAY_DETECTED' },
     { id: 'overbroad_command', expected: 'CAPABILITY_COMMAND_OVERBROAD' }
   ];
+  const denyReplayCaseResults = v2PreviewDenyReplayCaseResults(productionTypes, alwaysDenied);
   return {
     schema: 'bha.capability_framework.v2.preview',
     recorded: false,
@@ -1180,6 +1340,8 @@ function capabilityFramework() {
       required_before_allow: true,
       coverage_complete: false,
       cases: denyReplayCases,
+      case_results: denyReplayCaseResults,
+      case_results_pass: denyReplayCaseResults.every((item) => item.status === 'PASS'),
       validation_wired: true
     },
     verifier_evidence_contract: {
@@ -1254,16 +1416,7 @@ function capabilityFramework() {
 function capabilityTypePolicy(type) {
   const normalized = String(type || '').trim();
   const framework = capabilityFramework();
-  if (!normalized) {
-    return { allowed: false, reason: 'CAPABILITY_TYPE_MISSING', type: normalized };
-  }
-  if (framework.always_denied_capability_types.includes(normalized)) {
-    return { allowed: false, reason: 'DISALLOWED_CAPABILITY_TYPE', type: normalized };
-  }
-  if (!framework.production_capability_types.includes(normalized)) {
-    return { allowed: false, reason: 'CAPABILITY_TYPE_NOT_SUPPORTED', type: normalized };
-  }
-  return { allowed: true, reason: 'CAPABILITY_TYPE_SUPPORTED', type: normalized };
+  return capabilityTypePolicyFromLists(normalized, framework.production_capability_types, framework.always_denied_capability_types);
 }
 
 function councilRuntimeStatus() {
@@ -5612,18 +5765,73 @@ async function handleAuditV2Preview(args) {
     process.exitCode = 2;
     return;
   }
+  const allowValidationInProgress = hasFlag(args, '--allow-validation-in-progress');
+  const remote = getOption(args, '--remote') || 'origin';
+  const branch = getOption(args, '--branch') || await currentBranch();
   const policy = loadPolicy();
+  const state = loadState();
   const validation = readJsonStrict(VALIDATION_PATH);
   const framework = capabilityFramework();
   const council = councilRuntimeStatus();
-  const gate = await gateStatus('origin', 'master');
+  const gate = await gateStatus(remote, branch);
   const auditCommand = validationCommandById(validation, 'audit_v2_preview_readonly');
   const frameworkCommand = validationCommandById(validation, 'capability_framework_status_readonly');
   const councilCommand = validationCommandById(validation, 'council_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const verifier = await verifierResult();
+  const verifierParsed = verifier.parsed || {};
+  const verifierIssues = Array.isArray(verifierParsed.issues) ? verifierParsed.issues : [];
+  const verifierWarnings = Array.isArray(verifierParsed.warnings) ? verifierParsed.warnings : [];
+  const verifierIssueCodes = verifierIssues.map((issue) => String(issue.code || 'UNKNOWN'));
+  const verifierWarningCodes = verifierWarnings.map((warning) => String(warning.code || 'UNKNOWN'));
+  const validationBootstrapIssueCodes = [
+    'STATE_POLICY_HASH_MISMATCH',
+    'VALIDATION_NOT_PASSING',
+    'VALIDATION_STALE_INPUTS',
+    'VALIDATION_POLICY_HASH_MISMATCH',
+    'VALIDATION_COMMAND_STALE',
+    'VALIDATION_EXPECTATION_STALE',
+    'VALIDATION_COMMAND_FAILED',
+    'VALIDATION_COMMAND_COUNT_MISMATCH',
+    'VALIDATION_COMMAND_MISSING',
+    'CHECKPOINT_POLICY_HASH_MISMATCH',
+    'UNVERIFIED_WORKTREE_CHANGE'
+  ];
+  const validationBootstrapWarningCodes = ['CLOSEOUT_NOT_CURRENT_LEDGER_HEAD'];
+  const verifierStrictPass = verifierParsed.ok === true &&
+    verifierParsed.status === 'PASS' &&
+    verifierIssues.length === 0 &&
+    verifierWarnings.length === 0;
+  const verifierValidationBootstrapPass = allowValidationInProgress &&
+    (verifierParsed.status === 'PASS' || verifierParsed.status === 'FAIL') &&
+    (verifierIssueCodes.length > 0 || verifierWarningCodes.length > 0) &&
+    verifierIssueCodes.every((code) => validationBootstrapIssueCodes.includes(code)) &&
+    verifierWarningCodes.every((code) => validationBootstrapWarningCodes.includes(code));
+  const failedRecordedValidationIds = state &&
+    state.validation &&
+    Array.isArray(state.validation.commands)
+    ? state.validation.commands
+      .filter((command) => command && command.status !== 'PASS')
+      .map((command) => String(command.id || 'UNKNOWN'))
+    : [];
   const checks = [];
 
+  checks.push(auditCheck(
+    'verifier_gate_clean_or_explicit_bootstrap',
+    'V2 preview audit is verifier-gated: strict mode requires verifier PASS with no issues or warnings; validation bootstrap must be explicit and limited to stale evidence issues.',
+    verifierStrictPass || verifierValidationBootstrapPass,
+    {
+      verifier_status: verifierParsed.status || 'UNKNOWN',
+      issues: verifierIssues.length,
+      warnings: verifierWarnings.length,
+      issue_codes: verifierIssueCodes,
+      warning_codes: verifierWarningCodes,
+      validation_in_progress_allowed: allowValidationInProgress,
+      validation_in_progress_override: verifierValidationBootstrapPass,
+      failed_recorded_validation_ids: failedRecordedValidationIds
+    },
+    ['scripts/bha-verify.js', '.bha/state.json', '.bha/ledger.jsonl']
+  ));
   checks.push(auditCheck(
     'capability_framework_machine_readable_draft',
     'Capability framework exposes a machine-readable non-enabling schema, binding, command, evidence, and replay draft.',
@@ -5656,9 +5864,15 @@ async function handleAuditV2Preview(args) {
       framework.deny_replay_test_matrix.status === 'MACHINE_READABLE_PREVIEW' &&
       framework.deny_replay_test_matrix.required_before_allow === true &&
       framework.deny_replay_test_matrix.coverage_complete === false &&
+      framework.deny_replay_test_matrix.case_results_pass === true &&
       Array.isArray(framework.deny_replay_test_matrix.cases) &&
+      Array.isArray(framework.deny_replay_test_matrix.case_results) &&
       ['unknown_type', 'disallowed_type', 'incomplete_binding', 'stale_binding', 'wrong_policy_hash', 'wrong_mission_hash', 'expired', 'replay', 'overbroad_command'].every((id) => {
-        return framework.deny_replay_test_matrix.cases.some((item) => item.id === id);
+        return framework.deny_replay_test_matrix.cases.some((item) => item.id === id) &&
+          framework.deny_replay_test_matrix.case_results.some((item) => item.id === id &&
+            item.status === 'PASS' &&
+            item.observed === item.expected &&
+            item.authorization_effect === false);
       })),
     { deny_replay_test_matrix: framework.deny_replay_test_matrix || null },
     ['scripts/bha-run.js', '.bha/validation.yaml']
@@ -5671,10 +5885,12 @@ async function handleAuditV2Preview(args) {
       framework.verifier_evidence_contract.verifier_must_reject_incomplete_preview_schema === true &&
       framework.verifier_evidence_contract.draft_evidence_is_authorization === false &&
       framework.verifier_evidence_contract.authorization_requires_policy_allow === true &&
+      (verifierStrictPass || verifierValidationBootstrapPass) &&
       fileContains(VERIFY_SCRIPT, 'V2_CAPABILITY_PREVIEW_SCHEMA_INCOMPLETE')),
     {
       verifier_evidence_contract: framework.verifier_evidence_contract || null,
-      verifier_status: verifier.parsed ? verifier.parsed.status : 'UNKNOWN'
+      verifier_status: verifierParsed.status || 'UNKNOWN',
+      verifier_gate_pass: verifierStrictPass || verifierValidationBootstrapPass
     },
     ['scripts/bha-run.js', 'scripts/bha-verify.js']
   ));
@@ -5745,7 +5961,7 @@ async function handleAuditV2Preview(args) {
       auditCommand.expect.read_only === true &&
       auditCommand.expect.recorded === false &&
       policyAllowsArgv(policy, auditCommand.argv || []) &&
-      policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'audit-v2-preview', '--format', 'json'])),
+      policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'audit-v2-preview', '--format', 'json', '--allow-validation-in-progress'])),
     {
       audit_v2_preview_validation_command_present: Boolean(auditCommand),
       framework_status_validation_command_present: Boolean(frameworkCommand),
@@ -5801,6 +6017,7 @@ async function handleAuditV2Preview(args) {
       production_capability_types: framework.production_capability_types,
       machine_readable_draft_status: framework.machine_readable_draft ? framework.machine_readable_draft.status : 'MISSING',
       deny_replay_matrix_status: framework.deny_replay_test_matrix ? framework.deny_replay_test_matrix.status : 'MISSING',
+      deny_replay_matrix_cases_pass: framework.deny_replay_test_matrix ? framework.deny_replay_test_matrix.case_results_pass : false,
       new_production_capability_allowed: framework.enablement_gate
         ? framework.enablement_gate.new_production_capability_allowed
         : null
@@ -5812,6 +6029,16 @@ async function handleAuditV2Preview(args) {
         ? council.activation_gate.runtime_activation_allowed
         : null,
       automated_agent_spawn_allowed: council.automated_agent_spawn_allowed
+    },
+    remote,
+    branch,
+    validation_in_progress_allowed: allowValidationInProgress,
+    validation_in_progress_override: verifierValidationBootstrapPass,
+    verifier_gate: {
+      strict_pass: verifierStrictPass,
+      accepted: verifierStrictPass || verifierValidationBootstrapPass,
+      issue_codes: verifierIssueCodes,
+      warning_codes: verifierWarningCodes
     },
     proof_boundary: 'audit-v2-preview is read-only preview coverage. It does not enable capabilities, spawn agents, write memory, push, deploy, release, tag, publish packages, read private keys, or turn draft evidence into authorization.'
   }));
@@ -6288,6 +6515,9 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
         { command: 'git', args: ['diff', '--check'], reason: 'local whitespace validation' },
         { command: 'git', args: ['status'], reason: 'local repository status inspection' },
         { command: 'node', args: ['scripts/bha-run.js', 'rollback-drill', '--format', 'json'], reason: 'read-only rollback drill' },
+        { command: 'node', args: ['scripts/bha-run.js', 'capability-framework-status', '--format', 'json'], reason: 'read-only V2 capability framework status' },
+        { command: 'node', args: ['scripts/bha-run.js', 'council-status', '--format', 'json'], reason: 'read-only V2 council runtime status' },
+        { command: 'node', args: ['scripts/bha-run.js', 'audit-v2-preview', '--format', 'json', '--allow-validation-in-progress'], reason: 'read-only V2 preview audit during validation bootstrap' },
         { command: 'node', args_prefix: ['scripts/bha-run.js', 'check', '--'], reason: 'nested dry-run policy check' }
       ]
     },
@@ -6372,11 +6602,80 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
   const validation = {
     schema: 'bha.validation.v1',
     version: '1.2.0-regression-fixture',
-    required_commands: [{
-      id: 'rollback_drill_readonly',
-      argv: ['node', 'scripts/bha-run.js', 'rollback-drill', '--format', 'json'],
-      expect: { exit_code: 0, ok: true, status: 'PASS' }
-    }]
+    required_commands: [
+      {
+        id: 'rollback_drill_readonly',
+        argv: ['node', 'scripts/bha-run.js', 'rollback-drill', '--format', 'json'],
+        expect: { exit_code: 0, ok: true, status: 'PASS' }
+      },
+      {
+        id: 'capability_framework_status_readonly',
+        argv: ['node', 'scripts/bha-run.js', 'capability-framework-status', '--format', 'json'],
+        expect: {
+          exit_code: 0,
+          ok: true,
+          status: 'CAPABILITY_FRAMEWORK_STATUS',
+          recorded: false,
+          read_only: true,
+          json_paths: {
+            'machine_readable_draft.status': 'DRAFT_NON_ENABLING',
+            'machine_readable_draft.authorization_effect': false,
+            'machine_readable_draft.schema_draft.schema': 'bha.capability_schema.v2.preview',
+            'deny_replay_test_matrix.status': 'MACHINE_READABLE_PREVIEW',
+            'deny_replay_test_matrix.case_results_pass': true,
+            'deny_replay_test_matrix.case_results.0.status': 'PASS',
+            'deny_replay_test_matrix.case_results.8.status': 'PASS',
+            'verifier_evidence_contract.verifier_must_reject_incomplete_preview_schema': true,
+            'verifier_evidence_contract.draft_evidence_is_authorization': false
+          },
+          has_keys: ['machine_readable_draft', 'deny_replay_test_matrix', 'verifier_evidence_contract']
+        }
+      },
+      {
+        id: 'council_status_readonly',
+        argv: ['node', 'scripts/bha-run.js', 'council-status', '--format', 'json'],
+        expect: {
+          exit_code: 0,
+          ok: true,
+          status: 'COUNCIL_RUNTIME_STATUS',
+          recorded: false,
+          read_only: true,
+          json_paths: {
+            'dry_run_model.schema': 'bha.council_dry_run.v2.preview',
+            'dry_run_model.status': 'DRAFT_NON_ACTIVATING',
+            'dry_run_model.authorization_effect': false,
+            'role_boundary_matrix.0.may_grant_remote_authority': false,
+            'role_boundary_matrix.0.may_create_proof': false,
+            'role_boundary_matrix.0.may_spawn_agents': false,
+            'activation_regression_matrix.status': 'MACHINE_READABLE_PREVIEW',
+            'activation_regression_matrix.coverage_complete': false
+          },
+          has_keys: ['dry_run_model', 'role_boundary_matrix', 'activation_regression_matrix']
+        }
+      },
+      {
+        id: 'audit_v2_preview_readonly',
+        argv: ['node', 'scripts/bha-run.js', 'audit-v2-preview', '--format', 'json', '--allow-validation-in-progress'],
+        expect: {
+          exit_code: 0,
+          ok: true,
+          status: 'PASS',
+          recorded: false,
+          read_only: true,
+          json_paths: {
+            'framework_summary.machine_readable_draft_status': 'DRAFT_NON_ENABLING',
+            'framework_summary.deny_replay_matrix_status': 'MACHINE_READABLE_PREVIEW',
+            'framework_summary.deny_replay_matrix_cases_pass': true,
+            'framework_summary.new_production_capability_allowed': false,
+            'council_summary.dry_run_model_status': 'DRAFT_NON_ACTIVATING',
+            'council_summary.runtime_activation_allowed': false,
+            'validation_in_progress_allowed': true,
+            'verifier_gate.accepted': true
+          },
+          has_keys: ['schema', 'checks', 'framework_summary', 'council_summary', 'proof_boundary']
+        }
+      }
+    ]
   };
   writeTextFile(path.join(fixtureRoot, '.gitignore'), '.bha/local/\n');
   writeTextFile(path.join(fixtureRoot, 'AGENTS.md'), '# Regression Fixture\n\nAGENTS.md guides behavior and is not proof.\n');
@@ -6413,22 +6712,22 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
   writeTextFile(path.join(fixtureRoot, '.bha', 'capabilities.jsonl'), '');
 
   const validationInputs = validationInputsHashForRoot(fixtureRoot);
-  const commandRecord = {
-    id: 'rollback_drill_readonly',
-    argv: ['node', 'scripts/bha-run.js', 'rollback-drill', '--format', 'json'],
-    expect: { exit_code: 0, ok: true, status: 'PASS' },
+  const commandRecords = validation.required_commands.map((command) => ({
+    id: command.id,
+    argv: command.argv,
+    expect: command.expect || {},
     decision: 'ALLOW',
     allowed: true,
     rule: 'ALLOW_EXACT',
     category: 'local',
-    reason: 'read-only rollback drill',
+    reason: 'regression fixture seeded validation evidence',
     spawned: true,
     status: 'PASS',
     problems: [],
     exit_code: 0,
     signal: null,
     error: null
-  };
+  }));
   const state = {
     schema: 'bha.state.v1',
     version: '1.0.0',
@@ -6445,7 +6744,7 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
       policy_hash: policyHash(policy),
       mission_hash: missionHash(mission),
       ledger_event_hash: 'PENDING',
-      commands: [commandRecord]
+      commands: commandRecords
     },
     capability_selftest: {
       status: 'PASS',
@@ -6466,7 +6765,7 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
     inputs_hash: validationInputs,
     policy_hash: policyHash(policy),
     mission_hash: missionHash(mission),
-    commands: [commandRecord]
+    commands: commandRecords
   }, 'GENESIS');
   state.validation.ledger_event_hash = validationEvent.event_hash;
 
@@ -6489,13 +6788,13 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
     ledger_head_hash: validationEvent.event_hash,
     policy_hash: policyHash(policy),
     mission_hash: missionHash(mission),
-    completed: ['rollback_drill_readonly'],
+    completed: validation.required_commands.map((command) => command.id),
     changed_files: [],
     validation_run: {
       status: 'PASS',
       completed_at: state.validation.completed_at,
       ledger_event_hash: validationEvent.event_hash,
-      command_count: 1
+      command_count: validation.required_commands.length
     },
     validation_not_run: [],
     verifier_status: 'PASS',
@@ -6797,11 +7096,16 @@ async function handleRegressionSelftest(args) {
   checks.push(regressionCheck('capability_framework_deny_replay_matrix_status', Boolean(rootCapabilityFrameworkCommand &&
     frameworkJsonPaths['deny_replay_test_matrix.status'] === 'MACHINE_READABLE_PREVIEW' &&
     frameworkJsonPaths['deny_replay_test_matrix.coverage_complete'] === false &&
-    fileContains(RUN_SCRIPT, 'overbroad_command') &&
-    fileContains(RUN_SCRIPT, 'wrong_policy_hash') &&
-    fileContains(RUN_SCRIPT, 'wrong_mission_hash')), {
+    frameworkJsonPaths['deny_replay_test_matrix.case_results_pass'] === true &&
+    frameworkJsonPaths['deny_replay_test_matrix.case_results.0.status'] === 'PASS' &&
+    frameworkJsonPaths['deny_replay_test_matrix.case_results.8.status'] === 'PASS' &&
+    fileContains(RUN_SCRIPT, 'evaluateV2PreviewDraftCapability') &&
+    fileContains(RUN_SCRIPT, 'CAPABILITY_COMMAND_OVERBROAD') &&
+    fileContains(RUN_SCRIPT, 'CAPABILITY_POLICY_HASH_MISMATCH') &&
+    fileContains(RUN_SCRIPT, 'CAPABILITY_MISSION_HASH_MISMATCH')), {
     deny_replay_matrix_status: frameworkJsonPaths['deny_replay_test_matrix.status'] || 'MISSING',
-    coverage_complete: frameworkJsonPaths['deny_replay_test_matrix.coverage_complete']
+    coverage_complete: frameworkJsonPaths['deny_replay_test_matrix.coverage_complete'],
+    case_results_pass: frameworkJsonPaths['deny_replay_test_matrix.case_results_pass']
   }));
   checks.push(regressionCheck('verifier_v2_preview_contract_wired', fileContains(VERIFY_SCRIPT, 'V2_CAPABILITY_PREVIEW_SCHEMA_INCOMPLETE') &&
     fileContains(VERIFY_SCRIPT, 'incomplete_v2_preview_contract_rejected') &&
@@ -6843,7 +7147,10 @@ async function handleRegressionSelftest(args) {
     rootAuditV2PreviewCommand.expect.read_only === true &&
     rootAuditV2PreviewCommand.expect.recorded === false &&
     auditV2JsonPaths['framework_summary.machine_readable_draft_status'] === 'DRAFT_NON_ENABLING' &&
-    auditV2JsonPaths['council_summary.dry_run_model_status'] === 'DRAFT_NON_ACTIVATING'), {
+    auditV2JsonPaths['framework_summary.deny_replay_matrix_cases_pass'] === true &&
+    auditV2JsonPaths['council_summary.dry_run_model_status'] === 'DRAFT_NON_ACTIVATING' &&
+    auditV2JsonPaths['validation_in_progress_allowed'] === true &&
+    auditV2JsonPaths['verifier_gate.accepted'] === true), {
     validation_command_present: Boolean(rootAuditV2PreviewCommand),
     json_paths: auditV2JsonPaths
   }));
