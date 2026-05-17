@@ -69,3 +69,217 @@ The long-term goal is not a remote release or push state. The current local stab
 Entering the next local planning stage requires `stable-exit-review` to report `PASS`, `next-local-plan-status` to report `NEXT_LOCAL_PLAN_READY`, a clean worktree, and `push_required_now=false`. That state means local planning can continue; it does not mean the long-term goal is complete, does not authorize push, and does not enable V2 capability or council runtime activation.
 
 Any future move beyond the current hold lines requires a new explicit objective and local deny/replay/verifier coverage before enablement.
+
+## Next-Stage Threat Model And Gate Plan
+
+Status: proposed next-stage planning artifact, not proof.
+
+This section turns the next local planning queue into concrete stop gates. Each claim should be read as one of:
+
+- verified: observed in current command output or repository files
+- inferred: derived from observed repository state
+- proposed: planned requirement not yet implemented
+- unknown: requires future inspection, CI output, or remote settings
+
+### Threat Model
+
+| Threat or failure mode | Claim | Current treatment | Required next control |
+| --- | --- | --- | --- |
+| Local agent runs a denied command | verified | runner policy denies known command families | keep deny taxonomy and add regression when a new family appears |
+| Shell success after denied check | verified | `check` and `assert-deny` now have distinct exit semantics | keep validation negative tests on `assert-deny` |
+| Runtime changes files outside allowed paths | verified | `exec` records before/after git status and enforces policy paths | keep path enforcement in regression coverage |
+| Ledger write race | verified | local ledger lock exists | keep stale lock recovery and add replay checks before stable freeze |
+| Capability double consume | verified | local capability consume is lock-protected | add future black-box concurrency fixture if needed |
+| Local hook bypass with `--no-verify` | verified risk | local hook cannot prevent it | remote CI and branch protection required |
+| Hook not installed or hooksPath changed | verified risk | `hook-status` reports local setup | remote branch protection required |
+| GitHub UI or token push | verified risk | local BHA cannot block it | remote branch protection and required checks required |
+| Workflow tampering | proposed risk | no CI workflow is implemented yet | minimum-permission CI and branch protection for workflow changes required |
+| Verifier tampering | proposed risk | verifier self-test exists but lives in repo | required remote checks and code review required |
+| Hand-edited ledger/state | verified risk | verifier hash-chain and consistency checks detect some edits | ledger/state replay minimum required |
+| Old checkpoint/closeout replay | verified | gate and status expose current git reality mismatch | keep stable-exit and gate checks bound to current HEAD |
+| `.bha/local` missing in fresh clone | verified | fresh clone can verify tracked trust without local push authorization | keep local-only recovery path explicit |
+| Signed wrong payload | proposed risk | status reports mismatch and signer boundary | operator playbook and signed-payload-status required before push |
+| CI writes tracked evidence | proposed risk | not implemented | CI must remain read-only until a dedicated evidence model exists |
+
+### Bypass Matrix
+
+| Bypass path | Claim | Classification | Stop gate |
+| --- | --- | --- | --- |
+| `git push --no-verify` | verified risk | remote protection required | branch protection with required BHA checks |
+| Missing `.githooks/pre-push` install | verified risk | remote protection required | branch protection; hook is convenience only |
+| Local `core.hooksPath` changed | verified risk | remote protection required | branch protection; `hook-status` is diagnostic |
+| GitHub UI edit | verified risk | remote protection required | restrict direct writes and require checks |
+| Token push from another machine | verified risk | remote protection required | restrict pushers and require checks |
+| Force push | proposed risk | remote protection required | block force pushes |
+| Branch deletion | proposed risk | remote protection required | block deletions |
+| Admin bypass | unknown | accepted only if explicitly documented | branch protection ADR must state bypass policy |
+| Modify workflow to skip checks | proposed risk | remote protection required | protect workflow changes and review required |
+| Modify verifier to ignore failures | proposed risk | remote protection plus review required | required checks and reviewer focus on verifier diffs |
+| Hand edit `.bha/state.json` | verified risk | verifier detect target | state replay consistency |
+| Hand edit `.bha/ledger.jsonl` | verified risk | verifier detect target | hash chain and event schema checks |
+| Reuse old signed capability | verified | local block | expiry, head, ledger head, policy hash, mission hash, replay checks |
+| Reuse consumed capability | verified | local block | local session and consume checks |
+| Copy `.bha/local` across machines | proposed risk | local block or accepted residual risk | local-only evidence remains non-tracked and context-bound |
+
+### Minimum Operator Playbook
+
+Claim status: proposed operator procedure using existing commands.
+
+Normal local verification:
+
+```powershell
+git status --short --branch
+node scripts/bha-run.js validate
+node scripts/bha-run.js checkpoint --format json
+node scripts/bha-run.js closeout --record --format json
+node scripts/bha-verify.js
+node scripts/bha-run.js stable-exit-status --remote 'origin' --branch 'master' --format json
+```
+
+Evidence repair after tracked file changes:
+
+1. Treat dirty tracked files as unverified until validation runs.
+2. Run `node scripts/bha-run.js validate`.
+3. If validation passes, run `checkpoint` and `closeout --record`.
+4. Run the verifier.
+5. Commit evidence only after explicit commit authorization.
+
+Gate blocked recovery:
+
+- `VALIDATION_STALE_INPUTS`: run validation after finishing tracked edits.
+- `UNVERIFIED_WORKTREE_CHANGE`: validate the current tracked change or commit/revert it with explicit authorization.
+- `CLOSEOUT_NOT_CURRENT_LEDGER_HEAD`: record a new closeout only after verifier-compatible evidence exists.
+- `HEAD_MISMATCH`: regenerate checkpoint/closeout or push payload for current git `HEAD`.
+- `NO_VALID_CONSUMED_GIT_PUSH_CAPABILITY`: only relevant before an operator-chosen real push; regenerate and sign current local payload outside BHA.
+
+Rollback path:
+
+- Stop the next phase.
+- Keep remote actions disabled.
+- Use the failing verifier or gate reason as the repair target.
+- Make the smallest local repair.
+- Rerun validation and verifier before recording checkpoint/closeout.
+
+### CI Read-Only JSON Strict Gate
+
+Claim status: proposed remote gate design, not implemented.
+
+CI requirements:
+
+- `permissions: contents: read`
+- no repository secrets
+- no write token
+- no dependency install or package manager mutation
+- no provider calls
+- no deploy, release, tag, package publish, or push
+- no writes to `.bha/ledger.jsonl`, `.bha/state.json`, or `.bha/checkpoint.json`
+- JSON artifact is an observation report, not ledger evidence
+
+Proposed checks:
+
+```powershell
+node --check scripts/bha-run.js
+node --check scripts/bha-verify.js
+node scripts/bha-verify.js --self-test
+node scripts/bha-verify.js
+node scripts/bha-run.js audit-v12 --format json
+node scripts/bha-run.js audit-v1-stable --format json
+```
+
+Future strict interface target:
+
+```powershell
+node scripts/bha-verify.js --format json --strict
+```
+
+Stop gate:
+
+Do not make CI required until it is stable as a dry-run check and does not depend on `.bha/local`.
+
+### Branch Protection Enforcement
+
+Claim status: proposed GitHub configuration checklist, not applied.
+
+Required settings before claiming remote gate:
+
+- required status checks before merge
+- fixed check names for BHA syntax, verifier, self-test, and audit
+- require branch up to date before merge, unless explicitly waived
+- block force pushes
+- block branch deletion
+- decide whether PR is required or direct owner push is allowed
+- decide whether administrators can bypass
+- restrict push access where supported
+- document emergency bypass and cleanup path
+
+Stop gate:
+
+No claim of remote enforcement until the protection rules are actually applied and verified from GitHub repository settings.
+
+### Fresh Clone And Bypass Validation Matrix
+
+Claim status: proposed validation matrix.
+
+Fresh clone acceptance:
+
+- `node scripts/bha-verify.js` passes or reports only tracked evidence issues that can be repaired without `.bha/local`.
+- `recover-status` explains that `.bha/local` is not required for tracked verifier trust.
+- `gate-status` fails closed for real push capability when no local consumed capability exists.
+- validation, checkpoint, closeout, and verifier can restore tracked local trust.
+
+Bypass validation:
+
+- simulate missing hook configuration with `hook-status`
+- run prepush-check without valid capability and require fail-closed
+- verify stale unsigned and signed payloads are rejected
+- verify old checkpoint/closeout HEAD mismatch is reported
+- verify denied command families stay denied through `assert-deny`
+
+### 30-Day Stability Window
+
+Claim status: proposed release discipline.
+
+The window is not just elapsed time. It requires:
+
+- repeated CI dry-run passes after remote gate exists
+- at least one fresh clone trust restoration drill
+- no unresolved P1 issue
+- no unresolved P2 issue without an accepted risk note
+- documented handling for any verifier, validation, or gate regression
+- platform support statement: Windows local and Linux CI minimum, unless narrowed explicitly
+
+P1 failure resets the window. P2 failure either resets the window or requires a written accepted-risk note.
+
+### Packaging Readiness Review
+
+Claim status: proposed future review, not approval.
+
+Skill, repo template, MCP, CLI, or reusable workflow work remains non-activating until:
+
+- V1 freeze criteria pass
+- remote gate is applied or explicitly deferred with accepted risk
+- fresh clone behavior is documented
+- supported platforms are declared
+- the package does not include `.bha/local`, secrets, one-use capabilities, or dynamic evidence
+- the package cannot bypass `bha-run` or `bha-verify`
+
+Default decision: not ready until the above are true.
+
+### Capability Expansion Readiness Review
+
+Claim status: proposed future review, not approval.
+
+Any new capability family stays denied unless all are present:
+
+- explicit user objective
+- policy taxonomy and deny-by-default entry
+- schema and binding rules
+- runner behavior
+- ledger event
+- verifier rule
+- negative tests
+- replay tests
+- rollback or recovery path
+- remote gate impact analysis
+
+Default decision: do not enable provider, memory, deploy, release, package, ssh, or arbitrary command capabilities.

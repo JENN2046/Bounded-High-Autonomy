@@ -78,6 +78,97 @@ Closeout can record evidence bindings, warnings, skipped validation, risks, and 
 
 V1 changes should be narrow, locally reversible, and validated through checked commands. Scope expansion to provider calls, deployment, release, generic external capabilities, dependency changes, or remote automation belongs outside V1 unless explicitly approved as a later version.
 
+## V1 Freeze Criteria
+
+Claim status: proposed freeze criteria, grounded in the current V1 command surface and verifier expectations.
+
+V1 can be treated as a stable local baseline only when all of the following are true from repository reality:
+
+- Scope is fixed to the local runtime kernel: `bha-run`, `bha-verify`, policy, mission, validation, ledger/state, checkpoint, closeout, rollback, pre-push gate, and `git_push` capability.
+- Non-goals stay explicit: no provider calls, memory writes, dependency changes, deploy/release/tag/package publish, generic remote automation, OS-level sandboxing, remote attestation, or private-key custody.
+- The worktree is clean before stable-exit claims.
+- The verifier passes with no issues or warnings.
+- Validation evidence is current for tracked inputs.
+- Checkpoint and closeout are bound to the current git `HEAD`.
+- `git_push` remains the only production capability family.
+- Unknown, incomplete, unsupported, provider, memory, deploy, release, package, ssh, and generic command capabilities remain fail-closed.
+- Path allowlist enforcement is active for runtime `exec` file effects.
+- `AGENTS.md`, roadmap text, closeout prose, prompt text, and council output remain guidance, not proof.
+
+V1 freeze acceptance commands:
+
+```powershell
+git status --short --branch
+node --check scripts/bha-run.js
+node --check scripts/bha-verify.js
+node scripts/bha-verify.js --self-test
+node scripts/bha-run.js regression-selftest --format json
+node scripts/bha-run.js validate
+node scripts/bha-run.js verify --record
+node scripts/bha-verify.js
+node scripts/bha-run.js audit-v12 --format json
+node scripts/bha-run.js audit-v1-stable --format json
+node scripts/bha-run.js stable-exit-status --remote 'origin' --branch 'master' --format json
+node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json
+```
+
+P1 blockers:
+
+- verifier FAIL or any verifier warning under the stable path
+- stale validation inputs
+- dirty tracked worktree not covered by current validation evidence
+- checkpoint or closeout bound to an older git `HEAD`
+- state/ledger mismatch
+- accepted unsupported closeout or capability claim
+- real remote side effect without explicit operator intent and a valid current capability
+- non-`git_push` production capability enablement
+- CI or integration layer writing tracked evidence without a dedicated evidence model
+
+P2 blockers:
+
+- missing fresh-clone recovery instructions
+- unclear gate-status recovery reason
+- incomplete deny taxonomy for a newly discovered high-risk command family
+- status/audit command that cannot name its proof boundary
+- validation command that does not record policy decision, allowed status, spawned status, and exit code
+
+Completion definition:
+
+V1 Stable means the local-first kernel is internally consistent, repeatable from tracked evidence, and ready for remote gate work. It does not mean the project has remote enforcement, remote attestation, production deployment safety, or authorization to push.
+
+Rollback path:
+
+If a freeze check fails after a local change, stop expansion work, inspect verifier and validation output, make the smallest local repair, rerun the acceptance commands, and record checkpoint/closeout only after verifier and validation are clean.
+
+Residual risk:
+
+V1 remains tamper-evident rather than tamper-proof. It cannot by itself stop GitHub UI edits, token pushes, branch protection bypasses, malicious workflow changes, or OS/network side effects outside the runtime policy layer.
+
+## Ledger/State Replay Minimum
+
+Claim status: proposed verifier hardening target.
+
+The verifier should treat `.bha/ledger.jsonl` as the fact source and `.bha/state.json` as a derived read model. The minimum V1 replay set is:
+
+- ledger event count
+- current ledger head hash
+- policy hash and mission hash observed in recent trusted events
+- latest validation status, event hash, input hash, and completed command ids
+- latest recorded verifier result and the checked ledger head it applies to
+- latest checkpoint event hash, verified ledger head, final ledger head, git branch, and git `HEAD`
+- latest closeout event hash, verified ledger head, final ledger head, git branch, and git `HEAD`
+- rollback evidence presence
+- V1 production capability scope: exactly `git_push`
+- tracked capability event boundaries versus `.bha/local/` local-only push authorization evidence
+
+Replay completion definition:
+
+The verifier can rebuild the listed fields from ledger events and compare them with `.bha/state.json`. Any mismatch in the trusted subset is a verifier failure. Cache-only state fields may exist, but they must not become proof sources unless the verifier can derive or validate them.
+
+Replay stop gate:
+
+Do not claim V1 stable if the trusted state subset cannot be explained from ledger evidence or repository reality.
+
 ## Local Reproduction
 
 A new operator or contributor should be able to reproduce tracked trust locally with:

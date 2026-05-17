@@ -38,3 +38,21 @@ Recent history uses conventional commit prefixes such as `feat:`, `fix:`, `chore
 ## Security & Agent-Specific Rules
 
 Do not store private keys, secrets, tokens, provider credentials, or `.env` values in the repository. Do not add dependencies, network calls, provider automation, deploy/release controls, tag publishing, or destructive external actions for v1. Treat repository reality, ledger evidence, verifier output, and policy hash as sources of truth; prompts and closeout prose are not proof.
+
+## Multi-Agent Planning Review
+
+Use multi-agent planning only for non-trivial roadmap, security, CI, remote, capability, architecture, or automation decisions. Do not use it for small local fixes, routine validation, formatting, or narrow documentation edits.
+
+Role-based planning is advisory only. Consensus is not proof, authorization, or permission. Repository reality, policy, verifier output, validation evidence, ledger/state, git state, and explicit user authorization remain authoritative.
+
+For any multi-agent plan, record:
+- current repository state
+- proposed phases
+- validation or gate for each phase
+- rollback or stop condition
+- unresolved P1/P2 risks
+- which claims are verified, inferred, proposed, or unknown
+
+A contrarian review pass is required before executing any plan that affects security boundaries, remote gates, capabilities, CI, ledger/state semantics, provider access, memory writes, deployment, release, or multi-agent automation.
+
+Unresolved P1 objections block execution unless the user explicitly accepts the risk. Multi-agent discussion never authorizes commits, pushes, remote writes, capability issuance, provider calls, memory writes, deployments, releases, tags, dependency changes, or bypassing hard stop gates.

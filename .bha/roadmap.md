@@ -136,6 +136,81 @@ Stage transition rule:
 - Enter the next local planning stage only when `stable-exit-review` reports `PASS`, `next-local-plan-status` reports `NEXT_LOCAL_PLAN_READY`, the worktree is clean, and `push_required_now=false`.
 - Treat that transition as local planning readiness only. It does not authorize push, complete the long-term goal, or enable V2 capability/council runtime work.
 
+## Next Stage Stop-Gate Queue
+
+Claim status: proposed next-stage execution order. The queue is blocked by current repository reality until dirty tracked files are validated, checkpointed, closeout-recorded, and committed or otherwise resolved.
+
+Current state check:
+
+- Verified: the local branch is `master`.
+- Verified: `HEAD` is `18dfa2a` and `origin/master` is `db27bfc` in the local commit graph.
+- Inferred: the local branch is two commits ahead of `origin/master`.
+- Verified: `AGENTS.md` is currently dirty.
+- Verified: `node scripts/bha-verify.js` currently fails because validation inputs changed and `AGENTS.md` is an unverified worktree change.
+- Proposed next safe action: finish the local documentation update, run validation, record checkpoint and closeout if validation passes, then decide whether to commit the tracked evidence repair.
+
+Stop-gate order:
+
+1. Current State Check
+   - Artifact: this roadmap state note plus command output in the session.
+   - Validation: `git status --short --branch`, `git log --oneline --decorate -n 8`, `node scripts/bha-verify.js`.
+   - Stop gate: do not move to stable claims while verifier reports stale inputs or unverified worktree changes.
+   - Recovery: validate current tracked inputs, then checkpoint and closeout after verifier-compatible evidence is available.
+
+2. V1 Freeze Criteria
+   - Artifact: `BHA_V1_STABILITY.md`.
+   - Validation: stable acceptance command list in the freeze criteria.
+   - Stop gate: any P1 freeze blocker prevents V1 stable claims.
+   - Recovery: repair the failing boundary first; do not compensate with prose or council consensus.
+
+3. Threat Model + Bypass Matrix
+   - Artifact: `BHA_LONG_TERM_GOAL_AUDIT.md`.
+   - Validation: every bypass row must have one of `local block`, `verifier detect`, `remote protection required`, or `accepted residual risk`.
+   - Stop gate: do not claim remote gate readiness without covering hook bypass, token/UI pushes, workflow tampering, verifier tampering, ledger/state edits, and stale evidence replay.
+   - Recovery: add missing bypass rows before implementing CI or branch protection.
+
+4. Ledger/State Replay Minimum
+   - Artifact: `BHA_V1_STABILITY.md`.
+   - Validation: future verifier check derives the trusted state subset from ledger events.
+   - Stop gate: do not freeze V1 if trusted state fields cannot be traced to ledger or repository reality.
+   - Recovery: reduce the trusted subset or implement replay checks before relying on the field.
+
+5. Minimum Operator Playbook
+   - Artifact: `BHA_LONG_TERM_GOAL_AUDIT.md` and existing V1 operator flow.
+   - Validation: a fresh operator can follow validate, verify, checkpoint, closeout, evidence repair, and gate blocked recovery without reading source.
+   - Stop gate: do not enable branch protection before the minimum recovery path is documented.
+   - Recovery: add a small operator-facing procedure for the blocked gate before turning on remote enforcement.
+
+6. CI Read-only JSON Strict Gate
+   - Artifact: future `.github/workflows/bha-gate.yml` design, not implemented in this queue.
+   - Validation: CI uses read-only repository permissions, no secrets, no write token, no tracked evidence writes, and stable JSON output.
+   - Stop gate: do not set required checks until CI is stable as a dry run.
+   - Recovery: keep CI non-required while fixing workflow differences.
+
+7. Branch Protection Enforcement
+   - Artifact: branch protection configuration checklist.
+   - Validation: required checks are named, force push and branch deletion are blocked, bypass policy is explicit, and stale branches are handled.
+   - Stop gate: do not call the project remotely gated until branch protection is applied and bypass-audited.
+   - Recovery: document any accepted admin bypass as residual risk.
+
+8. Fresh Clone + Bypass Validation
+   - Artifact: fresh clone and bypass test matrix.
+   - Validation: tracked trust passes without `.bha/local`; local push capability remains missing/fail-closed until regenerated.
+   - Stop gate: do not package or template the system until fresh clone behavior is repeatable.
+   - Recovery: fix tracked trust replay first, not local-only capability state.
+
+9. 30-Day Stability Window
+   - Artifact: stability window record.
+   - Validation: a defined number of CI runs, fresh-clone checks, and supported-platform checks pass without unresolved P1/P2.
+   - Stop gate: packaging readiness does not begin until the window is satisfied or explicitly waived.
+   - Recovery: reset or annotate the window after P1/P2 fixes.
+
+10. Packaging and Capability Readiness Reviews
+   - Artifact: readiness notes only.
+   - Validation: each candidate has policy, runner behavior, ledger event, verifier check, regression case, rollback path, and deny-by-default semantics.
+   - Stop gate: default decision is not to enable new capability families.
+   - Recovery: keep Skill, MCP, CLI, provider, memory, deploy, release, and package flows non-activating until a new explicit objective approves them.
+
 1. V1 stable candidate maintenance
    - Keep verifier, validation, checkpoint, closeout, audit, and gate-status passing from a clean worktree.
    - Keep post-commit evidence-time HEAD mismatch explicit so operator knows when a fresh capability is needed.
