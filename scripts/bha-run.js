@@ -3551,6 +3551,29 @@ async function handleAuditV1Stable(args) {
     ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
   ));
   checks.push(auditCheck(
+    'local_payload_reason_details_covered',
+    'V1 local payload status surfaces expose stable machine-readable reason codes and human-readable reason details for stale, expired, mismatched, and invalid payloads.',
+    Boolean(regressionCommand &&
+      fileContains(RUN_SCRIPT, 'reason_codes') &&
+      fileContains(RUN_SCRIPT, 'reason_details') &&
+      fileContains(RUN_SCRIPT, 'context_mismatch_details') &&
+      fileContains(RUN_SCRIPT, 'not_usable_reason_details') &&
+      fileContains(RUN_SCRIPT, 'PAYLOAD_EXPIRED') &&
+      fileContains(RUN_SCRIPT, 'gate_status_flags_stale_local_payload_files') &&
+      fileContains(RUN_SCRIPT, 'gate_status_flags_expired_unsigned_payload') &&
+      fileContains(RUN_SCRIPT, 'signed_payload_status_reports_expired_reason_detail') &&
+      fileContains(RUN_SCRIPT, 'recover_status_reports_stale_local_payload_recovery') &&
+      fileContains(STABILITY_PATH, 'reason_codes') &&
+      fileContains(STABILITY_PATH, 'reason_details')),
+    {
+      regression_selftest_validation_command_present: Boolean(regressionCommand),
+      stale_payload_regression_present: fileContains(RUN_SCRIPT, 'gate_status_flags_stale_local_payload_files'),
+      expired_unsigned_regression_present: fileContains(RUN_SCRIPT, 'gate_status_flags_expired_unsigned_payload'),
+      expired_signed_regression_present: fileContains(RUN_SCRIPT, 'signed_payload_status_reports_expired_reason_detail')
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
     'stable_local_reproduction_documented',
     'V1 stable documentation gives a local-only validation and recovery command path without implying that push is required.',
     fileContains(STABILITY_PATH, 'Local Reproduction') &&

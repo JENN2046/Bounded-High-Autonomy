@@ -42,6 +42,8 @@ Fresh clones must be able to verify tracked trust without `.bha/local/`. Any rea
 
 Recovery status must explain missing, stale, expired, or otherwise unusable `.bha/local/` payload files as local-only recovery context. That context helps the operator regenerate payloads, but it is not tracked proof.
 
+Payload status surfaces must expose both machine-readable `reason_codes` and human-readable `reason_details` for stale, expired, mismatched, or invalid local payload files. These fields are operator UX and recovery guidance, not proof by themselves.
+
 ## Not Proof
 
 These can guide workflow but are not proof:
