@@ -150,10 +150,50 @@ function isInsideDir(parent, child) {
   return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function localPathSafetyIssue(resolved) {
+  const localRoot = path.resolve(BHA_LOCAL_DIR);
+  const relative = path.relative(localRoot, resolved);
+  if (relative && (relative.startsWith('..') || path.isAbsolute(relative))) {
+    return 'file path must be inside .bha/local';
+  }
+  if (!fs.existsSync(localRoot)) {
+    return null;
+  }
+  const rootStat = fs.lstatSync(localRoot);
+  if (rootStat.isSymbolicLink()) {
+    return '.bha/local must not be a symbolic link or junction';
+  }
+  const rootReal = fs.realpathSync.native(localRoot);
+  if (!isInsideDir(BHA_DIR, rootReal)) {
+    return '.bha/local real path must stay inside .bha';
+  }
+  let cursor = localRoot;
+  const parts = relative ? relative.split(path.sep).filter(Boolean) : [];
+  for (const part of parts) {
+    cursor = path.join(cursor, part);
+    if (!fs.existsSync(cursor)) {
+      break;
+    }
+    const stat = fs.lstatSync(cursor);
+    if (stat.isSymbolicLink()) {
+      return 'local capability paths must not traverse symbolic links or junctions';
+    }
+    const real = fs.realpathSync.native(cursor);
+    if (!isInsideDir(rootReal, real)) {
+      return 'local capability path resolves outside .bha/local';
+    }
+  }
+  return null;
+}
+
 function resolveLocalFile(filePath) {
   const resolved = path.resolve(ROOT, filePath || '');
   if (!isInsideDir(BHA_LOCAL_DIR, resolved)) {
     throw new Error('file path must be inside .bha/local');
+  }
+  const issue = localPathSafetyIssue(resolved);
+  if (issue) {
+    throw new Error(issue);
   }
   return resolved;
 }
@@ -190,11 +230,12 @@ function syncSleep(ms) {
 
 function withLedgerLock(callback) {
   fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
+  const lockPath = resolveLocalFile(LEDGER_LOCK_PATH);
   const deadline = Date.now() + LEDGER_LOCK_TIMEOUT_MS;
   let fd = null;
   while (fd === null) {
     try {
-      fd = fs.openSync(LEDGER_LOCK_PATH, 'wx');
+      fd = fs.openSync(lockPath, 'wx');
       fs.writeFileSync(fd, stable({
         pid: process.pid,
         acquired_at: new Date().toISOString()
@@ -221,7 +262,7 @@ function withLedgerLock(callback) {
       }
     }
     try {
-      fs.unlinkSync(LEDGER_LOCK_PATH);
+      fs.unlinkSync(lockPath);
     } catch (error) {
       if (!error || error.code !== 'ENOENT') {
         throw error;
@@ -1449,14 +1490,14 @@ function appendCapabilityEvent(type, payload) {
 function appendLocalCapabilityEvent(type, payload) {
   const event = buildCapabilityEvent(type, payload, true);
   fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
-  fs.appendFileSync(LOCAL_CAPABILITIES_PATH, stable(event) + '\n', 'utf8');
+  fs.appendFileSync(resolveLocalFile(LOCAL_CAPABILITIES_PATH), stable(event) + '\n', 'utf8');
   return event;
 }
 
 function appendLocalCapabilitySession(payload) {
   const event = buildCapabilityEvent('capability_session', payload, true);
   fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
-  fs.appendFileSync(LOCAL_CAPABILITY_SESSIONS_PATH, stable(event) + '\n', 'utf8');
+  fs.appendFileSync(resolveLocalFile(LOCAL_CAPABILITY_SESSIONS_PATH), stable(event) + '\n', 'utf8');
   return event;
 }
 
@@ -1465,11 +1506,11 @@ function readCapabilityEvents() {
 }
 
 function readLocalCapabilitySessions() {
-  return readJsonl(LOCAL_CAPABILITY_SESSIONS_PATH);
+  return readJsonl(resolveLocalFile(LOCAL_CAPABILITY_SESSIONS_PATH));
 }
 
 function readLocalCapabilityEvents() {
-  return readJsonl(LOCAL_CAPABILITIES_PATH);
+  return readJsonl(resolveLocalFile(LOCAL_CAPABILITIES_PATH));
 }
 
 function readCapabilityEventsWithLocalSessions() {
@@ -2153,7 +2194,16 @@ async function verifierResult() {
 async function matchingConsumedCapability(remote, branch, head, options) {
   const reserve = options && options.reserve === true;
   const state = loadState();
-  const events = readCapabilityEventsWithLocalSessions();
+  let events;
+  try {
+    events = readCapabilityEventsWithLocalSessions();
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'LOCAL_CAPABILITY_PATH_INVALID',
+      error: error && error.message ? error.message : String(error)
+    };
+  }
   for (const event of events) {
     if (!event || event.event_hash !== capabilityHash(event)) {
       return { ok: false, reason: 'CAPABILITY_EVENT_HASH_MISMATCH', capability_id: event && event.payload ? event.payload.capability_id : null };
@@ -2233,7 +2283,13 @@ async function matchingConsumedCapability(remote, branch, head, options) {
 }
 
 function latestUsedGitPushSession(remote, branch, head, capabilityId) {
-  const sessions = readLocalCapabilitySessions().filter((event) => {
+  let sessions;
+  try {
+    sessions = readLocalCapabilitySessions();
+  } catch (_error) {
+    return null;
+  }
+  sessions = sessions.filter((event) => {
     const payload = event && event.payload ? event.payload : {};
     return event.type === 'capability_session' &&
       payload.valid === true &&
@@ -3510,6 +3566,7 @@ async function handleAuditV1Stable(args) {
     'push_prep_powershell_command_quotes_arguments',
     'push_prep_print_next_command_single_line',
     'push_prep_write_handoff_local_only',
+    'push_prep_rejects_local_symlink_escape',
     'operator_handoff_capability_flow_is_conditional',
     'gate_status_next_action_context_is_conditional'
   ];
@@ -5236,6 +5293,47 @@ async function handleRegressionSelftest(args) {
     handoff_path: pushPrepHandoff.parsed ? pushPrepHandoff.parsed.handoff_path : 'NO_JSON',
     tracked_before: trackedBeforeHandoff || 'CLEAN',
     tracked_after: trackedAfterHandoff || 'CLEAN'
+  }));
+  const outsideLocalDir = path.join(fixtureRoot, '..', `outside-local-escape-${crypto.randomUUID()}`);
+  const localEscapeLink = path.join(fixtureRoot, '.bha', 'local', 'escape-link');
+  let localEscapeLinkCreated = false;
+  let localEscapeLinkError = null;
+  try {
+    fs.mkdirSync(outsideLocalDir, { recursive: true });
+    fs.symlinkSync(outsideLocalDir, localEscapeLink, process.platform === 'win32' ? 'junction' : 'dir');
+    localEscapeLinkCreated = true;
+  } catch (error) {
+    localEscapeLinkError = error && error.message ? error.message : String(error);
+  }
+  const escapedHandoffPath = path.join(outsideLocalDir, 'push-handoff.json');
+  const symlinkEscapePrep = localEscapeLinkCreated
+    ? await runFixtureBha(fixtureRoot, [
+      'push-prep',
+      '--remote',
+      'origin',
+      '--branch',
+      branch,
+      '--expires-minutes',
+      '20',
+      '--key-id',
+      keyId,
+      '--format',
+      'json',
+      '--write-handoff',
+      '.bha/local/escape-link/push-handoff.json'
+    ])
+    : { exit_code: 2, parsed: { ok: false, error: 'SYMLINK_UNAVAILABLE' } };
+  checks.push(regressionCheck('push_prep_rejects_local_symlink_escape', localEscapeLinkCreated &&
+    symlinkEscapePrep.exit_code === 2 &&
+    symlinkEscapePrep.parsed &&
+    symlinkEscapePrep.parsed.ok === false &&
+    String(symlinkEscapePrep.parsed.error || '').includes('symbolic links') &&
+    !fs.existsSync(escapedHandoffPath), {
+    symlink_created: localEscapeLinkCreated,
+    symlink_error: localEscapeLinkError,
+    exit_code: symlinkEscapePrep.exit_code,
+    error: symlinkEscapePrep.parsed ? symlinkEscapePrep.parsed.error : 'NO_JSON',
+    escaped_handoff_exists: fs.existsSync(escapedHandoffPath)
   }));
 
   const evidenceAdvanceCheckpoint = await runFixtureBha(fixtureRoot, ['checkpoint', '--format', 'json']);
