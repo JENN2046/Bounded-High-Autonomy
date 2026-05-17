@@ -63,3 +63,7 @@ The workflow must stop when the next step would cross any of these boundaries:
 ## Local Status
 
 `node scripts/bha-run.js council-status --format json` reports this preview contract. It does not execute the workflow, spawn agents, write memory, push, deploy, release, tag, or call providers.
+
+## Activation Gate
+
+`council-status` must report `activation_gate.runtime_activation_allowed=false` until a new explicit objective adds a verifier-backed workflow model and local dry-run evidence. Planning can continue locally, but automated agent spawning, provider calls, memory writes, push, deploy, release, tag, package publishing, and private key access remain forbidden without a new objective.

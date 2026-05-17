@@ -172,11 +172,20 @@
           "default_decision": "DENY",
           "unknown_capability_policy": "DENY"
         },
+        "json_paths": {
+          "enablement_gate.current_phase": "PREVIEW_STATUS_ONLY",
+          "enablement_gate.new_production_capability_allowed": false,
+          "enablement_gate.requires_new_explicit_objective": true,
+          "enablement_gate.requires_verifier_evidence": true,
+          "enablement_gate.requires_deny_tests_before_allow": true,
+          "enablement_gate.requires_replay_tests_before_allow": true
+        },
         "has_keys": [
           "schema",
           "production_capability_types",
           "always_denied_capability_types",
           "extension_policy",
+          "enablement_gate",
           "test_requirements",
           "types",
           "proof_boundary"
@@ -206,8 +215,15 @@
           "provider_calls_allowed": false,
           "memory_writes_allowed": false
         },
+        "json_paths": {
+          "activation_gate.runtime_activation_allowed": false,
+          "activation_gate.requires_new_explicit_objective": true,
+          "activation_gate.requires_verifier_backed_workflow_model": true,
+          "activation_gate.requires_local_dry_run_evidence": true
+        },
         "has_keys": [
           "schema",
+          "activation_gate",
           "roles",
           "loop",
           "stop_conditions",

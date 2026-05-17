@@ -1058,6 +1058,32 @@ function capabilityFramework() {
       ],
       provider_deploy_release_default: 'DENY'
     },
+    enablement_gate: {
+      current_phase: 'PREVIEW_STATUS_ONLY',
+      new_production_capability_allowed: false,
+      requires_new_explicit_objective: true,
+      requires_policy_change: true,
+      requires_verifier_evidence: true,
+      requires_deny_tests_before_allow: true,
+      requires_replay_tests_before_allow: true,
+      allowed_next_work: [
+        'schema_draft',
+        'binding_design',
+        'deny_tests',
+        'replay_tests',
+        'verifier_evidence_plan'
+      ],
+      forbidden_without_new_objective: [
+        'provider_call',
+        'deploy',
+        'release',
+        'tag',
+        'package_publish',
+        'memory_write',
+        'private_key_access',
+        'production_write'
+      ]
+    },
     test_requirements: {
       deny_tests_required_before_allow: true,
       replay_tests_required_before_allow: true,
@@ -1135,6 +1161,29 @@ function councilRuntimeStatus() {
     automated_agent_spawn_allowed: false,
     provider_calls_allowed: false,
     memory_writes_allowed: false,
+    activation_gate: {
+      runtime_activation_allowed: false,
+      requires_new_explicit_objective: true,
+      requires_verifier_backed_workflow_model: true,
+      requires_local_dry_run_evidence: true,
+      allowed_next_work: [
+        'workflow_schema_draft',
+        'role_boundary_tests',
+        'local_dry_run_trace_design',
+        'verifier_evidence_plan'
+      ],
+      forbidden_without_new_objective: [
+        'automated_agent_spawn',
+        'provider_call',
+        'memory_write',
+        'push',
+        'deploy',
+        'release',
+        'tag',
+        'package_publish',
+        'private_key_access'
+      ]
+    },
     roles: [
       {
         id: 'commander',
@@ -3982,6 +4031,12 @@ async function handleAuditV1Stable(args) {
       capabilityFramework().test_requirements &&
       capabilityFramework().test_requirements.deny_tests_required_before_allow === true &&
       capabilityFramework().test_requirements.replay_tests_required_before_allow === true &&
+      capabilityFramework().enablement_gate &&
+      capabilityFramework().enablement_gate.new_production_capability_allowed === false &&
+      capabilityFramework().enablement_gate.requires_new_explicit_objective === true &&
+      capabilityFramework().enablement_gate.requires_verifier_evidence === true &&
+      capabilityFramework().enablement_gate.requires_deny_tests_before_allow === true &&
+      capabilityFramework().enablement_gate.requires_replay_tests_before_allow === true &&
       capabilityFramework().extension_policy.required_before_enablement.includes('verifier_evidence') &&
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'verifier evidence') &&
       fileContains(ROADMAP_PATH, 'verifier evidence'),
@@ -3989,6 +4044,7 @@ async function handleAuditV1Stable(args) {
       framework_status_command: 'node scripts/bha-run.js capability-framework-status --format json',
       production_capability_types: capabilityFramework().production_capability_types,
       required_before_enablement: capabilityFramework().extension_policy.required_before_enablement,
+      enablement_gate: capabilityFramework().enablement_gate,
       test_requirements: capabilityFramework().test_requirements
     },
     ['BHA_V2_CAPABILITY_FRAMEWORK.md', 'scripts/bha-run.js', '.bha/policy.yaml', '.bha/roadmap.md']
@@ -4012,7 +4068,11 @@ async function handleAuditV1Stable(args) {
       councilRuntimeStatus().external_side_effects_allowed === false &&
       councilRuntimeStatus().automated_agent_spawn_allowed === false &&
       councilRuntimeStatus().provider_calls_allowed === false &&
-      councilRuntimeStatus().memory_writes_allowed === false,
+      councilRuntimeStatus().memory_writes_allowed === false &&
+      councilRuntimeStatus().activation_gate &&
+      councilRuntimeStatus().activation_gate.runtime_activation_allowed === false &&
+      councilRuntimeStatus().activation_gate.requires_new_explicit_objective === true &&
+      councilRuntimeStatus().activation_gate.requires_verifier_backed_workflow_model === true,
     {
       validation_command_present: Boolean(councilStatusCommand),
       policy_allowed: councilStatusCommand ? policyAllowsArgv(policy, councilStatusCommand.argv) : false,
@@ -4021,7 +4081,8 @@ async function handleAuditV1Stable(args) {
       external_side_effects_allowed: councilRuntimeStatus().external_side_effects_allowed,
       automated_agent_spawn_allowed: councilRuntimeStatus().automated_agent_spawn_allowed,
       provider_calls_allowed: councilRuntimeStatus().provider_calls_allowed,
-      memory_writes_allowed: councilRuntimeStatus().memory_writes_allowed
+      memory_writes_allowed: councilRuntimeStatus().memory_writes_allowed,
+      activation_gate: councilRuntimeStatus().activation_gate
     },
     ['BHA_V2_COUNCIL_RUNTIME.md', 'scripts/bha-run.js', '.bha/validation.yaml', '.bha/policy.yaml']
   ));
@@ -4658,6 +4719,10 @@ async function handleAuditV12(args) {
       policyAllowsArgv(policy, capabilityFrameworkCommand.argv) &&
       capabilityFramework().default_decision === 'DENY' &&
       capabilityFramework().unknown_capability_policy === 'DENY' &&
+      capabilityFramework().enablement_gate &&
+      capabilityFramework().enablement_gate.new_production_capability_allowed === false &&
+      capabilityFramework().enablement_gate.requires_new_explicit_objective === true &&
+      capabilityFramework().enablement_gate.requires_verifier_evidence === true &&
       capabilityFramework().test_requirements &&
       capabilityFramework().test_requirements.deny_tests_required_before_allow === true &&
       capabilityFramework().test_requirements.replay_tests_required_before_allow === true),
@@ -4666,6 +4731,7 @@ async function handleAuditV12(args) {
       policy_allowed: capabilityFrameworkCommand ? policyAllowsArgv(policy, capabilityFrameworkCommand.argv) : false,
       default_decision: capabilityFramework().default_decision,
       unknown_capability_policy: capabilityFramework().unknown_capability_policy,
+      enablement_gate: capabilityFramework().enablement_gate,
       test_requirements: capabilityFramework().test_requirements
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
@@ -4685,14 +4751,19 @@ async function handleAuditV12(args) {
       councilRuntimeStatus().external_side_effects_allowed === false &&
       councilRuntimeStatus().automated_agent_spawn_allowed === false &&
       councilRuntimeStatus().provider_calls_allowed === false &&
-      councilRuntimeStatus().memory_writes_allowed === false),
+      councilRuntimeStatus().memory_writes_allowed === false &&
+      councilRuntimeStatus().activation_gate &&
+      councilRuntimeStatus().activation_gate.runtime_activation_allowed === false &&
+      councilRuntimeStatus().activation_gate.requires_new_explicit_objective === true &&
+      councilRuntimeStatus().activation_gate.requires_verifier_backed_workflow_model === true),
     {
       validation_command_present: Boolean(councilStatusCommand),
       policy_allowed: councilStatusCommand ? policyAllowsArgv(policy, councilStatusCommand.argv) : false,
       runtime_state: councilRuntimeStatus().runtime_state,
       automated_agent_spawn_allowed: councilRuntimeStatus().automated_agent_spawn_allowed,
       provider_calls_allowed: councilRuntimeStatus().provider_calls_allowed,
-      memory_writes_allowed: councilRuntimeStatus().memory_writes_allowed
+      memory_writes_allowed: councilRuntimeStatus().memory_writes_allowed,
+      activation_gate: councilRuntimeStatus().activation_gate
     },
     ['BHA_V2_COUNCIL_RUNTIME.md', '.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
   ));

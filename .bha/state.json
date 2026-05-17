@@ -2,16 +2,16 @@
   "schema": "bha.state.v1",
   "version": "1.0.0",
   "run_id": "bha-dry-run-v1",
-  "updated_at": "2026-05-17T09:57:27.811Z",
-  "ledger_head_hash": "c6365cb23e390a005dc4da8a939a966d07b0147a3cd513b7b3109a7a1dda78a9",
-  "ledger_event_count": 7861,
+  "updated_at": "2026-05-17T10:01:46.253Z",
+  "ledger_head_hash": "72db1a53d0c46f9156423c4aa0ad46c17be49c3aa32fb8ce7d717bbba774ad3f",
+  "ledger_event_count": 7921,
   "validation": {
     "status": "PASS",
-    "completed_at": "2026-05-17T09:57:17.046Z",
-    "inputs_hash": "26f6959605abca0eca4e2281578b6bb9861b77485477b9e4f6d0bde7b5dca4ed",
+    "completed_at": "2026-05-17T10:01:35.944Z",
+    "inputs_hash": "803cb8361c96775dbaf72687e70788557136a81a0ec0d085fa772bc5ebdd3f11",
     "policy_hash": "d44facd21154321ca6d737952ecc752c561a0f700608ae4c5ec5186f5c478ef3",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
-    "ledger_event_hash": "52b4a435535f42e5eb7201e30315bb06bd978ed85b1894c791d8cb1609f42726",
+    "ledger_event_hash": "84f18ced53e7aaa36197eb06ddd447fb0905ec42a0495d44a3fbfe309a8f8539",
     "commands": [
       {
         "id": "git_diff_check",
@@ -271,11 +271,20 @@
             "default_decision": "DENY",
             "unknown_capability_policy": "DENY"
           },
+          "json_paths": {
+            "enablement_gate.current_phase": "PREVIEW_STATUS_ONLY",
+            "enablement_gate.new_production_capability_allowed": false,
+            "enablement_gate.requires_new_explicit_objective": true,
+            "enablement_gate.requires_verifier_evidence": true,
+            "enablement_gate.requires_deny_tests_before_allow": true,
+            "enablement_gate.requires_replay_tests_before_allow": true
+          },
           "has_keys": [
             "schema",
             "production_capability_types",
             "always_denied_capability_types",
             "extension_policy",
+            "enablement_gate",
             "test_requirements",
             "types",
             "proof_boundary"
@@ -316,8 +325,15 @@
             "provider_calls_allowed": false,
             "memory_writes_allowed": false
           },
+          "json_paths": {
+            "activation_gate.runtime_activation_allowed": false,
+            "activation_gate.requires_new_explicit_objective": true,
+            "activation_gate.requires_verifier_backed_workflow_model": true,
+            "activation_gate.requires_local_dry_run_evidence": true
+          },
           "has_keys": [
             "schema",
+            "activation_gate",
             "roles",
             "loop",
             "stop_conditions",
@@ -1493,25 +1509,25 @@
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "closeout": {
     "status": "PASS",
-    "completed_at": "2026-05-17T09:57:27.811Z",
-    "ledger_event_hash": "c6365cb23e390a005dc4da8a939a966d07b0147a3cd513b7b3109a7a1dda78a9",
-    "verified_ledger_head_hash": "5a032ef7f699838d44a40761abd2f9b949a33b5950d44c6a7317989d5f39cf3b",
-    "closeout_event_hash": "c6365cb23e390a005dc4da8a939a966d07b0147a3cd513b7b3109a7a1dda78a9",
-    "final_ledger_head_hash": "c6365cb23e390a005dc4da8a939a966d07b0147a3cd513b7b3109a7a1dda78a9",
-    "validation_ledger_event_hash": "52b4a435535f42e5eb7201e30315bb06bd978ed85b1894c791d8cb1609f42726",
+    "completed_at": "2026-05-17T10:01:46.253Z",
+    "ledger_event_hash": "72db1a53d0c46f9156423c4aa0ad46c17be49c3aa32fb8ce7d717bbba774ad3f",
+    "verified_ledger_head_hash": "115852e2e6689f7cc3c7d6a10210c6d6c340c0687eb7015443925ae8c5fb7187",
+    "closeout_event_hash": "72db1a53d0c46f9156423c4aa0ad46c17be49c3aa32fb8ce7d717bbba774ad3f",
+    "final_ledger_head_hash": "72db1a53d0c46f9156423c4aa0ad46c17be49c3aa32fb8ce7d717bbba774ad3f",
+    "validation_ledger_event_hash": "84f18ced53e7aaa36197eb06ddd447fb0905ec42a0495d44a3fbfe309a8f8539",
     "policy_hash": "d44facd21154321ca6d737952ecc752c561a0f700608ae4c5ec5186f5c478ef3",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
   },
   "last_checkpoint": {
-    "checkpoint_id": "checkpoint-2026-05-17T09-57-22-423Z",
-    "created_at": "2026-05-17T09:57:22.474Z",
-    "ledger_event_hash": "5a032ef7f699838d44a40761abd2f9b949a33b5950d44c6a7317989d5f39cf3b",
-    "verified_ledger_head_hash": "52b4a435535f42e5eb7201e30315bb06bd978ed85b1894c791d8cb1609f42726",
-    "checkpoint_event_hash": "5a032ef7f699838d44a40761abd2f9b949a33b5950d44c6a7317989d5f39cf3b",
-    "final_ledger_head_hash": "5a032ef7f699838d44a40761abd2f9b949a33b5950d44c6a7317989d5f39cf3b",
+    "checkpoint_id": "checkpoint-2026-05-17T10-01-41-792Z",
+    "created_at": "2026-05-17T10:01:41.845Z",
+    "ledger_event_hash": "115852e2e6689f7cc3c7d6a10210c6d6c340c0687eb7015443925ae8c5fb7187",
+    "verified_ledger_head_hash": "84f18ced53e7aaa36197eb06ddd447fb0905ec42a0495d44a3fbfe309a8f8539",
+    "checkpoint_event_hash": "115852e2e6689f7cc3c7d6a10210c6d6c340c0687eb7015443925ae8c5fb7187",
+    "final_ledger_head_hash": "115852e2e6689f7cc3c7d6a10210c6d6c340c0687eb7015443925ae8c5fb7187",
     "path": ".bha/checkpoint.json",
     "policy_hash": "d44facd21154321ca6d737952ecc752c561a0f700608ae4c5ec5186f5c478ef3",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
   },
-  "last_checkpoint_id": "checkpoint-2026-05-17T09-57-22-423Z"
+  "last_checkpoint_id": "checkpoint-2026-05-17T10-01-41-792Z"
 }

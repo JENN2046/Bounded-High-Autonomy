@@ -52,6 +52,10 @@ Before any new capability can move from preview to enabled, it must have:
 
 The framework status command reports these requirements so operator/Codex can see that new capability types are not enabled by documentation alone.
 
+## Enablement Gate
+
+`capability-framework-status` must report `enablement_gate.new_production_capability_allowed=false` until a new explicit objective adds a schema, binding, allowed command, evidence policy, deny tests, replay tests, verifier evidence, and policy change. Planning and test design can continue locally, but provider calls, deploy, release, tag, package publish, memory write, private key access, and production write remain forbidden without a new objective.
+
 ## git_push Capability
 
 `git_push` is the first production capability.
