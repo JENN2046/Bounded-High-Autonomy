@@ -2,14 +2,18 @@
 
 Document status:
 
-- Current stage: core design consolidation.
-- Primary scope: define BHA's safety model, evidence model, capability model, and v1 runtime shape
-  before further runtime edits.
-- Implementation status: this document pass did not perform runtime implementation; existing runtime
-  prototype changes may already exist and must be inspected before edits.
-- Design posture: prefer a small verifiable v1 over broad automation.
+- Current stage: V1 local trust kernel stable candidate.
+- Primary scope: define and maintain BHA's local safety model, evidence model, capability model, and
+  V1 runtime boundaries.
+- Implementation status: the V1 local runtime is implemented enough to run validation, verifier,
+  checkpoint, closeout, signed `git_push` capability flow, local pre-push gate, and real `git push`
+  through the gate. Repository reality and verifier output outrank this design text.
+- Remote status: GitHub branch protection and CI required checks are planned but not yet enforced by
+  this document. Local BHA evidence is not a remote attestation by itself.
+- Design posture: freeze and harden the small verifiable V1 before expanding V2 capability or council
+  runtime work.
 
-V1.1 operator and post-push evidence addendum:
+Current runtime reality addendum:
 
 - `gate-status` is a read-only operator command that reports verifier gates, hook configuration,
   capability state, and the next safe action.
@@ -19,14 +23,27 @@ V1.1 operator and post-push evidence addendum:
 - `git_push` issue, consume, and hook USED evidence are local-only under `.bha/local/` and ignored by
   Git. This keeps the signed authorization bound to the already-created HEAD without making push
   produce another required evidence commit.
+- `prepush-check --preflight` is read-only. The real Git hook path may write a local-only USED
+  session under `.bha/local/capability-sessions.jsonl` to reserve the one-use `git_push`
+  capability. That local session is gate evidence, not tracked verifier proof.
 - Repository-tracked evidence proves local trust readiness for the HEAD: policy, mission,
   validation, checkpoint, closeout, ledger, state, and verifier consistency. It does not mean a push
   is required now, and a real operator-chosen push still requires a fresh one-use local `git_push`
   capability bound to the current HEAD and ledger state.
+- After validation/checkpoint/closeout repair, `.bha/ledger.jsonl`, `.bha/state.json`, and
+  `.bha/checkpoint.json` may be dirty by design. Stable-exit and the local push gate may treat only
+  those authorized runtime evidence files as acceptable dirtiness; code, policy, hook, validation, or
+  documentation dirtiness remains blocking unless revalidated and committed.
+- After a real push succeeds, the one-use `git_push` capability must become USED and replay-blocked.
+  `gate-status` should report that as a successful post-push state for that capability, not as a
+  reusable authorization.
 - Remote tracking refs are local Git observations after fetch or push; they are useful evidence, but
   they are not remote proof by themselves.
 - Validation input hashes normalize text line endings to LF before hashing so trust recovery does not
   depend on a clone's `core.autocrlf` setting.
+- V2 capability framework and council runtime artifacts are preview only. They must remain marked as
+  non-authoritative, non-activating, and incapable of granting runtime authority until a separate
+  explicit objective adds verifier-backed runtime evidence.
 
 ## 1. BHA Design Rhythm and Roadmap
 
@@ -3775,18 +3792,23 @@ remote writes outside BHA runtime unless explicitly authorized.
 | `verify-signed-capability` | `gate` | yes | no | no | verify signed capability shape, hash, and signature |
 | `issue-capability` | `gate` | no | no for `git_push` | no for `git_push` | record a verified `git_push` capability as local-only gate evidence |
 | `consume-capability` | `gate` | no | no for `git_push` | no for `git_push` | consume one-use `git_push` capability as local-only gate evidence |
-| `prepush-check` | `gate` | yes by default | no by default | no by default | fail closed unless a valid consumed capability exists |
+| `prepush-check` | `gate` | yes with `--preflight`; real hook may write local-only USED session | no | no | fail closed unless a valid consumed capability exists |
 | `rollback-drill` | `recover` | yes | no | no | verify that rollback guidance is local, non-destructive, and evidence-based |
 | `validate` | `validate` | no | yes | yes | run configured validation and record result |
-| `verify` | `verify` | yes | no | no | verify policy, ledger, state, validation, and capability consistency |
+| `verify` | `verify` | yes by default; no with `--record` | no by default; yes with `--record` | no by default; yes with `--record` | verify policy, ledger, state, validation, and capability consistency |
 | `checkpoint` | `checkpoint` | no | yes | yes | write resumable handoff state |
 | `closeout` | `closeout` | yes by default; no with `--record` | no by default; yes with `--record` | no by default; yes with `--record` | preview final state or record closeout evidence |
 
-`prepush-check` should remain read-only and unrecorded by default because Git hooks need predictable,
-low-side-effect behavior. It should fail closed unless verifier, ledger/state alignment, fresh
-validation, rollback drill evidence, checkpoint evidence, current closeout evidence, clean or
-authorized-runtime-dirty worktree state, and a consumed `git_push` capability all pass. A separate
-explicit recording mode can be added later if needed.
+`prepush-check --preflight` should remain read-only and unrecorded because operator preflight needs
+predictable, low-side-effect behavior. The real Git hook path may write exactly one local-only USED
+session under `.bha/local/capability-sessions.jsonl` to reserve the one-use `git_push` capability.
+It should fail closed unless verifier, ledger/state alignment, fresh validation, rollback drill
+evidence, checkpoint evidence, current closeout evidence, clean or authorized-runtime-dirty worktree
+state, and a consumed `git_push` capability all pass.
+
+`verify` should remain read-only by default. `verify --record` may append `verifier_completed` and
+update state, but it must record the ledger head it actually checked separately from the new
+verifier event hash so the verifier result does not claim to have verified itself.
 
 `git-push-capability-flow` should remain read-only. It may generate an unsigned canonical payload
 and operator steps, but it must not request, read, print, store, or write private key material.
@@ -4450,7 +4472,10 @@ In scope:
 - canonical capability payloads
 - signed capability verification
 - one-use capability issue and consume
-- read-only fail-closed `prepush-check`
+- read-only fail-closed `prepush-check --preflight`
+- local-only USED session reservation in the real `prepush-check` hook path
+- authorized runtime evidence dirtiness for `.bha/ledger.jsonl`, `.bha/state.json`, and
+  `.bha/checkpoint.json`
 - closeout with explicit verified and unverified facts
 
 Out of scope:
@@ -4462,17 +4487,20 @@ Out of scope:
 - private key custody
 - dependency changes
 - general task scheduling
-- CI or GitHub automation as a required dependency
+- CI or GitHub automation as a required dependency for local V1
+- remote branch protection as already-enforced proof
 
 This boundary is important. BHA earns more autonomy by proving the small loop first.
 
 ### 22.4 Remaining Design Risks
 
-The design is ready for a v1 implementation preflight, but these risks remain:
+The V1 local implementation is ready for freeze review, but these risks remain:
 
 - YAML support must be deliberately limited or replaced with JSON-compatible parsing.
-- Existing runtime state may not match the new schemas.
 - Ledger history should not be rewritten casually.
+- Local hooks remain bypassable without remote branch protection and required checks.
+- V2 preview artifacts must not be treated as runtime authority.
+- `bha-run.js` has accumulated many responsibilities and should be modularized only after V1 freeze.
 - Policy hash rules must be implemented before capability signing UX expands.
 - Closeout must not become a substitute for verifier proof.
 - Capabilities must stay narrow and one-use.
@@ -4589,7 +4617,13 @@ Required v1 acceptance criteria:
 - State ledger head matches the verified ledger head.
 - Unrecorded dirty worktree changes return `BLOCKED` with `UNVERIFIED_WORKTREE_CHANGE`.
 - `verify` is read-only and returns machine-readable `PASS`, `FAIL`, or `BLOCKED`.
+- `verify --record` writes `verifier_completed`, distinguishes `checked_ledger_head_hash` from
+  `verifier_event_hash`, and fails closed when the ledger head changes before recording.
 - `validate` records local validation evidence without hiding failures.
+- `check -- <cmd>` returns nonzero on `DENY`; `assert-deny -- <cmd>` returns zero only when the
+  command is denied.
+- `exec -- <cmd>` records git status before and after execution, reports changed files, enforces the
+  policy path allowlist, and fails closed when either git status cannot be established.
 - `make-push-payload` is read-only and outputs canonical unsigned flat JSON.
 - `git-push-capability-flow` is read-only and outputs the unsigned payload, exact operator steps,
   and hard boundaries before signing.
@@ -4608,11 +4642,16 @@ Required v1 acceptance criteria:
   mission hash.
 - `issue-capability` verifies before writing an issued capability record.
 - `consume-capability` accepts only valid, issued, unexpired, unconsumed capability records.
+- Local capability issue, consume, and USED session writes are protected by a local capability lock.
 - One-use replay is rejected.
 - `prepush-check` without a valid consumed capability fails closed with `read_only:true` and
   `recorded:false`.
+- `prepush-check --preflight` is read-only; the real hook path may reserve the one-use capability by
+  writing local-only USED session evidence.
 - `prepush-check` reports machine-readable `evidence_gates` for verifier, ledger/state alignment,
   validation freshness, rollback evidence, checkpoint evidence, and current closeout evidence.
+- `prepush-check` accepts clean worktree or authorized runtime evidence dirtiness only; dirty runtime
+  code, policy, validation config, hooks, or documentation still blocks.
 - `prepush-check` does not perform a real push.
 - `git-push-capability-flow` does not issue, consume, or authorize a capability by itself.
 - `rollback-drill --format json` is read-only and confirms rollback guidance is local,
@@ -4634,6 +4673,11 @@ Required v1 acceptance criteria:
 - No private key material is read, printed, stored, logged, or written to the repository.
 - No network, package installation, provider call, push, tag, release, deploy, or `.git/**` write is
   required for v1 validation.
+- Package install, package publish, release, tag, SSH, deploy, provider, memory, force-push,
+  destructive, and production-write risks are denied with specific reason codes where policy can
+  classify them.
+- Ledger writer lock reports or recovers stale local locks without silently proceeding through an
+  ambiguous writer state.
 
 Negative acceptance criteria:
 
@@ -4645,6 +4689,8 @@ Negative acceptance criteria:
 - changed policy hash after capability payload is rejected
 - changed mission hash after capability payload is rejected
 - prepush without consumed capability is rejected
+- replaying a used local `git_push` capability is rejected
+- dirty code or policy changes are not accepted as authorized runtime evidence dirtiness
 - closeout unsupported claims are rejected
 
 V1 should be considered incomplete if any of these criteria require manual interpretation instead of
