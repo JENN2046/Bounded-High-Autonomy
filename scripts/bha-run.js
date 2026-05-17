@@ -26,6 +26,7 @@ const RUN_SCRIPT = path.join(ROOT, 'scripts', 'bha-run.js');
 const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
 const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
+const LONG_TERM_GOAL_AUDIT_PATH = path.join(ROOT, 'BHA_LONG_TERM_GOAL_AUDIT.md');
 const STABILITY_PATH = path.join(ROOT, 'BHA_V1_STABILITY.md');
 const CAPABILITY_FRAMEWORK_PATH = path.join(ROOT, 'BHA_V2_CAPABILITY_FRAMEWORK.md');
 const COUNCIL_RUNTIME_PATH = path.join(ROOT, 'BHA_V2_COUNCIL_RUNTIME.md');
@@ -34,6 +35,7 @@ const GITIGNORE_PATH = path.join(ROOT, '.gitignore');
 
 const VALIDATION_INPUTS = [
   DESIGN_PATH,
+  LONG_TERM_GOAL_AUDIT_PATH,
   STABILITY_PATH,
   CAPABILITY_FRAMEWORK_PATH,
   COUNCIL_RUNTIME_PATH,
@@ -60,6 +62,7 @@ function relFromRoot(root, file) {
 function validationInputsForRoot(root) {
   return [
     path.join(root, 'BHA_DESIGN.md'),
+    path.join(root, 'BHA_LONG_TERM_GOAL_AUDIT.md'),
     path.join(root, 'BHA_V1_STABILITY.md'),
     path.join(root, 'BHA_V2_CAPABILITY_FRAMEWORK.md'),
     path.join(root, 'BHA_V2_COUNCIL_RUNTIME.md'),
@@ -4084,6 +4087,20 @@ async function handleAuditV1Stable(args) {
     { path: rel(ROADMAP_PATH) },
     ['.bha/roadmap.md']
   ));
+  checks.push(auditCheck(
+    'long_term_goal_audit_boundary_documented',
+    'The long-term goal audit maps goal areas to artifacts while keeping proof, push, private-key, dependency, and V2 preview boundaries explicit.',
+    fs.existsSync(LONG_TERM_GOAL_AUDIT_PATH) &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'Status: local Commander audit, not proof') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'Proof still comes from repository reality') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V1 production capability scope remains `git_push` only') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V2 capability framework remains preview/default deny') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'V2+ Council Runtime remains read-only preview/status') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'No push unless the operator separately authorizes a real push') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'No private key read'),
+    { path: rel(LONG_TERM_GOAL_AUDIT_PATH) },
+    ['BHA_LONG_TERM_GOAL_AUDIT.md']
+  ));
 
   const failed = checks.filter((check) => check.status !== 'PASS');
   console.log(JSON.stringify({
@@ -4098,6 +4115,7 @@ async function handleAuditV1Stable(args) {
     objective: 'BHA V1 stable local-first proof and boundary audit',
     proof_sources: [
       'BHA_DESIGN.md',
+      'BHA_LONG_TERM_GOAL_AUDIT.md',
       'BHA_V1_STABILITY.md',
       'BHA_V2_CAPABILITY_FRAMEWORK.md',
       'BHA_V2_COUNCIL_RUNTIME.md',
@@ -4658,6 +4676,7 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
   writeTextFile(path.join(fixtureRoot, '.gitignore'), '.bha/local/\n');
   writeTextFile(path.join(fixtureRoot, 'AGENTS.md'), '# Regression Fixture\n\nAGENTS.md guides behavior and is not proof.\n');
   writeTextFile(path.join(fixtureRoot, 'BHA_DESIGN.md'), '# Regression Fixture Design\n\nLocal deterministic evidence fixture.\n');
+  writeTextFile(path.join(fixtureRoot, 'BHA_LONG_TERM_GOAL_AUDIT.md'), '# Regression Fixture Long-Term Goal Audit\n\nStatus: local Commander audit, not proof.\n');
   writeTextFile(path.join(fixtureRoot, 'BHA_V1_STABILITY.md'), '# Regression Fixture Stability\n\nProof comes from repository reality, ledger/state evidence, verifier, policy/mission hash, local-only capability evidence, and git reality.\n');
   writeTextFile(path.join(fixtureRoot, 'BHA_V2_CAPABILITY_FRAMEWORK.md'), '# Regression Fixture Capability Framework\n\nDefault deny capability framework preview. git_push is the only enabled production capability.\n');
   writeTextFile(path.join(fixtureRoot, 'BHA_V2_COUNCIL_RUNTIME.md'), '# Regression Fixture Council Runtime\n\nCouncil Runtime role output is coordination context and not proof.\n');

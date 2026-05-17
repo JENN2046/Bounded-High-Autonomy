@@ -22,6 +22,7 @@ const RUN_SCRIPT = path.join(ROOT, 'scripts', 'bha-run.js');
 const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
 const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
+const LONG_TERM_GOAL_AUDIT_PATH = path.join(ROOT, 'BHA_LONG_TERM_GOAL_AUDIT.md');
 const STABILITY_PATH = path.join(ROOT, 'BHA_V1_STABILITY.md');
 const CAPABILITY_FRAMEWORK_PATH = path.join(ROOT, 'BHA_V2_CAPABILITY_FRAMEWORK.md');
 const COUNCIL_RUNTIME_PATH = path.join(ROOT, 'BHA_V2_COUNCIL_RUNTIME.md');
@@ -31,6 +32,7 @@ const ROOT_REAL = fs.realpathSync.native(ROOT);
 
 const VALIDATION_INPUTS = [
   DESIGN_PATH,
+  LONG_TERM_GOAL_AUDIT_PATH,
   STABILITY_PATH,
   CAPABILITY_FRAMEWORK_PATH,
   COUNCIL_RUNTIME_PATH,
