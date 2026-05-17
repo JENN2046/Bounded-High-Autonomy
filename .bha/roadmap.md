@@ -113,6 +113,7 @@ Operator status:
 - `node scripts/bha-run.js council-status --format json` is read-only and reports the Commander / Domain Leads / Worker / Verifier workflow contract without spawning agents, writing memory, or calling providers.
 - `make-push-payload --out`, `verify-signed-capability --file`, and `issue-capability --file` use `.bha/local/` paths so operators do not need to paste long signed JSON on the command line.
 - `gate-status` includes an `operator_handoff` block with local payload/signed-file status, the current capability id when it can be derived from `.bha/local/push-payload.json`, and PowerShell-safe single-line gate commands. It does not print signatures or private key material.
+- If `.bha/local/push-payload.json` already matches the current git, ledger, policy, mission, remote, and branch context, `gate-status` tells the operator to sign that existing unsigned payload instead of regenerating it.
 - `gate-status` and `recover-status` distinguish "needed before an operator-chosen real push" from "required now" with machine-readable fields such as `push_requirement.required_now`, `next_action_required_now`, `operator_handoff.capability_flow_required_now`, and `git_push_recovery.required_now`.
 
 ## Next Tasks

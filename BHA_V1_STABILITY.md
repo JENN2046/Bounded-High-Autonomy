@@ -46,6 +46,8 @@ Recovery status must explain missing, stale, expired, or otherwise unusable `.bh
 
 Payload status surfaces must expose both machine-readable `reason_codes` and human-readable `reason_details` for stale, expired, mismatched, or invalid local payload files. These fields are operator UX and recovery guidance, not proof by themselves.
 
+When an unsigned payload already matches the current `HEAD`, ledger head, policy hash, mission hash, remote, and branch, gate handoff should tell the operator to sign that existing `.bha/local/push-payload.json` instead of regenerating it. Regeneration is reserved for missing, stale, expired, mismatched, or invalid local payloads.
+
 Local payload and capability file paths must stay physically under `.bha/local/`. Symlink or junction traversal is rejected so local-only writes cannot escape the local evidence directory.
 
 Validation may assert stable nested status fields with `json_paths` expectations. Those assertions are used for operator-facing invariants such as signer ownership, no BHA private-key access, conditional push guidance, and `.bha/local/` recovery being local-only.

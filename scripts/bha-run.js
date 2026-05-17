@@ -3934,11 +3934,14 @@ async function handleAuditV1Stable(args) {
       fileContains(RUN_SCRIPT, 'Only required before an operator-chosen real git push.') &&
       fileContains(STABILITY_PATH, '`json_paths` expectations') &&
       fileContains(STABILITY_PATH, 'conditional push guidance') &&
+      fileContains(STABILITY_PATH, 'sign that existing `.bha/local/push-payload.json`') &&
       fileContains(STABILITY_PATH, 'local-only') &&
       fileContains(RUN_SCRIPT, 'gate_status_next_action_context_is_conditional') &&
       fileContains(RUN_SCRIPT, 'operator_handoff_capability_flow_is_conditional') &&
+      fileContains(RUN_SCRIPT, 'gate_status_uses_existing_current_unsigned_payload_before_signing') &&
       fileContains(RUN_SCRIPT, 'local_payload_recovery') &&
       fileContains(RUN_SCRIPT, 'fresh_clone_recover_status_explains_missing_local_capability') &&
+      fileContains(ROADMAP_PATH, 'sign that existing unsigned payload') &&
       fileContains(STABILITY_PATH, 'Push guidance is conditional')),
     {
       gate_status_validation_command_present: Boolean(gateStatusCommand),
