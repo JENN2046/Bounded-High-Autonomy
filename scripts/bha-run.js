@@ -2397,7 +2397,10 @@ async function handleAuditV12(args) {
     'package_publish_denied',
     'production_write_denied',
     'force_push_denied',
-    'destructive_external_action_denied'
+    'destructive_external_action_denied',
+    'hook_status_uninstalled_blocked_readonly',
+    'hook_status_installed_pass_readonly',
+    'hook_status_validation_allows_blocked_local_setup'
   ];
   const missingRegressionIds = regressionIds.filter((id) => !fileContains(RUN_SCRIPT, id));
   checks.push(auditCheck(
@@ -2487,6 +2490,23 @@ async function handleAuditV12(args) {
       inspect_recorded_status: recordedValidationCommand(state, 'inspect_readonly') ? recordedValidationCommand(state, 'inspect_readonly').status : 'MISSING'
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', '.bha/state.json']
+  ));
+  checks.push(auditCheck(
+    'hook_status_validation_local_setup_not_proof',
+    'hook-status is wired into validation as a read-only local setup report, but validation does not require local hook installation to be PASS.',
+    Boolean(hookCommand &&
+      hookCommand.expect &&
+      hookCommand.expect.exit_code === 0 &&
+      hookCommand.expect.read_only === true &&
+      hookCommand.expect.recorded === false &&
+      !Object.prototype.hasOwnProperty.call(hookCommand.expect, 'ok') &&
+      !Object.prototype.hasOwnProperty.call(hookCommand.expect, 'status')),
+    {
+      validation_command_present: Boolean(hookCommand),
+      requires_ok: Boolean(hookCommand && hookCommand.expect && Object.prototype.hasOwnProperty.call(hookCommand.expect, 'ok')),
+      requires_status: Boolean(hookCommand && hookCommand.expect && Object.prototype.hasOwnProperty.call(hookCommand.expect, 'status'))
+    },
+    ['.bha/validation.yaml', 'scripts/bha-run.js']
   ));
   checks.push(auditCheck(
     'codex_shell_rules_documented',
@@ -2981,6 +3001,59 @@ async function handleRegressionSelftest(args) {
     init: gitInit.exit_code,
     commit: gitCommit.exit_code,
     remote: gitRemote.exit_code
+  }));
+
+  const trackedBeforeHookStatus = await regressionGitStatus(fixtureRoot);
+  const hookStatusUninstalled = await runFixtureBha(fixtureRoot, ['hook-status', '--format', 'json']);
+  const trackedAfterHookStatusUninstalled = await regressionGitStatus(fixtureRoot);
+  checks.push(regressionCheck('hook_status_uninstalled_blocked_readonly', hookStatusUninstalled.exit_code === 0 &&
+    hookStatusUninstalled.parsed &&
+    hookStatusUninstalled.parsed.ok === false &&
+    hookStatusUninstalled.parsed.status === 'BLOCKED' &&
+    hookStatusUninstalled.parsed.read_only === true &&
+    hookStatusUninstalled.parsed.recorded === false &&
+    hookStatusUninstalled.parsed.checks &&
+    hookStatusUninstalled.parsed.checks.hooks_path_configured === false &&
+    hookStatusUninstalled.parsed.checks.pre_push_exists === true &&
+    trackedBeforeHookStatus === trackedAfterHookStatusUninstalled, {
+    status: hookStatusUninstalled.parsed ? hookStatusUninstalled.parsed.status : 'NO_JSON',
+    hooks_path_configured: hookStatusUninstalled.parsed && hookStatusUninstalled.parsed.checks ? hookStatusUninstalled.parsed.checks.hooks_path_configured : 'NO_JSON',
+    tracked_before: trackedBeforeHookStatus || 'CLEAN',
+    tracked_after: trackedAfterHookStatusUninstalled || 'CLEAN'
+  }));
+
+  const gitHooksPath = await runCommand(['git', 'config', 'core.hooksPath', '.githooks'], { cwd: fixtureRoot });
+  const trackedBeforeHookStatusInstalled = await regressionGitStatus(fixtureRoot);
+  const hookStatusInstalled = await runFixtureBha(fixtureRoot, ['hook-status', '--format', 'json']);
+  const trackedAfterHookStatusInstalled = await regressionGitStatus(fixtureRoot);
+  checks.push(regressionCheck('hook_status_installed_pass_readonly', gitHooksPath.exit_code === 0 &&
+    hookStatusInstalled.exit_code === 0 &&
+    hookStatusInstalled.parsed &&
+    hookStatusInstalled.parsed.ok === true &&
+    hookStatusInstalled.parsed.status === 'PASS' &&
+    hookStatusInstalled.parsed.read_only === true &&
+    hookStatusInstalled.parsed.recorded === false &&
+    hookStatusInstalled.parsed.hook &&
+    hookStatusInstalled.parsed.hook.configured === '.githooks' &&
+    trackedBeforeHookStatusInstalled === trackedAfterHookStatusInstalled, {
+    status: hookStatusInstalled.parsed ? hookStatusInstalled.parsed.status : 'NO_JSON',
+    configured: hookStatusInstalled.parsed && hookStatusInstalled.parsed.hook ? hookStatusInstalled.parsed.hook.configured : 'NO_JSON',
+    tracked_before: trackedBeforeHookStatusInstalled || 'CLEAN',
+    tracked_after: trackedAfterHookStatusInstalled || 'CLEAN'
+  }));
+
+  const rootValidation = readJsonStrict(VALIDATION_PATH);
+  const rootHookCommand = validationCommandById(rootValidation, 'hook_status_readonly');
+  const hookExpect = rootHookCommand && rootHookCommand.expect ? rootHookCommand.expect : {};
+  checks.push(regressionCheck('hook_status_validation_allows_blocked_local_setup', Boolean(rootHookCommand &&
+    hookExpect.exit_code === 0 &&
+    hookExpect.read_only === true &&
+    hookExpect.recorded === false &&
+    !Object.prototype.hasOwnProperty.call(hookExpect, 'ok') &&
+    !Object.prototype.hasOwnProperty.call(hookExpect, 'status')), {
+    validation_command_present: Boolean(rootHookCommand),
+    requires_ok: Object.prototype.hasOwnProperty.call(hookExpect, 'ok'),
+    requires_status: Object.prototype.hasOwnProperty.call(hookExpect, 'status')
   }));
 
   const branchResult = await runCommand(['git', 'branch', '--show-current'], { cwd: fixtureRoot });
