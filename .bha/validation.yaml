@@ -281,6 +281,49 @@
       }
     },
     {
+      "id": "stable_exit_review_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "stable-exit-review",
+        "--remote",
+        "origin",
+        "--branch",
+        "master",
+        "--format",
+        "json",
+        "--allow-validation-in-progress"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "PASS",
+        "recorded": false,
+        "read_only": true,
+        "json_paths": {
+          "decision": "ENTER_NEXT_LOCAL_PLANNING",
+          "completion_boundary.long_term_goal_complete": false,
+          "completion_boundary.push_performed": false,
+          "push_requirement.required_now": false,
+          "v2_hold_line.capability_enablement_allowed": false,
+          "v2_hold_line.council_activation_allowed": false,
+          "v2_hold_line.provider_calls_allowed": false,
+          "v2_hold_line.memory_writes_allowed": false
+        },
+        "has_keys": [
+          "schema",
+          "stage",
+          "decision",
+          "completion_boundary",
+          "stable_exit_status",
+          "prompt_to_artifact_checklist",
+          "push_requirement",
+          "v2_hold_line",
+          "proof_boundary"
+        ]
+      }
+    },
+    {
       "id": "closeout_preview_readonly",
       "argv": [
         "node",

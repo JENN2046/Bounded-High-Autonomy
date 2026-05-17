@@ -199,6 +199,35 @@
         "command": "node",
         "args": [
           "scripts/bha-run.js",
+          "stable-exit-review",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V1 stable candidate prompt-to-artifact exit review"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "stable-exit-review",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json",
+          "--allow-validation-in-progress"
+        ],
+        "reason": "read-only V1 stable candidate prompt-to-artifact exit review during validation bootstrap"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
           "audit-v1-stable",
           "--format",
           "json"

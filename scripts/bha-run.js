@@ -3794,6 +3794,226 @@ async function handleStableExitStatus(args) {
   }
 }
 
+async function handleStableExitReview(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const allowValidationInProgress = args.includes('--allow-validation-in-progress');
+  const remote = getOption(args, '--remote') || 'origin';
+  const branch = getOption(args, '--branch') || await currentBranch();
+  const validation = readJsonStrict(VALIDATION_PATH);
+  const policy = loadPolicy();
+  const stableExitArgs = ['node', 'scripts/bha-run.js', 'stable-exit-status', '--remote', remote, '--branch', branch, '--format', 'json'];
+  const stableAuditArgs = ['node', 'scripts/bha-run.js', 'audit-v1-stable', '--format', 'json'];
+  if (allowValidationInProgress) {
+    stableExitArgs.push('--allow-validation-in-progress');
+    stableAuditArgs.push('--allow-validation-in-progress');
+  }
+  const stableExit = await readOnlyJsonCommand(stableExitArgs);
+  const stable = stableExit.parsed || {};
+  const stableAudit = await readOnlyJsonCommand(stableAuditArgs);
+  const stableAuditPayload = stableAudit.parsed || {};
+  const v12Audit = await readOnlyJsonCommand(['node', 'scripts/bha-run.js', 'audit-v12', '--format', 'json']);
+  const v12Payload = v12Audit.parsed || {};
+  const verify = await verifierResult();
+  const verifier = verify.parsed || {};
+  const stableAuditChecks = Array.isArray(stableAuditPayload.checks) ? stableAuditPayload.checks : [];
+  const v12Checks = Array.isArray(v12Payload.checks) ? v12Payload.checks : [];
+  const stableAuditPass = (id) => stableAuditChecks.some((check) => check.id === id && check.status === 'PASS');
+  const v12Pass = (id) => v12Checks.some((check) => check.id === id && check.status === 'PASS');
+  const validationCommandPresent = (id) => Boolean(validationCommandById(validation, id));
+  const stableChecks = stable.checks || {};
+  const strictStableChecks = stable.strict_checks || {};
+  const trustChecks = allowValidationInProgress ? stableChecks : strictStableChecks;
+  const reviewArgv = ['node', 'scripts/bha-run.js', 'stable-exit-review', '--remote', 'origin', '--branch', 'master', '--format', 'json'];
+  const reviewBootstrapArgv = reviewArgv.concat(['--allow-validation-in-progress']);
+  const checks = [];
+  checks.push(auditCheck(
+    'stable_exit_status_strict_or_bootstrap_passes',
+    'stable-exit-status must pass in strict operator mode, or in explicit validation bootstrap mode while inputs are being refreshed.',
+    stableExit.ok === true &&
+      stable.status === 'PASS' &&
+      (allowValidationInProgress || stable.validation_in_progress_override === false),
+    {
+      status: stable.status || 'UNKNOWN',
+      validation_in_progress_allowed: stable.validation_in_progress_allowed === true,
+      validation_in_progress_override: stable.validation_in_progress_override === true,
+      blocking_checks: stable.blocking_checks || [],
+      strict_blocking_checks: stable.strict_blocking_checks || []
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml']
+  ));
+  checks.push(auditCheck(
+    'tracked_trust_sources_pass',
+    'Verifier, validation freshness, stable audit, V1.2 audit, checkpoint, closeout, and git clean state must agree before next local planning.',
+    trustChecks.clean_worktree === true &&
+      trustChecks.verifier_pass === true &&
+      trustChecks.audit_v1_stable_pass === true &&
+      trustChecks.audit_v12_pass === true &&
+      (allowValidationInProgress || (verifier.ok === true && verifier.status === 'PASS')),
+    {
+      verifier_status: verifier.status || 'UNKNOWN',
+      verifier_issues: Array.isArray(verifier.issues) ? verifier.issues.length : null,
+      verifier_warnings: Array.isArray(verifier.warnings) ? verifier.warnings.length : null,
+      validation_in_progress_allowed: allowValidationInProgress,
+      stable_checks: stable.checks || null,
+      strict_stable_checks: stable.strict_checks || null
+    },
+    ['.bha/ledger.jsonl', '.bha/state.json', '.bha/checkpoint.json', 'scripts/bha-verify.js']
+  ));
+  checks.push(auditCheck(
+    'operator_ux_freeze_covered',
+    'V1.3 operator UX guidance must keep push conditional, signer operator-controlled, and stale payload reasons machine-readable.',
+    stableAuditPass('conditional_push_guidance_freeze_wired') &&
+      stableAuditPass('operator_ux_handoff_regressions_covered') &&
+      stable.push_requirement &&
+      stable.push_requirement.required_now === false &&
+      stable.signer_boundary &&
+      stable.signer_boundary.bha_private_key_access === false,
+    {
+      audit_checks: ['conditional_push_guidance_freeze_wired', 'operator_ux_handoff_regressions_covered'],
+      push_requirement: stable.push_requirement || null,
+      signer_boundary: stable.signer_boundary || null
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'recovery_freeze_covered',
+    'V1.4 recovery must explain fresh clone, missing or stale .bha/local, and fail-closed replay or USED session recovery.',
+    stableAuditPass('fresh_clone_recovery_regressions_covered') &&
+      trustChecks.recover_status_ready === true &&
+      stable.recovery_summary &&
+      stable.recovery_summary.local_state &&
+      stable.recovery_summary.local_state.required_for_tracked_verifier_pass === false,
+    {
+      audit_check: 'fresh_clone_recovery_regressions_covered',
+      recovery_summary: stable.recovery_summary || null
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'hard_boundaries_and_dependency_surface_frozen',
+    'V1 stable audit must keep no dependencies, no private-key custody, no provider/deploy/release/tag/package publish/memory write, and git_push-only production capability.',
+    stableAuditPass('hard_boundaries_documented_and_policy_denied') &&
+      stableAuditPass('hard_boundary_deny_regressions_covered') &&
+      stableAuditPass('node_builtins_only_no_package_manifest') &&
+      stableAuditPass('operator_signer_private_key_boundary_scanned') &&
+      stableAuditPass('v1_capability_scope_default_deny'),
+    {
+      audit_checks: [
+        'hard_boundaries_documented_and_policy_denied',
+        'hard_boundary_deny_regressions_covered',
+        'node_builtins_only_no_package_manifest',
+        'operator_signer_private_key_boundary_scanned',
+        'v1_capability_scope_default_deny'
+      ]
+    },
+    ['.bha/policy.yaml', 'scripts/bha-run.js', 'scripts/bha-verify.js', 'BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'v2_hold_line_preview_only',
+    'V2 capability framework and council runtime must remain preview/status only with no new production capability or automated delegation.',
+    stableAuditPass('v2_capability_framework_preview_default_deny') &&
+      stableAuditPass('v2_council_runtime_preview_no_automation') &&
+      stable.v2_hold_line &&
+      stable.v2_hold_line.capability_enablement_allowed === false &&
+      stable.v2_hold_line.council_activation_allowed === false &&
+      stable.v2_hold_line.provider_calls_allowed === false &&
+      stable.v2_hold_line.memory_writes_allowed === false,
+    {
+      audit_checks: ['v2_capability_framework_preview_default_deny', 'v2_council_runtime_preview_no_automation'],
+      v2_hold_line: stable.v2_hold_line || null
+    },
+    ['BHA_V2_CAPABILITY_FRAMEWORK.md', 'BHA_V2_COUNCIL_RUNTIME.md', 'scripts/bha-run.js']
+  ));
+  checks.push(auditCheck(
+    'stable_exit_review_manifest_wired',
+    'stable-exit-review itself must be read-only, policy-allowed, wired into validation, and documented as an exit review rather than proof replacement.',
+    validationCommandPresent('stable_exit_review_readonly') &&
+      policyAllowsArgv(policy, reviewArgv) &&
+      policyAllowsArgv(policy, reviewBootstrapArgv) &&
+      fileContains(STABILITY_PATH, '`stable-exit-review` is a read-only prompt-to-artifact exit review') &&
+      fileContains(ROADMAP_PATH, '`stable-exit-review` turns the stable exit review') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'stable-exit-review'),
+    {
+      validation_command_present: validationCommandPresent('stable_exit_review_readonly'),
+      strict_policy_allowed: policyAllowsArgv(policy, reviewArgv),
+      bootstrap_policy_allowed: policyAllowsArgv(policy, reviewBootstrapArgv)
+    },
+    ['.bha/policy.yaml', '.bha/validation.yaml', 'BHA_V1_STABILITY.md', '.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md']
+  ));
+  checks.push(auditCheck(
+    'validation_and_audit_coverage_current',
+    'The manifest and audits must explicitly cover stable-exit, recovery, gate, regression, V2 hold line, and stable review checks.',
+    stableAudit.ok === true &&
+      stableAudit.status === 'PASS' &&
+      v12Audit.ok === true &&
+      v12Audit.status === 'PASS' &&
+      v12Pass('validation_and_verifier_observable') &&
+      v12Pass('capability_framework_status_validation_wired') &&
+      v12Pass('council_status_validation_wired'),
+    {
+      stable_audit_status: stableAudit.status,
+      v12_audit_status: v12Audit.status,
+      validation_commands_present: [
+        'stable_exit_status_readonly',
+        'stable_exit_review_readonly',
+        'recover_status_readonly',
+        'gate_status_readonly',
+        'v12_regression_selftest'
+      ].filter(validationCommandPresent)
+    },
+    ['.bha/validation.yaml', 'scripts/bha-run.js']
+  ));
+  const failed = checks.filter((check) => check.status !== 'PASS');
+  const ok = failed.length === 0;
+  console.log(JSON.stringify({
+    schema: 'bha.stable_exit_review.v1',
+    ok,
+    status: ok ? 'PASS' : 'BLOCKED',
+    stage: 'V1_STABLE_EXIT_REVIEW',
+    decision: ok ? 'ENTER_NEXT_LOCAL_PLANNING' : 'REPAIR_LOCAL_STABLE_CANDIDATE',
+    recorded: false,
+    read_only: true,
+    remote,
+    branch: branch || 'UNKNOWN',
+    validation_in_progress_allowed: allowValidationInProgress,
+    objective: 'Freeze the BHA V1 local-first trust kernel as a stable candidate while keeping V2 capability framework and council runtime on preview hold lines.',
+    completion_boundary: {
+      long_term_goal_complete: false,
+      reason: 'This review gates V1 Stable Candidate exit or next local planning only; it does not complete future V2 capability or council-runtime objectives.',
+      push_performed: false,
+      remote_release_performed: false
+    },
+    stable_exit_status: {
+      ok: stableExit.ok,
+      status: stable.status || 'UNKNOWN',
+      next_stage: stable.next_stage || null,
+      blocking_checks: stable.blocking_checks || [],
+      strict_blocking_checks: stable.strict_blocking_checks || []
+    },
+    prompt_to_artifact_checklist: checks,
+    failed,
+    push_requirement: stable.push_requirement || null,
+    v2_hold_line: stable.v2_hold_line || null,
+    next_actions: ok ? [
+      'Continue local next-stage planning without push, provider calls, private-key access, dependency changes, release, deploy, tag, package publish, or memory write.',
+      'Run node scripts/bha-run.js stable-exit-review --remote origin --branch master --format json before claiming V1 Stable Candidate exit readiness.'
+    ] : [
+      'Run node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json',
+      'Repair failed checklist items with local tracked changes only.',
+      'Run node scripts/bha-run.js validate, checkpoint, closeout, verifier, and stable-exit-review again.'
+    ],
+    proof_boundary: 'stable-exit-review is read-only checklist reporting. It does not replace validate or the verifier, does not push, issue or consume capability, read private keys, call providers, write memory, deploy, release, tag, publish packages, or turn prose into proof.'
+  }));
+  if (!ok) {
+    process.exitCode = 1;
+  }
+}
+
 async function handleAuditV1Stable(args) {
   const format = getOption(args, '--format') || 'json';
   if (format !== 'json') {
@@ -3858,6 +4078,7 @@ async function handleAuditV1Stable(args) {
   const operatorSignerPreflightJsonPaths = operatorSignerPreflightCommand && operatorSignerPreflightCommand.expect ? (operatorSignerPreflightCommand.expect.json_paths || {}) : {};
   const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
   const stableExitCommand = validationCommandById(validation, 'stable_exit_status_readonly');
+  const stableExitReviewCommand = validationCommandById(validation, 'stable_exit_review_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const verifierSelftestCommand = validationCommandById(validation, 'verifier_selftest_negative_matrix');
   const requireAudit = requireModuleAudit([RUN_SCRIPT, VERIFY_SCRIPT]);
@@ -4191,6 +4412,32 @@ async function handleAuditV1Stable(args) {
       validation_command_present: Boolean(stableExitCommand),
       strict_policy_allowed: policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'stable-exit-status', '--remote', 'origin', '--branch', 'master', '--format', 'json']),
       validation_command_policy_allowed: stableExitCommand ? policyAllowsArgv(policy, stableExitCommand.argv || []) : false
+    },
+    ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js', 'BHA_V1_STABILITY.md', '.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md']
+  ));
+  checks.push(auditCheck(
+    'stable_exit_review_wired',
+    'stable-exit-review is read-only, policy-allowed, wired into validation, and documented as a prompt-to-artifact exit review rather than a proof replacement.',
+    Boolean(stableExitReviewCommand &&
+      stableExitReviewCommand.expect &&
+      stableExitReviewCommand.expect.exit_code === 0 &&
+      stableExitReviewCommand.expect.read_only === true &&
+      stableExitReviewCommand.expect.recorded === false &&
+      stableExitReviewCommand.expect.json_paths &&
+      stableExitReviewCommand.expect.json_paths['completion_boundary.long_term_goal_complete'] === false &&
+      stableExitReviewCommand.expect.json_paths['push_requirement.required_now'] === false &&
+      stableExitReviewCommand.expect.json_paths['v2_hold_line.capability_enablement_allowed'] === false &&
+      stableExitReviewCommand.expect.json_paths['v2_hold_line.council_activation_allowed'] === false &&
+      policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'stable-exit-review', '--remote', 'origin', '--branch', 'master', '--format', 'json']) &&
+      policyAllowsArgv(policy, stableExitReviewCommand.argv || []) &&
+      fileContains(RUN_SCRIPT, 'async function handleStableExitReview') &&
+      fileContains(STABILITY_PATH, '`stable-exit-review` is a read-only prompt-to-artifact exit review') &&
+      fileContains(ROADMAP_PATH, '`stable-exit-review` turns the stable exit review') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'stable-exit-review')),
+    {
+      validation_command_present: Boolean(stableExitReviewCommand),
+      strict_policy_allowed: policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'stable-exit-review', '--remote', 'origin', '--branch', 'master', '--format', 'json']),
+      validation_command_policy_allowed: stableExitReviewCommand ? policyAllowsArgv(policy, stableExitReviewCommand.argv || []) : false
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js', 'BHA_V1_STABILITY.md', '.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md']
   ));
@@ -7308,6 +7555,8 @@ async function main() {
       await handleCouncilStatus(args);
     } else if (command === 'stable-exit-status') {
       await handleStableExitStatus(args);
+    } else if (command === 'stable-exit-review') {
+      await handleStableExitReview(args);
     } else if (command === 'audit-v1-stable') {
       await handleAuditV1Stable(args);
     } else if (command === 'audit-v12') {

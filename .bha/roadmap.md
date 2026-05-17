@@ -46,6 +46,7 @@ Completed locally:
 - `recover-status` explains fresh clone and missing `.bha/local/` recovery without treating local push capability evidence as tracked trust.
 - `recover-status` also reports stale, expired, mismatched, or otherwise unusable unsigned/signed payload files as local-only recovery context.
 - `stable-exit-status` reports whether the V1 Stable Candidate is clean enough to enter the next local planning stage without implying that push is required.
+- `stable-exit-review` turns the stable exit review into a read-only prompt-to-artifact checklist over verifier, validation, audits, recovery, gate, docs, and V2 hold-line evidence.
 - `capability-framework-status` reports the default-deny V2 capability preview and the deny/replay test gate for any future capability type.
 - `council-status` reports the V2+ Council Runtime preview contract as read-only, local-only coordination context, not proof.
 - Ledger writes are guarded by a local `.bha/local/ledger.lock` so concurrent local evidence writers fail closed instead of corrupting the hash chain.
@@ -82,6 +83,7 @@ Stable candidate local acceptance commands:
 - `node scripts/bha-run.js audit-v12 --format json`
 - `node scripts/bha-run.js audit-v1-stable --format json`
 - `node scripts/bha-run.js stable-exit-status --remote 'origin' --branch 'master' --format json`
+- `node scripts/bha-run.js stable-exit-review --remote 'origin' --branch 'master' --format json`
 - `node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json`
 - `node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json`
 
@@ -114,6 +116,7 @@ Operator status:
 - `node scripts/bha-run.js capability-framework-status --format json` is read-only and keeps unknown capability types default-denied unless schema, policy, evidence, deny tests, and replay tests exist.
 - `node scripts/bha-run.js council-status --format json` is read-only and reports the Commander / Domain Leads / Worker / Verifier workflow contract without spawning agents, writing memory, or calling providers.
 - `node scripts/bha-run.js stable-exit-status --remote 'origin' --branch 'master' --format json` is read-only and summarizes V1 stable exit readiness, conditional push state, recovery state, and V2 hold lines for local planning.
+- `node scripts/bha-run.js stable-exit-review --remote 'origin' --branch 'master' --format json` is read-only and maps the V1 Stable Candidate objective to concrete artifacts and command evidence before entering next local planning.
 - `make-push-payload --out`, `verify-signed-capability --file`, and `issue-capability --file` use `.bha/local/` paths so operators do not need to paste long signed JSON on the command line.
 - `gate-status` includes an `operator_handoff` block with local payload/signed-file status, the current capability id when it can be derived from `.bha/local/push-payload.json`, and PowerShell-safe single-line gate commands. It does not print signatures or private key material.
 - If `.bha/local/push-payload.json` already matches the current git, ledger, policy, mission, remote, and branch context, `gate-status` and `recover-status` tell the operator to sign that existing unsigned payload instead of regenerating it.
@@ -127,6 +130,7 @@ Operator status:
    - Keep all proof claims tied to repository reality, ledger/state evidence, verifier, policy/mission hash, local-only capability evidence, and git reality.
    - Keep roadmap, stability docs, validation, and audit checks aligned before treating V1 as frozen.
    - Keep `stable-exit-status` passing from a clean worktree before entering the next local planning stage.
+   - Keep `stable-exit-review` passing before claiming the V1 stable exit review is complete.
 
 2. V1.3 operator UX freeze
    - Keep stale payload and command-splitting mistakes machine-readable and human-readable.
