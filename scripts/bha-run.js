@@ -2882,6 +2882,8 @@ async function recoverStatus(remote, branch) {
     },
     git_push_recovery: {
       requires_new_local_capability: needsLocalGitPushCapability,
+      required_now: false,
+      condition: 'Only required before an operator-chosen real git push.',
       current_capability_status: hasUsableCapability.ok === true ? 'READY' : 'MISSING_OR_NOT_USABLE',
       reason: hasUsableCapability.ok === true ? null : hasUsableCapability.reason,
       local_only: true,
@@ -4924,11 +4926,15 @@ async function handleRegressionSelftest(args) {
     cloneRecoverParsed.local_state.bha_local_exists === false &&
     cloneRecoverParsed.git_push_recovery &&
     cloneRecoverParsed.git_push_recovery.requires_new_local_capability === true &&
+    cloneRecoverParsed.git_push_recovery.required_now === false &&
+    String(cloneRecoverParsed.git_push_recovery.condition || '').includes('operator-chosen real git push') &&
     Array.isArray(cloneRecoverParsed.git_push_recovery.next_commands) &&
     cloneRecoverParsed.git_push_recovery.next_commands.some((commandText) => commandText.includes('push-prep')), {
     verifier_pass: cloneRecoverParsed && cloneRecoverParsed.tracked_trust ? cloneRecoverParsed.tracked_trust.verifier_pass : 'NO_JSON',
     bha_local_exists: cloneRecoverParsed && cloneRecoverParsed.local_state ? cloneRecoverParsed.local_state.bha_local_exists : 'NO_JSON',
-    requires_new_local_capability: cloneRecoverParsed && cloneRecoverParsed.git_push_recovery ? cloneRecoverParsed.git_push_recovery.requires_new_local_capability : 'NO_JSON'
+    requires_new_local_capability: cloneRecoverParsed && cloneRecoverParsed.git_push_recovery ? cloneRecoverParsed.git_push_recovery.requires_new_local_capability : 'NO_JSON',
+    required_now: cloneRecoverParsed && cloneRecoverParsed.git_push_recovery ? cloneRecoverParsed.git_push_recovery.required_now : 'NO_JSON',
+    condition: cloneRecoverParsed && cloneRecoverParsed.git_push_recovery ? cloneRecoverParsed.git_push_recovery.condition : 'NO_JSON'
   }));
   checks.push(regressionCheck('fresh_clone_gate_status_blocks_without_local_capability', clone.exit_code === 0 &&
     cloneGateStatus.exit_code === 0 &&
