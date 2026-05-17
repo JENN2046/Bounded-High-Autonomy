@@ -17,7 +17,10 @@ const CAPABILITIES_PATH = path.join(BHA_DIR, 'capabilities.jsonl');
 const LOCAL_CAPABILITIES_PATH = path.join(BHA_LOCAL_DIR, 'capabilities.jsonl');
 const LOCAL_CAPABILITY_SESSIONS_PATH = path.join(BHA_LOCAL_DIR, 'capability-sessions.jsonl');
 const LEDGER_LOCK_PATH = path.join(BHA_LOCAL_DIR, 'ledger.lock');
+const LOCAL_CAPABILITY_LOCK_PATH = path.join(BHA_LOCAL_DIR, 'capability.lock');
 const LEDGER_LOCK_TIMEOUT_MS = 2000;
+const LEDGER_LOCK_STALE_MS = 30000;
+const LOCAL_CAPABILITY_LOCK_TIMEOUT_MS = 2000;
 const VALIDATION_PATH = path.join(BHA_DIR, 'validation.yaml');
 const ROLLBACK_PATH = path.join(BHA_DIR, 'rollback.md');
 const ROADMAP_PATH = path.join(BHA_DIR, 'roadmap.md');
@@ -292,31 +295,108 @@ function syncSleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function withLedgerLock(callback) {
+function lockMetadata() {
+  return {
+    pid: process.pid,
+    acquired_at: new Date().toISOString(),
+    command: scrubArgv(process.argv.slice(2)),
+    repo_head: currentHeadSync()
+  };
+}
+
+function readLockMetadata(lockPath) {
+  try {
+    const text = fs.readFileSync(lockPath, 'utf8').trim();
+    return text ? JSON.parse(text) : {};
+  } catch (error) {
+    return {
+      unreadable: true,
+      error: error && error.message ? error.message : String(error)
+    };
+  }
+}
+
+function pidIsAlive(pid) {
+  const value = Number(pid);
+  if (!Number.isInteger(value) || value <= 0) {
+    return false;
+  }
+  try {
+    process.kill(value, 0);
+    return true;
+  } catch (error) {
+    return error && error.code === 'EPERM';
+  }
+}
+
+function staleLockRecovery(lockPath, staleMs) {
+  const metadata = readLockMetadata(lockPath);
+  const acquiredAt = Date.parse(metadata.acquired_at || '');
+  let ageMs = Number.isFinite(acquiredAt) ? Date.now() - acquiredAt : null;
+  if (ageMs === null) {
+    try {
+      ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+    } catch (error) {
+      ageMs = 0;
+    }
+  }
+  if (ageMs < staleMs) {
+    return { recover: false, reason: 'LOCK_NOT_STALE', metadata, age_ms: ageMs };
+  }
+  if (metadata.pid && pidIsAlive(metadata.pid)) {
+    return { recover: false, reason: 'LOCK_PID_ALIVE', metadata, age_ms: ageMs };
+  }
+  return { recover: true, metadata, age_ms: ageMs };
+}
+
+function withLocalExclusiveLock(lockPath, callback, options) {
   fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
-  const lockPath = resolveLocalFile(LEDGER_LOCK_PATH);
-  const deadline = Date.now() + LEDGER_LOCK_TIMEOUT_MS;
+  const resolvedLockPath = resolveLocalFile(lockPath);
+  const timeoutMs = options && Number.isFinite(options.timeout_ms) ? options.timeout_ms : LEDGER_LOCK_TIMEOUT_MS;
+  const staleMs = options && Number.isFinite(options.stale_ms) ? options.stale_ms : null;
+  const deadline = Date.now() + timeoutMs;
   let fd = null;
+  let recoveredStaleLock = null;
   while (fd === null) {
     try {
-      fd = fs.openSync(lockPath, 'wx');
-      fs.writeFileSync(fd, stable({
-        pid: process.pid,
-        acquired_at: new Date().toISOString()
-      }) + '\n', 'utf8');
+      fd = fs.openSync(resolvedLockPath, 'wx');
+      fs.writeFileSync(fd, stable(lockMetadata()) + '\n', 'utf8');
     } catch (error) {
+      if (error && error.code === 'EEXIST' && staleMs !== null) {
+        const stale = staleLockRecovery(resolvedLockPath, staleMs);
+        if (stale.recover) {
+          try {
+            fs.unlinkSync(resolvedLockPath);
+            recoveredStaleLock = {
+              lock_path: rel(resolvedLockPath),
+              stale_pid: stale.metadata.pid || null,
+              acquired_at: stale.metadata.acquired_at || null,
+              command: stale.metadata.command || null,
+              repo_head: stale.metadata.repo_head || null,
+              age_ms: stale.age_ms,
+              recovered_at: new Date().toISOString()
+            };
+            continue;
+          } catch (unlinkError) {
+            if (!unlinkError || unlinkError.code !== 'ENOENT') {
+              throw unlinkError;
+            }
+          }
+        }
+      }
       if (error && error.code === 'EEXIST' && Date.now() < deadline) {
         syncSleep(25);
         continue;
       }
       if (error && error.code === 'EEXIST') {
-        throw new Error('ledger lock is held by another local BHA writer');
+        const lockName = path.basename(resolvedLockPath) === 'ledger.lock' ? 'ledger lock' : 'local capability lock';
+        throw new Error(`${lockName} is held by another local BHA writer (${rel(resolvedLockPath)})`);
       }
       throw error;
     }
   }
   try {
-    return callback();
+    return callback({ recovered_stale_lock: recoveredStaleLock });
   } finally {
     if (fd !== null) {
       try {
@@ -326,7 +406,7 @@ function withLedgerLock(callback) {
       }
     }
     try {
-      fs.unlinkSync(lockPath);
+      fs.unlinkSync(resolvedLockPath);
     } catch (error) {
       if (!error || error.code !== 'ENOENT') {
         throw error;
@@ -335,36 +415,58 @@ function withLedgerLock(callback) {
   }
 }
 
+function withLedgerLock(callback) {
+  return withLocalExclusiveLock(LEDGER_LOCK_PATH, callback, {
+    timeout_ms: LEDGER_LOCK_TIMEOUT_MS,
+    stale_ms: LEDGER_LOCK_STALE_MS
+  });
+}
+
+function withCapabilityLock(callback) {
+  return withLocalExclusiveLock(LOCAL_CAPABILITY_LOCK_PATH, callback, {
+    timeout_ms: LOCAL_CAPABILITY_LOCK_TIMEOUT_MS
+  });
+}
+
+function appendLedgerEventUnlocked(type, payload, mission, policy, state, head) {
+  const event = {
+    schema: 'bha.ledger.event.v1',
+    run_id: state.run_id || mission.run_id,
+    mission_id: mission.mission_id || null,
+    policy_hash: policyHash(policy),
+    mission_hash: missionHash(mission),
+    event_id: crypto.randomUUID(),
+    ts: new Date().toISOString(),
+    type,
+    actor: 'bha-run',
+    prev_hash: head.hash || 'GENESIS',
+    payload
+  };
+  event.event_hash = eventHash(event);
+  fs.appendFileSync(LEDGER_PATH, stable(event) + '\n', 'utf8');
+  state.ledger_head_hash = event.event_hash;
+  state.ledger_event_count = head.count + 1;
+  state.policy_hash = event.policy_hash;
+  state.mission_hash = event.mission_hash;
+  state.updated_at = event.ts;
+  return event;
+}
+
 function appendLedger(type, payload, mutateState) {
-  return withLedgerLock(() => {
+  return withLedgerLock((lockContext) => {
     fs.mkdirSync(BHA_DIR, { recursive: true });
     const mission = loadMission();
     const policy = loadPolicy();
     const state = loadState();
-    const head = ledgerHead();
+    let head = ledgerHead();
+    if (lockContext && lockContext.recovered_stale_lock) {
+      appendLedgerEventUnlocked('stale_ledger_lock_recovered', lockContext.recovered_stale_lock, mission, policy, state, head);
+      head = ledgerHead();
+    }
     const resolvedPayload = typeof payload === 'function'
       ? payload({ mission, policy, state, head })
       : payload;
-    const event = {
-      schema: 'bha.ledger.event.v1',
-      run_id: state.run_id || mission.run_id,
-      mission_id: mission.mission_id || null,
-      policy_hash: policyHash(policy),
-      mission_hash: missionHash(mission),
-      event_id: crypto.randomUUID(),
-      ts: new Date().toISOString(),
-      type,
-      actor: 'bha-run',
-      prev_hash: head.hash || 'GENESIS',
-      payload: resolvedPayload
-    };
-    event.event_hash = eventHash(event);
-    fs.appendFileSync(LEDGER_PATH, stable(event) + '\n', 'utf8');
-    state.ledger_head_hash = event.event_hash;
-    state.ledger_event_count = head.count + 1;
-    state.policy_hash = event.policy_hash;
-    state.mission_hash = event.mission_hash;
-    state.updated_at = event.ts;
+    const event = appendLedgerEventUnlocked(type, resolvedPayload, mission, policy, state, head);
     if (typeof mutateState === 'function') {
       mutateState(state, event);
     }
@@ -483,6 +585,21 @@ function listFromPolicy(policy, section, fallback) {
   return (denyCommands && Array.isArray(denyCommands[section])) ? denyCommands[section] : fallback;
 }
 
+function argvMatchesPattern(argv, pattern) {
+  const expected = String(pattern || '').trim().split(/\s+/).filter(Boolean).map((part, index) => {
+    return index === 0 ? commandName(part) : part.toLowerCase();
+  });
+  if (expected.length === 0 || !Array.isArray(argv) || argv.length < expected.length) {
+    return false;
+  }
+  const actual = [commandName(argv[0])].concat(argv.slice(1).map((arg) => String(arg).toLowerCase()));
+  return expected.every((part, index) => actual[index] === part);
+}
+
+function argvMatchesAnyPattern(argv, patterns) {
+  return patterns.some((pattern) => argvMatchesPattern(argv, pattern));
+}
+
 function classifyForbidden(argv, policy) {
   const cmd = commandName(argv[0]);
   const args = argv.slice(1).map(String);
@@ -492,6 +609,11 @@ function classifyForbidden(argv, policy) {
   const memory = listFromPolicy(policy, 'memory_commands', ['codex-memory', 'dailynote']);
   const gitRemote = listFromPolicy(policy, 'git_remote_subcommands', ['push', 'pull', 'fetch', 'clone', 'ls-remote', 'submodule']);
   const destructive = listFromPolicy(policy, 'destructive_commands', ['rm', 'rmdir', 'del']);
+  const packageInstall = listFromPolicy(policy, 'package_install_commands', ['npm install', 'npm ci', 'pnpm install', 'yarn install']);
+  const packagePublish = listFromPolicy(policy, 'package_publish_commands', ['npm publish', 'pnpm publish']);
+  const release = listFromPolicy(policy, 'release_commands', ['gh release', 'git tag', 'npm version']);
+  const ssh = listFromPolicy(policy, 'ssh_commands', ['ssh', 'scp', 'rsync']);
+  const deploy = listFromPolicy(policy, 'deploy_commands', ['vercel', 'netlify', 'firebase', 'kubectl', 'docker push']);
 
   if (network.map(commandName).includes(cmd)) {
     return { category: 'network', rule: 'DENY_NETWORK_COMMAND', reason: 'network commands are forbidden in dry-run' };
@@ -504,6 +626,21 @@ function classifyForbidden(argv, policy) {
   }
   if (destructive.map(commandName).includes(cmd)) {
     return { category: 'destructive', rule: 'DENY_DESTRUCTIVE_COMMAND', reason: 'destructive commands are forbidden' };
+  }
+  if (argvMatchesAnyPattern(argv, packageInstall)) {
+    return { category: 'package_install', rule: 'DENY_PACKAGE_INSTALL', reason: 'package installation commands are forbidden' };
+  }
+  if (argvMatchesAnyPattern(argv, packagePublish)) {
+    return { category: 'package_publish', rule: 'DENY_PACKAGE_PUBLISH', reason: 'package publishing commands are forbidden' };
+  }
+  if (argvMatchesAnyPattern(argv, release)) {
+    return { category: 'release', rule: 'DENY_RELEASE_COMMAND', reason: 'release and tag commands are forbidden' };
+  }
+  if (argvMatchesAnyPattern(argv, ssh)) {
+    return { category: 'ssh', rule: 'DENY_SSH_COMMAND', reason: 'ssh/scp/rsync commands are forbidden' };
+  }
+  if (argvMatchesAnyPattern(argv, deploy)) {
+    return { category: 'deploy', rule: 'DENY_DEPLOY_COMMAND', reason: 'deploy commands are forbidden' };
   }
   if (cmd === 'git' && gitRemote.map((item) => String(item).toLowerCase()).includes(first)) {
     if (first === 'push' && args.some((arg) => /^--force($|-|=)/.test(arg))) {
@@ -583,7 +720,7 @@ function evaluateValidationCommandPolicy(argv) {
   const args = Array.isArray(argv) ? argv.map(String) : [];
   if (commandName(args[0]) === 'node' &&
       args[1] === 'scripts/bha-run.js' &&
-      args[2] === 'check' &&
+      (args[2] === 'check' || args[2] === 'assert-deny') &&
       args[3] === '--') {
     return evaluatePolicy(args.slice(0, 4));
   }
@@ -702,6 +839,99 @@ function validationInputsHash() {
   return validationInputsHashForRoot(ROOT);
 }
 
+async function gitStatusPorcelainV2() {
+  const result = await runCommand(['git', 'status', '--porcelain=v2', '--branch', '--untracked-files=all'], {});
+  return {
+    ok: result.exit_code === 0 && !result.error,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    error: result.error,
+    exit_code: result.exit_code,
+    files: result.exit_code === 0 && !result.error ? changedFilesFromPorcelainV2(result.stdout) : []
+  };
+}
+
+function parsePorcelainPath(line) {
+  const parts = String(line || '').split(' ');
+  if (line.startsWith('1 ') && parts.length >= 9) {
+    return parts.slice(8).join(' ');
+  }
+  if (line.startsWith('2 ') && parts.length >= 10) {
+    return parts.slice(9).join(' ').split('\t')[0];
+  }
+  if (line.startsWith('u ') && parts.length >= 11) {
+    return parts.slice(10).join(' ');
+  }
+  if (line.startsWith('? ') || line.startsWith('! ')) {
+    return line.slice(2);
+  }
+  return '';
+}
+
+function changedFilesFromPorcelainV2(stdout) {
+  return String(stdout || '').split(/\r?\n/).filter((line) => {
+    return line.trim() !== '' && !line.startsWith('# ');
+  }).map((line) => {
+    const status = line.startsWith('? ') || line.startsWith('! ')
+      ? line.slice(0, 1)
+      : line.slice(2, 4).trim() || 'UNKNOWN';
+    const filePath = parsePorcelainPath(line).replace(/\\/g, '/');
+    return { status, path: filePath };
+  }).filter((item) => item.path);
+}
+
+function normalizedAllowedPathPatterns(policy) {
+  return ((policy.paths || {}).allowed || []).map((item) => normalizeRepoPath(item).path);
+}
+
+function normalizedProtectedPathPatterns(policy) {
+  return ((policy.paths || {}).protected || []).map((item) => normalizeRepoPath(item).path);
+}
+
+function pathMatchesPolicyPattern(filePath, pattern, allowImplicitDescendants) {
+  const normalized = normalizeRepoPath(filePath).path;
+  let item = String(pattern || '');
+  const explicitDescendants = item.endsWith('/**') || item.endsWith('/');
+  if (item.endsWith('/**')) {
+    item = item.slice(0, -3);
+  }
+  if (item.endsWith('/')) {
+    item = item.slice(0, -1);
+  }
+  return normalized === item || ((explicitDescendants || allowImplicitDescendants) && normalized.startsWith(item + '/'));
+}
+
+function fileAllowedByPolicy(filePath, policy) {
+  return normalizedAllowedPathPatterns(policy).some((pattern) => pathMatchesPolicyPattern(filePath, pattern, false));
+}
+
+function fileProtectedByPolicy(filePath, policy) {
+  return normalizedProtectedPathPatterns(policy).some((pattern) => pathMatchesPolicyPattern(filePath, pattern, true));
+}
+
+function statusFileMap(files) {
+  const map = new Map();
+  for (const file of files || []) {
+    map.set(file.path, file.status);
+  }
+  return map;
+}
+
+function fileChangesAfterExec(before, after, policy) {
+  const beforeMap = statusFileMap(before.files);
+  return (after.files || []).map((file) => {
+    const beforeStatus = beforeMap.has(file.path) ? beforeMap.get(file.path) : null;
+    return {
+      path: file.path,
+      status: file.status,
+      before_status: beforeStatus,
+      changed_since_before: beforeStatus !== file.status,
+      allowed: fileAllowedByPolicy(file.path, policy),
+      protected: fileProtectedByPolicy(file.path, policy)
+    };
+  });
+}
+
 async function handleCheck(args) {
   const argv = splitAfterDashDash(args);
   const decision = evaluatePolicy(argv);
@@ -718,11 +948,50 @@ async function handleCheck(args) {
     state.last_policy_decision = payload;
   });
   console.log(JSON.stringify({ ok: true, command: payload.command, decision: decision.decision, allowed: decision.allowed, spawned: false, reason: decision.reason, rule: decision.rule }));
+  if (!decision.allowed) {
+    process.exitCode = 2;
+  }
+}
+
+async function handleAssertDeny(args) {
+  const argv = splitAfterDashDash(args);
+  const decision = evaluatePolicy(argv);
+  const assertionPassed = decision.allowed === false;
+  const payload = {
+    command: scrubArgv(argv),
+    decision: decision.decision,
+    allowed: decision.allowed,
+    rule: decision.rule,
+    category: decision.category,
+    reason: decision.reason,
+    spawned: false,
+    assertion: 'DENY',
+    assertion_passed: assertionPassed
+  };
+  appendLedger('policy_assert_deny', payload, (state) => {
+    state.last_policy_decision = payload;
+  });
+  console.log(JSON.stringify({
+    ok: assertionPassed,
+    command: payload.command,
+    decision: decision.decision,
+    allowed: decision.allowed,
+    spawned: false,
+    assertion: 'DENY',
+    assertion_passed: assertionPassed,
+    reason: decision.reason,
+    rule: decision.rule
+  }));
+  if (!assertionPassed) {
+    process.exitCode = 3;
+  }
 }
 
 async function handleExec(args) {
   const argv = splitAfterDashDash(args);
   const decision = evaluatePolicy(argv);
+  const policy = loadPolicy();
+  const statusBefore = await gitStatusPorcelainV2();
   appendLedger('policy_check', {
     command: scrubArgv(argv),
     decision: decision.decision,
@@ -748,14 +1017,53 @@ async function handleExec(args) {
     return;
   }
   const result = await runCommand(argv, { inherit: true });
+  const statusAfter = await gitStatusPorcelainV2();
+  const fileChanges = statusBefore.ok && statusAfter.ok ? fileChangesAfterExec(statusBefore, statusAfter, policy) : [];
+  const disallowed = fileChanges.filter((file) => !file.allowed || file.protected);
+  const statusPayload = {
+    before: {
+      ok: statusBefore.ok,
+      exit_code: statusBefore.exit_code,
+      error: statusBefore.error || null,
+      stderr: truncate(statusBefore.stderr),
+      files: statusBefore.files
+    },
+    after: {
+      ok: statusAfter.ok,
+      exit_code: statusAfter.exit_code,
+      error: statusAfter.error || null,
+      stderr: truncate(statusAfter.stderr),
+      files: statusAfter.files
+    }
+  };
   appendLedger('command_execution', {
     command: scrubArgv(argv),
     spawned: true,
     shell: false,
     exit_code: result.exit_code,
     signal: result.signal,
-    error: result.error
+    error: result.error,
+    file_changes: fileChanges,
+    git_status: statusPayload,
+    path_allowlist_enforced: statusBefore.ok && statusAfter.ok,
+    disallowed_file_changes: disallowed,
+    status: disallowed.length > 0 ? 'HALT_DISALLOWED_FILE_CHANGE' : 'RECORDED'
   });
+  if (disallowed.length > 0) {
+    console.log(JSON.stringify({
+      ok: false,
+      status: 'HALT_DISALLOWED_FILE_CHANGE',
+      allowed: false,
+      spawned: true,
+      disallowed_file_changes: disallowed
+    }));
+    process.exitCode = 4;
+    return;
+  }
+  if (!statusBefore.ok || !statusAfter.ok) {
+    process.exitCode = result.exit_code || 1;
+    return;
+  }
   if (result.exit_code !== 0 || result.error) {
     process.exitCode = result.exit_code || 1;
   }
@@ -1011,8 +1319,60 @@ async function handleValidate() {
   }
 }
 
-async function handleVerify() {
+async function handleVerify(args) {
+  const record = Array.isArray(args) && args.includes('--record');
+  const checkedHead = ledgerHead();
   const result = await runCommand(['node', 'scripts/bha-verify.js'], {});
+  const parsed = parseJsonLine(result.stdout);
+  if (record) {
+    const status = parsed && parsed.status
+      ? parsed.status
+      : (result.exit_code === 0 && !result.error ? 'PASS' : 'ERROR');
+    const issues = parsed && Array.isArray(parsed.issues) ? parsed.issues : [];
+    const warnings = parsed && Array.isArray(parsed.warnings) ? parsed.warnings : [];
+    const checkedLedgerHeadHash = parsed && parsed.ledger_head_hash ? parsed.ledger_head_hash : checkedHead.hash;
+    const checkedLedgerEventCount = parsed && Number.isInteger(parsed.ledger_event_count) ? parsed.ledger_event_count : checkedHead.count;
+    let staleLedgerHead = false;
+    const event = appendLedger('verifier_completed', ({ head }) => {
+      staleLedgerHead = checkedLedgerHeadHash !== head.hash;
+      return {
+        status: staleLedgerHead ? 'STALE' : status,
+        ok: !staleLedgerHead && result.exit_code === 0 && !result.error && parsed && parsed.ok === true,
+        checked_ledger_head_hash: checkedLedgerHeadHash,
+        checked_ledger_event_count: checkedLedgerEventCount,
+        current_ledger_head_hash_before_record: head.hash,
+        stale_ledger_head: staleLedgerHead,
+        reason: staleLedgerHead ? 'VERIFIER_STALE_LEDGER_HEAD' : null,
+        issues,
+        warnings,
+        verifier_exit_code: result.exit_code,
+        verifier_error: result.error || null,
+        verifier_stdout_json: parsed ? true : false
+      };
+    }, (state, verifierEvent) => {
+      state.last_verifier_result = staleLedgerHead ? 'STALE' : status;
+      state.last_verifier_event_hash = verifierEvent.event_hash;
+      state.last_verified_ledger_head_hash = checkedLedgerHeadHash;
+    });
+    console.log(JSON.stringify({
+      ok: !staleLedgerHead && result.exit_code === 0 && !result.error && parsed && parsed.ok === true,
+      status: staleLedgerHead ? 'STALE' : status,
+      recorded: true,
+      read_only: false,
+      checked_ledger_head_hash: checkedLedgerHeadHash,
+      verifier_event_hash: event.event_hash,
+      final_ledger_head_hash: event.event_hash,
+      reason: staleLedgerHead ? 'VERIFIER_STALE_LEDGER_HEAD' : null,
+      issues,
+      warnings
+    }));
+    process.stderr.write(result.stderr);
+    if (result.error) {
+      console.error(result.error);
+    }
+    process.exitCode = staleLedgerHead ? 3 : (result.exit_code || (result.error ? 1 : 0));
+    return;
+  }
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
   if (result.error) {
@@ -1323,10 +1683,11 @@ function proofNegativeMatrixStatus() {
   const council = councilRuntimeStatus();
   const commandCases = [
     { id: 'provider_call_injection', argv: ['openai', 'models', 'list'], expected_rule: 'DENY_PROVIDER_COMMAND' },
-    { id: 'deploy_injection', argv: ['kubectl', 'apply', '-f', 'production.yaml'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
-    { id: 'release_injection', argv: ['gh', 'release', 'create'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
-    { id: 'tag_injection', argv: ['git', 'tag', 'v0.0.0'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
-    { id: 'package_publish_injection', argv: ['npm', 'publish'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
+    { id: 'deploy_injection', argv: ['kubectl', 'apply', '-f', 'production.yaml'], expected_rule: 'DENY_DEPLOY_COMMAND' },
+    { id: 'release_injection', argv: ['gh', 'release', 'create'], expected_rule: 'DENY_RELEASE_COMMAND' },
+    { id: 'tag_injection', argv: ['git', 'tag', 'v0.0.0'], expected_rule: 'DENY_RELEASE_COMMAND' },
+    { id: 'package_install_injection', argv: ['npm', 'install'], expected_rule: 'DENY_PACKAGE_INSTALL' },
+    { id: 'package_publish_injection', argv: ['npm', 'publish'], expected_rule: 'DENY_PACKAGE_PUBLISH' },
     { id: 'memory_write_injection', argv: ['codex-memory', 'write'], expected_rule: 'DENY_MEMORY_COMMAND' },
     { id: 'private_key_read_attempt', argv: ['node', 'scripts/read-private-key.js'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
     { id: 'secret_env_print_attempt', argv: ['node', 'scripts/print-env-secret.js'], expected_rule: 'DENY_NOT_ALLOWLISTED' },
@@ -2393,18 +2754,26 @@ function appendCapabilityEvent(type, payload) {
   return event;
 }
 
-function appendLocalCapabilityEvent(type, payload) {
+function appendLocalCapabilityEventUnlocked(type, payload) {
   const event = buildCapabilityEvent(type, payload, true);
   fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
   fs.appendFileSync(resolveLocalFile(LOCAL_CAPABILITIES_PATH), stable(event) + '\n', 'utf8');
   return event;
 }
 
-function appendLocalCapabilitySession(payload) {
+function appendLocalCapabilityEvent(type, payload) {
+  return withCapabilityLock(() => appendLocalCapabilityEventUnlocked(type, payload));
+}
+
+function appendLocalCapabilitySessionUnlocked(payload) {
   const event = buildCapabilityEvent('capability_session', payload, true);
   fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
   fs.appendFileSync(resolveLocalFile(LOCAL_CAPABILITY_SESSIONS_PATH), stable(event) + '\n', 'utf8');
   return event;
+}
+
+function appendLocalCapabilitySession(payload) {
+  return withCapabilityLock(() => appendLocalCapabilitySessionUnlocked(payload));
 }
 
 function readCapabilityEvents() {
@@ -2969,13 +3338,33 @@ async function handleConsumeCapability(args) {
     process.exitCode = 2;
     return;
   }
+  const localOnly = forAction === 'git_push';
+  const head = currentHeadSync();
+  const result = localOnly
+    ? withCapabilityLock(() => consumeCapabilityRecord(id, forAction, remote, branch, head, true))
+    : consumeCapabilityRecord(id, forAction, remote, branch, head, false);
+  console.log(JSON.stringify({
+    ok: result.valid,
+    capability_id: id,
+    valid: result.valid,
+    status: result.status,
+    reason: result.reason,
+    capability_store: result.capability_store,
+    local_only: localOnly,
+    event_hash: result.event.event_hash
+  }));
+  if (!result.valid) {
+    process.exitCode = 2;
+  }
+}
+
+function consumeCapabilityRecord(id, forAction, remote, branch, head, localOnly) {
   const events = readCapabilityEventsWithLocalSessions();
   const issue = findCapabilityIssue(events, id);
   let valid = false;
   let status = 'DENIED';
   let reason = issue ? issue.payload.reason || 'CAPABILITY_INVALID' : 'CAPABILITY_NOT_FOUND';
   const state = loadState();
-  const head = await currentHead();
   if (issue) {
     const requested = issue.payload.requested || {};
     const existingConsumed = validCapabilityConsumes(events, id);
@@ -3007,9 +3396,8 @@ async function handleConsumeCapability(args) {
       reason = 'CAPABILITY_CONSUMED';
     }
   }
-  const localOnly = forAction === 'git_push';
   const capabilityStore = localOnly ? '.bha/local/capabilities.jsonl' : '.bha/capabilities.jsonl';
-  const event = localOnly ? appendLocalCapabilityEvent('capability_consume', {
+  const event = localOnly ? appendLocalCapabilityEventUnlocked('capability_consume', {
     capability_id: id,
     for: forAction,
     remote,
@@ -3032,19 +3420,7 @@ async function handleConsumeCapability(args) {
     status,
     reason
   });
-  console.log(JSON.stringify({
-    ok: valid,
-    capability_id: id,
-    valid,
-    status,
-    reason,
-    capability_store: capabilityStore,
-    local_only: localOnly,
-    event_hash: event.event_hash
-  }));
-  if (!valid) {
-    process.exitCode = 2;
-  }
+  return { valid, status, reason, capability_store: capabilityStore, event };
 }
 
 async function gitStatusShort() {
@@ -3113,6 +3489,13 @@ async function readOnlyJsonCommand(argv) {
 
 async function matchingConsumedCapability(remote, branch, head, options) {
   const reserve = options && options.reserve === true;
+  if (reserve) {
+    return withCapabilityLock(() => matchingConsumedCapabilityCore(remote, branch, head, true));
+  }
+  return matchingConsumedCapabilityCore(remote, branch, head, false);
+}
+
+function matchingConsumedCapabilityCore(remote, branch, head, reserve) {
   const state = loadState();
   let events;
   try {
@@ -3185,7 +3568,7 @@ async function matchingConsumedCapability(remote, branch, head, options) {
         requested.one_use === true &&
         !isExpired(requested.expires_at)) {
       if (reserve) {
-        const session = appendLocalCapabilitySession({
+        const session = appendLocalCapabilitySessionUnlocked({
           capability_id: id,
           remote,
           branch,
@@ -5408,6 +5791,7 @@ async function handleAuditV1Stable(args) {
     'force_push',
     'destructive_fs',
     'production_write',
+    'package_install',
     'package_publish'
   ];
   const requiredDenyRegressionIds = [
@@ -5416,6 +5800,7 @@ async function handleAuditV1Stable(args) {
     'deploy_denied',
     'release_denied',
     'tag_denied',
+    'package_install_denied',
     'package_publish_denied',
     'production_write_denied',
     'force_push_denied',
@@ -5494,6 +5879,11 @@ async function handleAuditV1Stable(args) {
       (denyCommands.memory_commands || []).length > 0 &&
       (denyCommands.git_remote_subcommands || []).includes('push') &&
       (denyCommands.destructive_commands || []).length > 0 &&
+      (denyCommands.package_install_commands || []).length > 0 &&
+      (denyCommands.package_publish_commands || []).length > 0 &&
+      (denyCommands.release_commands || []).length > 0 &&
+      (denyCommands.deploy_commands || []).length > 0 &&
+      (denyCommands.ssh_commands || []).length > 0 &&
       fileContains(STABILITY_PATH, 'no provider calls') &&
       fileContains(STABILITY_PATH, 'no deploy, release, tag, or package publish') &&
       fileContains(STABILITY_PATH, 'no private key access'),
@@ -6835,6 +7225,7 @@ async function handleAuditV12(args) {
     'deploy_denied',
     'release_denied',
     'tag_denied',
+    'package_install_denied',
     'package_publish_denied',
     'production_write_denied',
     'force_push_denied',
@@ -7113,7 +7504,7 @@ async function handleAuditV12(args) {
   checks.push(auditCheck(
     'hard_denied_capabilities_policy_present',
     'Policy continues to deny provider, memory, deploy, release, tag, package publish, production write, force push, and destructive classes.',
-    ['provider_call', 'memory_write', 'deploy', 'release', 'tag', 'package_publish', 'production_write', 'force_push', 'destructive_fs']
+    ['provider_call', 'memory_write', 'deploy', 'release', 'tag', 'package_install', 'package_publish', 'production_write', 'force_push', 'destructive_fs']
       .every((item) => ((policy.capability_rules || {}).always_denied_v1 || []).includes(item)),
     { always_denied_v1: (policy.capability_rules || {}).always_denied_v1 || [] },
     ['.bha/policy.yaml']
@@ -7256,7 +7647,12 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
         provider_commands: ['openai', 'anthropic', 'gemini'],
         memory_commands: ['codex-memory', 'DailyNote'],
         git_remote_subcommands: ['push', 'pull', 'fetch', 'clone', 'ls-remote', 'submodule'],
-        destructive_commands: ['rm', 'rmdir', 'del']
+        destructive_commands: ['rm', 'rmdir', 'del'],
+        package_install_commands: ['npm install', 'npm ci', 'pnpm install', 'yarn install'],
+        package_publish_commands: ['npm publish', 'pnpm publish', 'yarn npm publish'],
+        release_commands: ['gh release', 'git tag', 'npm version', 'pnpm version', 'yarn version'],
+        ssh_commands: ['ssh', 'scp', 'rsync'],
+        deploy_commands: ['vercel', 'netlify', 'firebase', 'kubectl', 'docker push']
       },
       allow: [
         { command: 'git', args: ['diff', '--check'], reason: 'local whitespace validation' },
@@ -7268,7 +7664,8 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
         { command: 'node', args: ['scripts/bha-run.js', 'capability-framework-status', '--format', 'json'], reason: 'read-only V2 capability framework status' },
         { command: 'node', args: ['scripts/bha-run.js', 'council-status', '--format', 'json'], reason: 'read-only V2 council runtime status' },
         { command: 'node', args: ['scripts/bha-run.js', 'audit-v2-preview', '--format', 'json', '--allow-validation-in-progress'], reason: 'read-only V2 preview audit during validation bootstrap' },
-        { command: 'node', args_prefix: ['scripts/bha-run.js', 'check', '--'], reason: 'nested dry-run policy check' }
+        { command: 'node', args_prefix: ['scripts/bha-run.js', 'check', '--'], reason: 'nested dry-run policy check' },
+        { command: 'node', args_prefix: ['scripts/bha-run.js', 'assert-deny', '--'], reason: 'negative dry-run policy assertion' }
       ]
     },
     validation_rules: {},
@@ -7285,6 +7682,7 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
         'force_push',
         'destructive_fs',
         'production_write',
+        'package_install',
         'package_publish'
       ]
     },
@@ -7892,6 +8290,56 @@ async function handleRegressionSelftest(args) {
     String(checkpointWhileLocked.stderr || '').includes('ledger lock')), {
     exit_code: checkpointWhileLocked.exit_code,
     error: checkpointWhileLocked.parsed ? checkpointWhileLocked.parsed.error : truncate(checkpointWhileLocked.stderr)
+  }));
+  const staleFixtureRoot = path.join(scratchParent, `stale-lock-${crypto.randomUUID()}`);
+  fs.mkdirSync(staleFixtureRoot, { recursive: true });
+  writeRegressionFixtureEvidence(staleFixtureRoot, keyId, publicKeyPem, []);
+  await runCommand(['git', 'init'], { cwd: staleFixtureRoot });
+  await runCommand(['git', 'config', 'user.email', 'bha-regression@example.invalid'], { cwd: staleFixtureRoot });
+  await runCommand(['git', 'config', 'user.name', 'BHA Regression'], { cwd: staleFixtureRoot });
+  await runCommand(['git', 'add', '.'], { cwd: staleFixtureRoot });
+  await runCommand(['git', 'commit', '-m', 'stale lock regression fixture'], { cwd: staleFixtureRoot });
+  const staleFixtureLedgerLock = path.join(staleFixtureRoot, '.bha', 'local', 'ledger.lock');
+  writeTextFile(staleFixtureLedgerLock, stable({
+    pid: 99999999,
+    acquired_at: '2000-01-01T00:00:00.000Z',
+    command: ['regression-selftest', 'stale-lock'],
+    repo_head: 'fixture'
+  }) + '\n');
+  const checkAfterStaleLock = await runFixtureBha(staleFixtureRoot, ['check', '--', 'git', 'status']);
+  const fixtureLedgerAfterStale = readJsonl(path.join(staleFixtureRoot, '.bha', 'ledger.jsonl'));
+  const staleRecoveryEvent = fixtureLedgerAfterStale.find((event) => event.type === 'stale_ledger_lock_recovered');
+  checks.push(regressionCheck('stale_ledger_lock_recovered_before_append', checkAfterStaleLock.exit_code === 0 &&
+    checkAfterStaleLock.parsed &&
+    checkAfterStaleLock.parsed.ok === true &&
+    staleRecoveryEvent &&
+    staleRecoveryEvent.payload &&
+    staleRecoveryEvent.payload.stale_pid === 99999999, {
+    exit_code: checkAfterStaleLock.exit_code,
+    decision: checkAfterStaleLock.parsed ? checkAfterStaleLock.parsed.decision : 'NO_JSON',
+    stale_recovery_event_hash: staleRecoveryEvent ? staleRecoveryEvent.event_hash : null
+  }));
+  const policyForPathCheck = loadPolicy();
+  checks.push(regressionCheck('allowed_file_path_does_not_allow_descendant_path',
+    fileAllowedByPolicy('scripts/bha-run.js', policyForPathCheck) === true &&
+    fileAllowedByPolicy('scripts/bha-run.js/nested', policyForPathCheck) === false &&
+    fileProtectedByPolicy('.git/config', policyForPathCheck) === true, {
+    exact_file_allowed: fileAllowedByPolicy('scripts/bha-run.js', policyForPathCheck),
+    descendant_file_allowed: fileAllowedByPolicy('scripts/bha-run.js/nested', policyForPathCheck),
+    protected_descendant_detected: fileProtectedByPolicy('.git/config', policyForPathCheck)
+  }));
+  checks.push(regressionCheck('local_consume_read_validate_append_under_capability_lock',
+    fileContains(RUN_SCRIPT, "withCapabilityLock(() => consumeCapabilityRecord") &&
+    fileContains(RUN_SCRIPT, "appendLocalCapabilityEventUnlocked('capability_consume'") &&
+    fileContains(RUN_SCRIPT, 'const existingConsumed = validCapabilityConsumes(events, id)'), {
+    locked_consume_path: fileContains(RUN_SCRIPT, "withCapabilityLock(() => consumeCapabilityRecord"),
+    unlocked_append_inside_record: fileContains(RUN_SCRIPT, "appendLocalCapabilityEventUnlocked('capability_consume'")
+  }));
+  checks.push(regressionCheck('verify_record_detects_stale_ledger_head',
+    fileContains(RUN_SCRIPT, 'VERIFIER_STALE_LEDGER_HEAD') &&
+    fileContains(RUN_SCRIPT, 'current_ledger_head_hash_before_record') &&
+    fileContains(RUN_SCRIPT, 'stale_ledger_head'), {
+    stale_reason_present: fileContains(RUN_SCRIPT, 'VERIFIER_STALE_LEDGER_HEAD')
   }));
   checks.push(regressionCheck('checkpoint_closeout_ledger_head_race_fail_closed',
     fileContains(RUN_SCRIPT, 'CHECKPOINT_LEDGER_HEAD_CHANGED_BEFORE_APPEND') &&
@@ -9191,6 +9639,7 @@ async function handleRegressionSelftest(args) {
     ['deploy_denied', ['kubectl', 'apply', '-f', 'production.yaml']],
     ['release_denied', ['gh', 'release', 'create']],
     ['tag_denied', ['git', 'tag', 'v0.0.0']],
+    ['package_install_denied', ['npm', 'install']],
     ['package_publish_denied', ['npm', 'publish']],
     ['production_write_denied', ['psql', 'production', '-c', 'update']],
     ['force_push_denied', ['git', 'push', '--force', 'origin', branch]],
@@ -9198,10 +9647,11 @@ async function handleRegressionSelftest(args) {
   ];
   const deniedResults = [];
   for (const [id, argv] of deniedCases) {
-    const result = await runFixtureBha(fixtureRoot, ['check', '--'].concat(argv));
+    const result = await runFixtureBha(fixtureRoot, ['assert-deny', '--'].concat(argv));
     const pass = result.exit_code === 0 &&
       result.parsed &&
       result.parsed.decision === 'DENY' &&
+      result.parsed.assertion_passed === true &&
       result.parsed.spawned === false;
     deniedResults.push({
       id,
@@ -10030,6 +10480,8 @@ async function main() {
   try {
     if (command === 'check') {
       await handleCheck(args);
+    } else if (command === 'assert-deny') {
+      await handleAssertDeny(args);
     } else if (command === 'exec') {
       await handleExec(args);
     } else if (command === 'inspect') {
@@ -10037,7 +10489,7 @@ async function main() {
     } else if (command === 'validate') {
       await handleValidate();
     } else if (command === 'verify') {
-      await handleVerify();
+      await handleVerify(args);
     } else if (command === 'checkpoint') {
       await handleCheckpoint(args);
     } else if (command === 'closeout') {

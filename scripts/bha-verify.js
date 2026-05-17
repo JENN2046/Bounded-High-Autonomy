@@ -634,6 +634,21 @@ function listFromPolicy(policy, section, fallback) {
   return (denyCommands && Array.isArray(denyCommands[section])) ? denyCommands[section] : fallback;
 }
 
+function argvMatchesPattern(argv, pattern) {
+  const expected = String(pattern || '').trim().split(/\s+/).filter(Boolean).map((part, index) => {
+    return index === 0 ? commandName(part) : part.toLowerCase();
+  });
+  if (expected.length === 0 || !Array.isArray(argv) || argv.length < expected.length) {
+    return false;
+  }
+  const actual = [commandName(argv[0])].concat(argv.slice(1).map((arg) => String(arg).toLowerCase()));
+  return expected.every((part, index) => actual[index] === part);
+}
+
+function argvMatchesAnyPattern(argv, patterns) {
+  return patterns.some((pattern) => argvMatchesPattern(argv, pattern));
+}
+
 function classifyForbidden(argv, policy) {
   const cmd = commandName(argv[0]);
   const args = (argv || []).slice(1).map(String);
@@ -643,6 +658,11 @@ function classifyForbidden(argv, policy) {
   const memory = listFromPolicy(policy, 'memory_commands', ['codex-memory', 'dailynote']);
   const gitRemote = listFromPolicy(policy, 'git_remote_subcommands', ['push', 'pull', 'fetch', 'clone', 'ls-remote', 'submodule']);
   const destructive = listFromPolicy(policy, 'destructive_commands', ['rm', 'rmdir', 'del']);
+  const packageInstall = listFromPolicy(policy, 'package_install_commands', ['npm install', 'npm ci', 'pnpm install', 'yarn install']);
+  const packagePublish = listFromPolicy(policy, 'package_publish_commands', ['npm publish', 'pnpm publish']);
+  const release = listFromPolicy(policy, 'release_commands', ['gh release', 'git tag', 'npm version']);
+  const ssh = listFromPolicy(policy, 'ssh_commands', ['ssh', 'scp', 'rsync']);
+  const deploy = listFromPolicy(policy, 'deploy_commands', ['vercel', 'netlify', 'firebase', 'kubectl', 'docker push']);
 
   if (network.map(commandName).includes(cmd)) {
     return { category: 'network', rule: 'DENY_NETWORK_COMMAND' };
@@ -655,6 +675,21 @@ function classifyForbidden(argv, policy) {
   }
   if (destructive.map(commandName).includes(cmd)) {
     return { category: 'destructive', rule: 'DENY_DESTRUCTIVE_COMMAND' };
+  }
+  if (argvMatchesAnyPattern(argv, packageInstall)) {
+    return { category: 'package_install', rule: 'DENY_PACKAGE_INSTALL' };
+  }
+  if (argvMatchesAnyPattern(argv, packagePublish)) {
+    return { category: 'package_publish', rule: 'DENY_PACKAGE_PUBLISH' };
+  }
+  if (argvMatchesAnyPattern(argv, release)) {
+    return { category: 'release', rule: 'DENY_RELEASE_COMMAND' };
+  }
+  if (argvMatchesAnyPattern(argv, ssh)) {
+    return { category: 'ssh', rule: 'DENY_SSH_COMMAND' };
+  }
+  if (argvMatchesAnyPattern(argv, deploy)) {
+    return { category: 'deploy', rule: 'DENY_DEPLOY_COMMAND' };
   }
   if (cmd === 'git' && gitRemote.map((item) => String(item).toLowerCase()).includes(first)) {
     if (first === 'push' && args.some((arg) => /^--force($|-|=)/.test(arg))) {
@@ -932,7 +967,7 @@ function verifyPolicyMissionHashes(files, issues) {
 }
 
 function verifyClaims(events, capabilities, issues) {
-  const disallowed = new Set(['provider_call', 'memory_write', 'deploy', 'release', 'tag', 'force_push', 'production_write', 'secret_read', 'mass_delete']);
+  const disallowed = new Set(['provider_call', 'memory_write', 'deploy', 'release', 'tag', 'force_push', 'production_write', 'secret_read', 'mass_delete', 'package_install', 'package_publish', 'ssh']);
   for (const event of events) {
     const payload = event.payload || {};
     const category = payload.category || payload.claim || payload.type;

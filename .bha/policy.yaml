@@ -85,6 +85,36 @@
         "rm",
         "rmdir",
         "del"
+      ],
+      "package_install_commands": [
+        "npm install",
+        "npm ci",
+        "pnpm install",
+        "yarn install"
+      ],
+      "package_publish_commands": [
+        "npm publish",
+        "pnpm publish",
+        "yarn npm publish"
+      ],
+      "release_commands": [
+        "gh release",
+        "git tag",
+        "npm version",
+        "pnpm version",
+        "yarn version"
+      ],
+      "ssh_commands": [
+        "ssh",
+        "scp",
+        "rsync"
+      ],
+      "deploy_commands": [
+        "vercel",
+        "netlify",
+        "firebase",
+        "kubectl",
+        "docker push"
       ]
     },
     "allow": [
@@ -127,6 +157,15 @@
           "--"
         ],
         "reason": "nested dry-run policy check"
+      },
+      {
+        "command": "node",
+        "args_prefix": [
+          "scripts/bha-run.js",
+          "assert-deny",
+          "--"
+        ],
+        "reason": "negative dry-run policy assertion"
       },
       {
         "command": "node",
@@ -595,6 +634,7 @@
       "force_push",
       "destructive_fs",
       "production_write",
+      "package_install",
       "package_publish"
     ]
   },

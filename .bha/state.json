@@ -2,16 +2,16 @@
   "schema": "bha.state.v1",
   "version": "1.0.0",
   "run_id": "bha-dry-run-v1",
-  "updated_at": "2026-05-17T13:55:31.076Z",
-  "ledger_head_hash": "eecaa65ae795680e17f8650a4d8f41ed115a2cac454c36dd2a3420fd4da5395e",
-  "ledger_event_count": 10072,
+  "updated_at": "2026-05-17T15:26:44.005Z",
+  "ledger_head_hash": "0e7322e433fb635434fdedbf4366ee6818a34f275b349d19f5343dd790e0a405",
+  "ledger_event_count": 10405,
   "validation": {
     "status": "PASS",
-    "completed_at": "2026-05-17T13:55:16.260Z",
-    "inputs_hash": "0866adc409b1621aec5280d8a000fb3dbc67f82d504b6bb028b9dd831914e16b",
-    "policy_hash": "258f4a1b58baf89876e395e09328a73ad0ce7ea4136bcbdaee8bc1495d188951",
+    "completed_at": "2026-05-17T15:26:32.438Z",
+    "inputs_hash": "8520074651cc72bd6c63ff9ceaa0a0ec98111cd5b45c800ef0932b869a95635d",
+    "policy_hash": "1d544fc633eed6b1dcd19e9eae462c28c161a86e013f53dffde0c77255e45ced",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
-    "ledger_event_hash": "32b172068f86513215988e2f4ae802da9b553e96ef3bcc35dddfc51b9144ebc4",
+    "ledger_event_hash": "058ee84932eb9373356dc50e167eda874a5fb18d4bdbc7c397f5d91887c2d863",
     "commands": [
       {
         "id": "git_diff_check",
@@ -1479,7 +1479,7 @@
         "error": null
       },
       {
-        "id": "check_git_push_deny",
+        "id": "check_git_push_deny_exit2",
         "argv": [
           "node",
           "scripts/bha-run.js",
@@ -1491,7 +1491,7 @@
           "main"
         ],
         "expect": {
-          "exit_code": 0,
+          "exit_code": 2,
           "decision": "DENY",
           "spawned": false
         },
@@ -1503,16 +1503,16 @@
         "spawned": true,
         "status": "PASS",
         "problems": [],
-        "exit_code": 0,
+        "exit_code": 2,
         "signal": null,
         "error": null
       },
       {
-        "id": "check_git_tag_deny",
+        "id": "assert_git_tag_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "git",
           "tag",
@@ -1527,7 +1527,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1536,11 +1536,11 @@
         "error": null
       },
       {
-        "id": "check_git_fetch_deny",
+        "id": "assert_git_fetch_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "git",
           "fetch"
@@ -1554,7 +1554,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1563,11 +1563,11 @@
         "error": null
       },
       {
-        "id": "check_curl_deny",
+        "id": "assert_curl_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "curl",
           "https://example.com"
@@ -1581,7 +1581,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1590,11 +1590,11 @@
         "error": null
       },
       {
-        "id": "check_npm_install_deny",
+        "id": "assert_npm_install_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "npm",
           "install"
@@ -1608,7 +1608,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1617,11 +1617,11 @@
         "error": null
       },
       {
-        "id": "check_npm_publish_deny",
+        "id": "assert_npm_publish_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "npm",
           "publish"
@@ -1635,7 +1635,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1644,11 +1644,11 @@
         "error": null
       },
       {
-        "id": "check_gh_release_create_deny",
+        "id": "assert_gh_release_create_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "gh",
           "release",
@@ -1663,7 +1663,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1672,11 +1672,11 @@
         "error": null
       },
       {
-        "id": "check_ssh_deny",
+        "id": "assert_ssh_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "ssh",
           "example.com"
@@ -1690,7 +1690,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1699,11 +1699,11 @@
         "error": null
       },
       {
-        "id": "check_openai_deny",
+        "id": "assert_openai_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "openai",
           "models",
@@ -1718,7 +1718,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1727,11 +1727,11 @@
         "error": null
       },
       {
-        "id": "check_anthropic_deny",
+        "id": "assert_anthropic_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "anthropic",
           "messages"
@@ -1745,7 +1745,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1754,11 +1754,11 @@
         "error": null
       },
       {
-        "id": "check_gemini_deny",
+        "id": "assert_gemini_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "gemini",
           "models"
@@ -1772,7 +1772,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1781,11 +1781,11 @@
         "error": null
       },
       {
-        "id": "check_codex_memory_deny",
+        "id": "assert_codex_memory_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "codex-memory",
           "write"
@@ -1799,7 +1799,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -1808,11 +1808,11 @@
         "error": null
       },
       {
-        "id": "check_dailynote_path_deny",
+        "id": "assert_dailynote_path_deny",
         "argv": [
           "node",
           "scripts/bha-run.js",
-          "check",
+          "assert-deny",
           "--",
           "node",
           "DailyNote/write.js"
@@ -1826,7 +1826,7 @@
         "allowed": true,
         "rule": "ALLOW_PREFIX",
         "category": "local",
-        "reason": "nested dry-run policy check",
+        "reason": "negative dry-run policy assertion",
         "spawned": true,
         "status": "PASS",
         "problems": [],
@@ -2000,7 +2000,9 @@
     "rule": "DENY_PATH",
     "category": "denied_path",
     "reason": "denied path argument is forbidden",
-    "spawned": false
+    "spawned": false,
+    "assertion": "DENY",
+    "assertion_passed": true
   },
   "capability_selftest": {
     "status": "PASS",
@@ -2068,7 +2070,7 @@
       "private_key_repo_write": false
     }
   },
-  "policy_hash": "258f4a1b58baf89876e395e09328a73ad0ce7ea4136bcbdaee8bc1495d188951",
+  "policy_hash": "1d544fc633eed6b1dcd19e9eae462c28c161a86e013f53dffde0c77255e45ced",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "closeout": {
     "status": "PASS",
@@ -2082,15 +2084,18 @@
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
   },
   "last_checkpoint": {
-    "checkpoint_id": "checkpoint-2026-05-17T13-55-25-741Z",
-    "created_at": "2026-05-17T13:55:25.817Z",
-    "ledger_event_hash": "fc7f4564a3df5760f8b615dff077ec71d50e2d872ded82e65349f017f9d7c49b",
-    "verified_ledger_head_hash": "32b172068f86513215988e2f4ae802da9b553e96ef3bcc35dddfc51b9144ebc4",
-    "checkpoint_event_hash": "fc7f4564a3df5760f8b615dff077ec71d50e2d872ded82e65349f017f9d7c49b",
-    "final_ledger_head_hash": "fc7f4564a3df5760f8b615dff077ec71d50e2d872ded82e65349f017f9d7c49b",
+    "checkpoint_id": "checkpoint-2026-05-17T15-26-16-995Z",
+    "created_at": "2026-05-17T15:26:17.116Z",
+    "ledger_event_hash": "d302c6872945e21b03d63033b68d0c496331a77f45d1b35187dfc5ef5a7fd715",
+    "verified_ledger_head_hash": "3dcb231635971a404c6d970b6fb15c790fbc1fca011946616cd79548a863638a",
+    "checkpoint_event_hash": "d302c6872945e21b03d63033b68d0c496331a77f45d1b35187dfc5ef5a7fd715",
+    "final_ledger_head_hash": "d302c6872945e21b03d63033b68d0c496331a77f45d1b35187dfc5ef5a7fd715",
     "path": ".bha/checkpoint.json",
-    "policy_hash": "258f4a1b58baf89876e395e09328a73ad0ce7ea4136bcbdaee8bc1495d188951",
+    "policy_hash": "1d544fc633eed6b1dcd19e9eae462c28c161a86e013f53dffde0c77255e45ced",
     "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea"
   },
-  "last_checkpoint_id": "checkpoint-2026-05-17T13-55-25-741Z"
+  "last_checkpoint_id": "checkpoint-2026-05-17T15-26-16-995Z",
+  "last_verifier_result": "PASS",
+  "last_verifier_event_hash": "0e7322e433fb635434fdedbf4366ee6818a34f275b349d19f5343dd790e0a405",
+  "last_verified_ledger_head_hash": "058ee84932eb9373356dc50e167eda874a5fb18d4bdbc7c397f5d91887c2d863"
 }

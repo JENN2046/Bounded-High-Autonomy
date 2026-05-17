@@ -1127,7 +1127,7 @@
       }
     },
     {
-      "id": "check_git_push_deny",
+      "id": "check_git_push_deny_exit2",
       "argv": [
         "node",
         "scripts/bha-run.js",
@@ -1139,17 +1139,17 @@
         "main"
       ],
       "expect": {
-        "exit_code": 0,
+        "exit_code": 2,
         "decision": "DENY",
         "spawned": false
       }
     },
     {
-      "id": "check_git_tag_deny",
+      "id": "assert_git_tag_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "git",
         "tag",
@@ -1162,11 +1162,11 @@
       }
     },
     {
-      "id": "check_git_fetch_deny",
+      "id": "assert_git_fetch_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "git",
         "fetch"
@@ -1178,11 +1178,11 @@
       }
     },
     {
-      "id": "check_curl_deny",
+      "id": "assert_curl_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "curl",
         "https://example.com"
@@ -1194,11 +1194,11 @@
       }
     },
     {
-      "id": "check_npm_install_deny",
+      "id": "assert_npm_install_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "npm",
         "install"
@@ -1210,11 +1210,11 @@
       }
     },
     {
-      "id": "check_npm_publish_deny",
+      "id": "assert_npm_publish_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "npm",
         "publish"
@@ -1226,11 +1226,11 @@
       }
     },
     {
-      "id": "check_gh_release_create_deny",
+      "id": "assert_gh_release_create_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "gh",
         "release",
@@ -1243,11 +1243,11 @@
       }
     },
     {
-      "id": "check_ssh_deny",
+      "id": "assert_ssh_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "ssh",
         "example.com"
@@ -1259,11 +1259,11 @@
       }
     },
     {
-      "id": "check_openai_deny",
+      "id": "assert_openai_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "openai",
         "models",
@@ -1276,11 +1276,11 @@
       }
     },
     {
-      "id": "check_anthropic_deny",
+      "id": "assert_anthropic_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "anthropic",
         "messages"
@@ -1292,11 +1292,11 @@
       }
     },
     {
-      "id": "check_gemini_deny",
+      "id": "assert_gemini_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "gemini",
         "models"
@@ -1308,11 +1308,11 @@
       }
     },
     {
-      "id": "check_codex_memory_deny",
+      "id": "assert_codex_memory_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "codex-memory",
         "write"
@@ -1324,11 +1324,11 @@
       }
     },
     {
-      "id": "check_dailynote_path_deny",
+      "id": "assert_dailynote_path_deny",
       "argv": [
         "node",
         "scripts/bha-run.js",
-        "check",
+        "assert-deny",
         "--",
         "node",
         "DailyNote/write.js"
