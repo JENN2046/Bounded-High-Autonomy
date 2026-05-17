@@ -1940,6 +1940,62 @@ async function matchingConsumedCapability(remote, branch, head, options) {
   return { ok: false, reason: 'NO_VALID_CONSUMED_GIT_PUSH_CAPABILITY' };
 }
 
+function latestUsedGitPushSession(remote, branch, head, capabilityId) {
+  const sessions = readLocalCapabilitySessions().filter((event) => {
+    const payload = event && event.payload ? event.payload : {};
+    return event.type === 'capability_session' &&
+      payload.valid === true &&
+      payload.status === 'USED' &&
+      payload.remote === remote &&
+      payload.branch === branch &&
+      payload.head === head &&
+      (!capabilityId || payload.capability_id === capabilityId);
+  });
+  return sessions.length ? sessions[sessions.length - 1] : null;
+}
+
+async function remoteTrackingStatus(remote, branch, head) {
+  const ref = `refs/remotes/${remote}/${branch}`;
+  const result = await runCommand(['git', 'rev-parse', '--verify', ref], {});
+  const observedHead = result.exit_code === 0 && !result.error ? result.stdout.trim() : null;
+  return {
+    observed: Boolean(observedHead),
+    ref,
+    head: observedHead || 'NOT_OBSERVED',
+    matches_current_head: Boolean(observedHead && head && observedHead === head),
+    proof_boundary: 'Remote tracking refs are local git observations after fetch/push; they are useful evidence but not remote proof by themselves.'
+  };
+}
+
+async function postPushStatus(remote, branch, head, capability, checks) {
+  const usedSession = latestUsedGitPushSession(remote, branch, head, capability ? capability.capability_id : null);
+  const remoteTracking = await remoteTrackingStatus(remote, branch, head);
+  const replayBlocked = capability && capability.reason === 'CAPABILITY_REPLAY_DETECTED';
+  const prePushReady = checks && Object.values(checks).every(Boolean);
+  let phase = 'NEEDS_GIT_PUSH_CAPABILITY';
+  if (prePushReady) {
+    phase = 'PRE_PUSH_READY';
+  } else if (replayBlocked && usedSession) {
+    phase = 'PUSHED_CAPABILITY_USED_REPLAY_BLOCKED';
+  } else if (replayBlocked) {
+    phase = 'REPLAY_BLOCKED';
+  }
+  return {
+    phase,
+    pre_push_ready: prePushReady,
+    pushed_capability_used: Boolean(usedSession),
+    replay_blocked: Boolean(replayBlocked),
+    remote_tracking_state_observed: remoteTracking.observed,
+    remote_tracking_matches_current_head: remoteTracking.matches_current_head,
+    capability_id: capability && capability.capability_id ? capability.capability_id : null,
+    used_session_event_hash: usedSession ? usedSession.event_hash : null,
+    remote_tracking: remoteTracking,
+    next_operator_meaning: replayBlocked
+      ? 'The previous one-use git_push capability has been used; generate and sign a new capability before another push.'
+      : (prePushReady ? 'A valid consumed git_push capability is ready for one push.' : 'Generate, sign, issue, and consume a git_push capability before pushing.')
+  };
+}
+
 function readStdin() {
   return new Promise((resolve) => {
     let text = '';
@@ -2537,6 +2593,7 @@ async function gateStatus(remote, branch) {
   const action = nextGateAction(checks, capability);
   const nextCommands = nextGateCommands(action, remote, branch);
   const currentContext = currentPayloadContext(remote, branch, head, verify.parsed ? verify.parsed.ledger_head_hash : null);
+  const pushStatus = await postPushStatus(remote, branch, head, capability, checks);
   return {
     ok: Object.values(checks).every(Boolean),
     status: Object.values(checks).every(Boolean) ? 'READY' : 'BLOCKED',
@@ -2547,6 +2604,7 @@ async function gateStatus(remote, branch) {
     checks,
     evidence_gates: evidence.gates,
     capability,
+    post_push_status: pushStatus,
     hook: await hookPathStatus(),
     git_status: {
       ok: status.ok,
@@ -2675,6 +2733,8 @@ async function handleAuditV12(args) {
     'push_prep_powershell_command_quotes_arguments',
     'gate_status_flags_unsigned_payload_stale_after_local_evidence_advances',
     'push_prep_validation_wired',
+    'gate_status_reports_post_push_status',
+    'local_git_push_replay_fail_closed_after_used_session',
     'gate_status_missing_local_payload_requests_generation',
     'gate_status_flags_stale_local_payload_files',
     'git_push_rejects_selftest_only_signing_key',
@@ -2761,6 +2821,8 @@ async function handleAuditV12(args) {
       fileContains(RUN_SCRIPT, 'single_line_commands') &&
       fileContains(RUN_SCRIPT, 'next_powershell_command') &&
       fileContains(RUN_SCRIPT, 'local_payload_status') &&
+      fileContains(RUN_SCRIPT, 'post_push_status') &&
+      fileContains(RUN_SCRIPT, 'PUSHED_CAPABILITY_USED_REPLAY_BLOCKED') &&
       fileContains(RUN_SCRIPT, 'not_usable_local_files') &&
       fileContains(RUN_SCRIPT, 'do not split paths') &&
       fileContains(RUN_SCRIPT, 'operator_controls_signer') &&
@@ -3302,10 +3364,15 @@ async function handleRegressionSelftest(args) {
   const gitAdd = await runCommand(['git', 'add', '.'], { cwd: fixtureRoot });
   const gitCommit = await runCommand(['git', 'commit', '-m', 'regression fixture'], { cwd: fixtureRoot });
   const gitRemote = await runCommand(['git', 'remote', 'add', 'origin', 'https://example.invalid/bha-regression.git'], { cwd: fixtureRoot });
-  checks.push(regressionCheck('fixture_git_repository_ready', [gitInit, gitConfigEmail, gitConfigName, gitAdd, gitCommit, gitRemote].every((item) => item.exit_code === 0 && !item.error), {
+  const bareRemoteRoot = path.join(scratchParent, `remote-${crypto.randomUUID()}.git`);
+  const gitBareRemote = await runCommand(['git', 'init', '--bare', bareRemoteRoot], { cwd: scratchParent });
+  const gitRemoteLocal = await runCommand(['git', 'remote', 'set-url', 'origin', bareRemoteRoot], { cwd: fixtureRoot });
+  checks.push(regressionCheck('fixture_git_repository_ready', [gitInit, gitConfigEmail, gitConfigName, gitAdd, gitCommit, gitRemote, gitBareRemote, gitRemoteLocal].every((item) => item.exit_code === 0 && !item.error), {
     init: gitInit.exit_code,
     commit: gitCommit.exit_code,
-    remote: gitRemote.exit_code
+    remote: gitRemote.exit_code,
+    bare_remote: gitBareRemote.exit_code,
+    remote_set_url: gitRemoteLocal.exit_code
   }));
 
   const trackedBeforeHookStatus = await regressionGitStatus(fixtureRoot);
@@ -3387,6 +3454,15 @@ async function handleRegressionSelftest(args) {
     unsigned_present: missingPayloadStatus ? missingPayloadStatus.unsigned_present : 'NO_JSON',
     signed_present: missingPayloadStatus ? missingPayloadStatus.signed_present : 'NO_JSON',
     next_payload_action: missingPayloadStatus ? missingPayloadStatus.next_payload_action : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('gate_status_reports_post_push_status', missingPayloadGateStatus.exit_code === 0 &&
+    missingPayloadGateStatus.parsed &&
+    missingPayloadGateStatus.parsed.post_push_status &&
+    missingPayloadGateStatus.parsed.post_push_status.phase === 'NEEDS_GIT_PUSH_CAPABILITY' &&
+    Object.prototype.hasOwnProperty.call(missingPayloadGateStatus.parsed.post_push_status, 'remote_tracking_state_observed') &&
+    Object.prototype.hasOwnProperty.call(missingPayloadGateStatus.parsed.post_push_status, 'replay_blocked'), {
+    phase: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.post_push_status ? missingPayloadGateStatus.parsed.post_push_status.phase : 'NO_JSON',
+    remote_tracking_state_observed: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.post_push_status ? missingPayloadGateStatus.parsed.post_push_status.remote_tracking_state_observed : 'NO_JSON'
   }));
 
   const pushPrepTrackedBefore = await regressionGitStatus(fixtureRoot);
@@ -3654,19 +3730,22 @@ async function handleRegressionSelftest(args) {
     sessions_after: sessionsAfterPreflight
   }));
 
-  const hookReserve = await runFixtureBha(fixtureRoot, ['prepush-check', '--internal-git-hook', 'origin']);
+  const hookReserve = await runCommand(['git', 'push', 'origin', branch], { cwd: fixtureRoot });
   const sessionsAfterReserve = localSessionEvents(fixtureRoot);
   const usedSession = sessionsAfterReserve.find((event) => event.payload && event.payload.status === 'USED' && event.payload.capability_id === signedPayload.capability_id);
+  const hookReserveParsed = parseJsonLine(hookReserve.stdout);
   checks.push(regressionCheck('real_hook_reserve_writes_used_session', hookReserve.exit_code === 0 &&
-    hookReserve.parsed &&
-    hookReserve.parsed.status === 'ALLOW' &&
+    hookReserveParsed &&
+    hookReserveParsed.status === 'ALLOW' &&
     usedSession &&
     usedSession.local_only === true, {
+    push_exit_code: hookReserve.exit_code,
     sessions_after: sessionsAfterReserve.length,
     used_capability_id: usedSession && usedSession.payload ? usedSession.payload.capability_id : null
   }));
 
   const replay = await runFixtureBha(fixtureRoot, ['prepush-check', '--preflight', '--internal-git-hook', 'origin']);
+  const postPushGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
   checks.push(regressionCheck('replayed_local_capability_rejected', replay.exit_code === 1 &&
     replay.parsed &&
     replay.parsed.status === 'FAIL_CLOSED' &&
@@ -3686,6 +3765,21 @@ async function handleRegressionSelftest(args) {
     clone_exit_code: clone.exit_code,
     verifier_status: cloneVerifyParsed ? cloneVerifyParsed.status : 'NO_JSON',
     bha_local_exists: fs.existsSync(path.join(cloneRoot, '.bha', 'local'))
+  }));
+  checks.push(regressionCheck('local_git_push_replay_fail_closed_after_used_session', hookReserve.exit_code === 0 &&
+    replay.exit_code === 1 &&
+    replay.parsed &&
+    replay.parsed.reason === 'CAPABILITY_REPLAY_DETECTED' &&
+    postPushGateStatus.exit_code === 0 &&
+    postPushGateStatus.parsed &&
+    postPushGateStatus.parsed.post_push_status &&
+    postPushGateStatus.parsed.post_push_status.phase === 'PUSHED_CAPABILITY_USED_REPLAY_BLOCKED' &&
+    postPushGateStatus.parsed.post_push_status.pushed_capability_used === true &&
+    postPushGateStatus.parsed.post_push_status.replay_blocked === true &&
+    postPushGateStatus.parsed.post_push_status.remote_tracking_matches_current_head === true, {
+    replay_reason: replay.parsed ? replay.parsed.reason : 'NO_JSON',
+    phase: postPushGateStatus.parsed && postPushGateStatus.parsed.post_push_status ? postPushGateStatus.parsed.post_push_status.phase : 'NO_JSON',
+    remote_tracking_matches_current_head: postPushGateStatus.parsed && postPushGateStatus.parsed.post_push_status ? postPushGateStatus.parsed.post_push_status.remote_tracking_matches_current_head : 'NO_JSON'
   }));
 
   const deniedCases = [
@@ -4047,6 +4141,16 @@ function capabilityCloseoutSummary(capabilities, state, localCapabilities, local
   const validEvents = capabilities.filter((event) => event.payload && event.payload.valid === true);
   const localEvents = (localCapabilities || []).concat(localSessions || []);
   const validLocalEvents = localEvents.filter((event) => event.payload && event.payload.valid === true);
+  const usedPushSessions = (localSessions || []).filter((event) => {
+    const payload = event && event.payload ? event.payload : {};
+    return event.type === 'capability_session' &&
+      payload.valid === true &&
+      payload.status === 'USED' &&
+      payload.remote &&
+      payload.branch &&
+      payload.head;
+  });
+  const lastUsedPushSession = usedPushSessions.length ? usedPushSessions[usedPushSessions.length - 1] : null;
   const selftest = state && state.capability_selftest ? state.capability_selftest : null;
   return {
     events: capabilities.length,
@@ -4065,6 +4169,15 @@ function capabilityCloseoutSummary(capabilities, state, localCapabilities, local
       tracked: false,
       reason: 'git_push authorization occurs after the signed HEAD exists and must not dirty tracked evidence before push'
     },
+    last_local_git_push_used_session: lastUsedPushSession ? {
+      capability_id: lastUsedPushSession.payload.capability_id || null,
+      remote: lastUsedPushSession.payload.remote || null,
+      branch: lastUsedPushSession.payload.branch || null,
+      head: lastUsedPushSession.payload.head || null,
+      event_hash: lastUsedPushSession.event_hash,
+      tracked_remote_proof: false,
+      proof_boundary: 'Local USED session proves this BHA gate consumed a one-use capability locally; it is not remote proof by itself.'
+    } : 'NOT_RECORDED',
     capability_positive_path: selftest ? selftest.capability_positive_path : 'NOT_RECORDED',
     prepush_authorized_simulation: selftest ? selftest.prepush_authorized_simulation : 'NOT_RECORDED',
     negative_capability_tests: selftest ? selftest.negative_capability_tests : 'NOT_RECORDED'

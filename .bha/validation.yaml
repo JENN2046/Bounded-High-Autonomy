@@ -617,6 +617,7 @@
           "checks",
           "next_action",
           "post_push_evidence_strategy",
+          "post_push_status",
           "operator_handoff"
         ]
       }
