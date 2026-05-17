@@ -3263,6 +3263,43 @@ function requireModuleAudit(files) {
   };
 }
 
+function sourceFunctionText(file, functionName) {
+  if (!fs.existsSync(file)) {
+    return null;
+  }
+  const text = readText(file);
+  const marker = `async function ${functionName}`;
+  const start = text.indexOf(marker);
+  if (start < 0) {
+    return null;
+  }
+  const next = text.indexOf('\nasync function ', start + marker.length);
+  return next >= 0 ? text.slice(start, next) : text.slice(start);
+}
+
+function operatorSignerPrivateKeyAudit() {
+  const source = sourceFunctionText(RUN_SCRIPT, 'handleOperatorSignerPreflight');
+  const dangerousPatterns = [
+    { id: 'read_text_key_path', pattern: /\bread(?:Text|JsonStrict|JsonLines)?\s*\(\s*key(?:Path|Resolved)\b/ },
+    { id: 'fs_read_key_path', pattern: /\bfs\.readFile(?:Sync)?\s*\(\s*key(?:Path|Resolved)\b/ },
+    { id: 'write_key_path', pattern: /\b(?:fs\.)?(?:writeFile|writeFileSync|appendFile|appendFileSync)\s*\(\s*key(?:Path|Resolved)\b/ },
+    { id: 'print_key_path_value', pattern: /\bconsole\.(?:log|error|warn)\s*\(\s*key(?:Path|Resolved)\b/ },
+    { id: 'return_key_path_value', pattern: /\b(?:value|path)\s*:\s*key(?:Path|Resolved)\b/ }
+  ];
+  const violations = source
+    ? dangerousPatterns.filter((item) => item.pattern.test(source)).map((item) => item.id)
+    : dangerousPatterns.map((item) => item.id);
+  return {
+    function_found: Boolean(source),
+    env_reference: Boolean(source && source.includes('BHA_PRIVATE_KEY_PATH')),
+    exists_check_only: Boolean(source && source.includes('fs.existsSync(keyResolved)')),
+    repo_path_blocker: Boolean(source && source.includes('BHA_PRIVATE_KEY_PATH_INSIDE_REPOSITORY')),
+    reports_material_not_read: Boolean(source && source.includes('private_key_material_read: false')),
+    reports_path_not_printed: Boolean(source && source.includes('private_key_path_value_printed: false')),
+    violations
+  };
+}
+
 function validationCommandById(validation, id) {
   const commands = validation && Array.isArray(validation.required_commands)
     ? validation.required_commands
@@ -3383,6 +3420,7 @@ async function handleAuditV1Stable(args) {
   const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const requireAudit = requireModuleAudit([RUN_SCRIPT, VERIFY_SCRIPT]);
+  const privateKeyAudit = operatorSignerPrivateKeyAudit();
   const requiredDenied = [
     'provider_call',
     'memory_write',
@@ -3519,6 +3557,20 @@ async function handleAuditV1Stable(args) {
       dynamic_require_files: requireAudit.dynamic_require_files
     },
     ['scripts/bha-run.js', 'scripts/bha-verify.js', 'BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'operator_signer_private_key_boundary_scanned',
+    'V1 operator signer preflight checks private key path readiness without reading, printing, recording, or storing private key material.',
+    privateKeyAudit.function_found &&
+      privateKeyAudit.env_reference &&
+      privateKeyAudit.exists_check_only &&
+      privateKeyAudit.repo_path_blocker &&
+      privateKeyAudit.reports_material_not_read &&
+      privateKeyAudit.reports_path_not_printed &&
+      privateKeyAudit.violations.length === 0 &&
+      fileContains(STABILITY_PATH, 'BHA must never read, print, log, store, or infer private key material'),
+    privateKeyAudit,
+    ['scripts/bha-run.js', 'BHA_V1_STABILITY.md']
   ));
   checks.push(auditCheck(
     'audit_v1_stable_wired',
