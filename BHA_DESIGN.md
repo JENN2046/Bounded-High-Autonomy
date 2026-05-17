@@ -19,9 +19,12 @@ V1.1 operator and post-push evidence addendum:
 - `git_push` issue, consume, and hook USED evidence are local-only under `.bha/local/` and ignored by
   Git. This keeps the signed authorization bound to the already-created HEAD without making push
   produce another required evidence commit.
-- Repository-tracked evidence proves the HEAD is ready to push: policy, mission, validation,
-  checkpoint, closeout, ledger, state, and verifier consistency. Git reality proves the remote branch
-  reached the pushed HEAD.
+- Repository-tracked evidence proves local trust readiness for the HEAD: policy, mission,
+  validation, checkpoint, closeout, ledger, state, and verifier consistency. It does not mean a push
+  is required now, and a real operator-chosen push still requires a fresh one-use local `git_push`
+  capability bound to the current HEAD and ledger state.
+- Remote tracking refs are local Git observations after fetch or push; they are useful evidence, but
+  they are not remote proof by themselves.
 - Validation input hashes normalize text line endings to LF before hashing so trust recovery does not
   depend on a clone's `core.autocrlf` setting.
 

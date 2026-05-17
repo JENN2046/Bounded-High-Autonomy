@@ -4024,6 +4024,19 @@ async function handleAuditV1Stable(args) {
     ['BHA_V1_STABILITY.md']
   ));
   checks.push(auditCheck(
+    'design_addendum_conditional_push_boundary',
+    'BHA design addendum keeps tracked trust readiness separate from operator-chosen real push capability and remote-tracking observations.',
+    fileContains(DESIGN_PATH, 'local trust readiness for the HEAD') &&
+      fileContains(DESIGN_PATH, 'does not mean a push') &&
+      fileContains(DESIGN_PATH, 'operator-chosen push still requires') &&
+      fileContains(DESIGN_PATH, 'fresh one-use local') &&
+      fileContains(DESIGN_PATH, '`git_push`') &&
+      fileContains(DESIGN_PATH, 'Remote tracking refs are local Git observations') &&
+      fileContains(DESIGN_PATH, 'not remote proof by themselves'),
+    { path: rel(DESIGN_PATH) },
+    ['BHA_DESIGN.md']
+  ));
+  checks.push(auditCheck(
     'post_commit_head_boundary_documented',
     'V1 stable docs and runtime keep evidence-time checkpoint/closeout git heads separate from current git reality and stale local payload recovery.',
     fileContains(STABILITY_PATH, 'Post-Commit HEAD Boundary') &&
@@ -4084,6 +4097,7 @@ async function handleAuditV1Stable(args) {
     strict_verifier_pass: verifierStrictPass,
     objective: 'BHA V1 stable local-first proof and boundary audit',
     proof_sources: [
+      'BHA_DESIGN.md',
       'BHA_V1_STABILITY.md',
       'BHA_V2_CAPABILITY_FRAMEWORK.md',
       'BHA_V2_COUNCIL_RUNTIME.md',
