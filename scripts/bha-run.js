@@ -2160,9 +2160,20 @@ function capabilityFileSummary(localPath, remote, branch, head, signed) {
   summary.signing_key_id = payload.signing_key_id || null;
   summary.signature_present = Boolean(payload.signature);
   summary.payload_hash_present = Boolean(payload.payload_hash);
-  summary.matches_current_context = payload.remote === remote &&
-    payload.branch === branch &&
-    payload.head === head;
+  const contextMismatchReasons = [];
+  if (payload.remote !== remote) {
+    contextMismatchReasons.push('REMOTE_MISMATCH');
+  }
+  if (payload.branch !== branch) {
+    contextMismatchReasons.push('BRANCH_MISMATCH');
+  }
+  if (payload.head !== head) {
+    contextMismatchReasons.push('HEAD_MISMATCH');
+  }
+  summary.matches_current_context = contextMismatchReasons.length === 0;
+  if (contextMismatchReasons.length) {
+    summary.context_mismatch_reasons = contextMismatchReasons;
+  }
   if (signed === true) {
     summary.safe_to_print = 'signature and private key material are not included in this summary';
   }
@@ -2185,7 +2196,73 @@ async function signedCapabilityFileSummary(localPath, remote, branch, head) {
     head: result.head,
     ledger_head_hash: result.ledger_head_hash
   };
+  summary.usable_for_current_gate = summary.matches_current_context === true && result.ok === true;
+  if (summary.usable_for_current_gate !== true) {
+    const notUsableReasons = [];
+    if (Array.isArray(summary.context_mismatch_reasons)) {
+      notUsableReasons.push(...summary.context_mismatch_reasons);
+    }
+    if (result.ok !== true) {
+      notUsableReasons.push(result.reason || 'SIGNED_CAPABILITY_INVALID');
+    }
+    summary.not_usable_reasons = Array.from(new Set(notUsableReasons));
+  }
   return summary;
+}
+
+function localPayloadIssue(kind, summary) {
+  if (!summary || summary.exists !== true || summary.json_valid !== true) {
+    return null;
+  }
+  const reasons = [];
+  if (Array.isArray(summary.context_mismatch_reasons)) {
+    reasons.push(...summary.context_mismatch_reasons);
+  }
+  if (summary.verification && summary.verification.ok !== true) {
+    reasons.push(summary.verification.reason || 'SIGNED_CAPABILITY_INVALID');
+  }
+  if (!reasons.length) {
+    return null;
+  }
+  return {
+    kind,
+    path: summary.path,
+    capability_id: summary.capability_id || null,
+    reasons: Array.from(new Set(reasons)),
+    action: 'regenerate payload for current head and sign outside BHA'
+  };
+}
+
+function localPayloadStatus(unsigned, signed) {
+  const issues = [
+    localPayloadIssue('unsigned_payload', unsigned),
+    localPayloadIssue('signed_payload', signed)
+  ].filter(Boolean);
+  const unsignedPresent = unsigned && unsigned.exists === true && unsigned.json_valid === true;
+  const signedPresent = signed && signed.exists === true && signed.json_valid === true;
+  let nextPayloadAction = 'GENERATE_UNSIGNED_PAYLOAD_FOR_CURRENT_CONTEXT';
+  if (issues.length) {
+    nextPayloadAction = 'REGENERATE_UNSIGNED_PAYLOAD_AND_SIGN_CURRENT_CONTEXT';
+  } else if (signedPresent && signed.verification && signed.verification.ok === true) {
+    nextPayloadAction = 'USE_CURRENT_SIGNED_PAYLOAD_IF_GATE_CHECKS_PASS';
+  } else if (unsignedPresent && unsigned.matches_current_context === true) {
+    nextPayloadAction = 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA';
+  }
+  return {
+    unsigned_present: unsignedPresent,
+    signed_present: signedPresent,
+    unsigned_matches_current_context: unsignedPresent
+      ? unsigned.matches_current_context === true
+      : null,
+    signed_matches_current_context: signedPresent
+      ? signed.matches_current_context === true
+      : null,
+    signed_verification_ok: signed && signed.verification
+      ? signed.verification.ok === true
+      : null,
+    not_usable_local_files: issues,
+    next_payload_action: nextPayloadAction
+  };
 }
 
 async function operatorPushHandoff(action, remote, branch, head, capability, immediateCommands) {
@@ -2193,6 +2270,7 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
   const signedPath = '.bha/local/signed-push-capability.json';
   const unsigned = capabilityFileSummary(payloadPath, remote, branch, head, false);
   const signed = await signedCapabilityFileSummary(signedPath, remote, branch, head);
+  const payloadStatus = localPayloadStatus(unsigned, signed);
   const canUseExistingPayload = action === 'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY' &&
     unsigned.matches_current_context &&
     unsigned.capability_id;
@@ -2231,6 +2309,7 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
       unsigned_payload: unsigned,
       signed_payload: signed
     },
+    local_payload_status: payloadStatus,
     powershell_safety: 'Run each command as one complete line; do not split paths, --flags, or arguments across prompts.',
     command_variables: {
       cap: signedPath,
@@ -2241,6 +2320,7 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
     notes: [
       'Do not paste private key material into BHA commands.',
       'The signed capability file may contain a signature, but gate-status never prints the signature value.',
+      'Existing .bha/local payload files are local-only and may be stale; regenerate before signing when matches_current_context is false.',
       'A capability already marked USED must not be replayed; generate and sign a fresh payload for the next push.'
     ]
   };
@@ -2400,7 +2480,9 @@ async function handleAuditV12(args) {
     'destructive_external_action_denied',
     'hook_status_uninstalled_blocked_readonly',
     'hook_status_installed_pass_readonly',
-    'hook_status_validation_allows_blocked_local_setup'
+    'hook_status_validation_allows_blocked_local_setup',
+    'gate_status_missing_local_payload_requests_generation',
+    'gate_status_flags_stale_local_payload_files'
   ];
   const missingRegressionIds = regressionIds.filter((id) => !fileContains(RUN_SCRIPT, id));
   checks.push(auditCheck(
@@ -2479,6 +2561,8 @@ async function handleAuditV12(args) {
       fileContains(RUN_SCRIPT, 'next_commands') &&
       fileContains(RUN_SCRIPT, 'operator_handoff') &&
       fileContains(RUN_SCRIPT, 'single_line_commands') &&
+      fileContains(RUN_SCRIPT, 'local_payload_status') &&
+      fileContains(RUN_SCRIPT, 'not_usable_local_files') &&
       fileContains(RUN_SCRIPT, 'do not split paths') &&
       fileContains(RUN_SCRIPT, 'operator_controls_signer') &&
       fileContains(RUN_SCRIPT, 'bha_private_key_access: false') &&
@@ -3058,6 +3142,66 @@ async function handleRegressionSelftest(args) {
 
   const branchResult = await runCommand(['git', 'branch', '--show-current'], { cwd: fixtureRoot });
   const branch = branchResult.stdout.trim() || 'master';
+  const missingPayloadGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  const missingPayloadHandoff = missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.operator_handoff
+    ? missingPayloadGateStatus.parsed.operator_handoff
+    : null;
+  const missingPayloadStatus = missingPayloadHandoff ? missingPayloadHandoff.local_payload_status : null;
+  checks.push(regressionCheck('gate_status_missing_local_payload_requests_generation', missingPayloadGateStatus.exit_code === 0 &&
+    missingPayloadStatus &&
+    missingPayloadStatus.unsigned_present === false &&
+    missingPayloadStatus.signed_present === false &&
+    missingPayloadStatus.next_payload_action === 'GENERATE_UNSIGNED_PAYLOAD_FOR_CURRENT_CONTEXT', {
+    unsigned_present: missingPayloadStatus ? missingPayloadStatus.unsigned_present : 'NO_JSON',
+    signed_present: missingPayloadStatus ? missingPayloadStatus.signed_present : 'NO_JSON',
+    next_payload_action: missingPayloadStatus ? missingPayloadStatus.next_payload_action : 'NO_JSON'
+  }));
+
+  const stalePayload = await runFixtureBha(fixtureRoot, [
+    'make-push-payload',
+    '--remote',
+    'origin',
+    '--branch',
+    branch,
+    '--expires-minutes',
+    '20',
+    '--key-id',
+    keyId,
+    '--out',
+    '.bha/local/push-payload.json'
+  ]);
+  const stalePayloadPath = path.join(fixtureRoot, '.bha', 'local', 'push-payload.json');
+  const staleSignedPath = path.join(fixtureRoot, '.bha', 'local', 'signed-push-capability.json');
+  let staleSignedPayload = null;
+  if (stalePayload.exit_code === 0 && fs.existsSync(stalePayloadPath)) {
+    staleSignedPayload = signCapabilityPayload(readJsonStrict(stalePayloadPath), keypair.privateKey);
+    writeTextFile(staleSignedPath, JSON.stringify(staleSignedPayload) + '\n');
+  }
+  const advanceHead = await runCommand(['git', 'commit', '--allow-empty', '-m', 'advance head for stale payload check'], { cwd: fixtureRoot });
+  const staleGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  const staleHandoff = staleGateStatus.parsed && staleGateStatus.parsed.operator_handoff
+    ? staleGateStatus.parsed.operator_handoff
+    : null;
+  const staleStatus = staleHandoff ? staleHandoff.local_payload_status : null;
+  const staleIssues = staleStatus && Array.isArray(staleStatus.not_usable_local_files)
+    ? staleStatus.not_usable_local_files
+    : [];
+  checks.push(regressionCheck('gate_status_flags_stale_local_payload_files', stalePayload.exit_code === 0 &&
+    Boolean(staleSignedPayload) &&
+    advanceHead.exit_code === 0 &&
+    staleGateStatus.exit_code === 0 &&
+    staleStatus &&
+    staleStatus.unsigned_matches_current_context === false &&
+    staleStatus.signed_matches_current_context === false &&
+    staleStatus.next_payload_action === 'REGENERATE_UNSIGNED_PAYLOAD_AND_SIGN_CURRENT_CONTEXT' &&
+    staleIssues.some((issue) => issue.kind === 'unsigned_payload' && issue.reasons.includes('HEAD_MISMATCH')) &&
+    staleIssues.some((issue) => issue.kind === 'signed_payload' && issue.reasons.includes('HEAD_MISMATCH')), {
+    gate_action: staleGateStatus.parsed ? staleGateStatus.parsed.next_action : 'NO_JSON',
+    unsigned_matches_current_context: staleStatus ? staleStatus.unsigned_matches_current_context : 'NO_JSON',
+    signed_matches_current_context: staleStatus ? staleStatus.signed_matches_current_context : 'NO_JSON',
+    stale_issue_count: staleIssues.length
+  }));
+
   const verifyFixture = await runCommand([process.execPath, 'scripts/bha-verify.js'], { cwd: fixtureRoot });
   const verifyParsed = parseJsonLine(verifyFixture.stdout);
   checks.push(regressionCheck('fixture_verifier_passes_before_gate_flow', verifyFixture.exit_code === 0 && verifyParsed && verifyParsed.status === 'PASS', {
