@@ -3942,15 +3942,23 @@ async function handleAuditV1Stable(args) {
       gateStatusCommand.expect.has_keys.includes('operator_handoff') &&
       recoverStatusCommand.expect &&
       Array.isArray(recoverStatusCommand.expect.has_keys) &&
+      recoverStatusCommand.expect.has_keys.includes('schema') &&
+      recoverStatusCommand.expect.has_keys.includes('branch') &&
+      recoverStatusCommand.expect.has_keys.includes('remote') &&
+      recoverStatusCommand.expect.has_keys.includes('head') &&
+      recoverStatusCommand.expect.has_keys.includes('tracked_trust') &&
+      recoverStatusCommand.expect.has_keys.includes('local_state') &&
       recoverStatusCommand.expect.has_keys.includes('local_payload_recovery') &&
       recoverStatusCommand.expect.has_keys.includes('git_reality') &&
       recoverStatusCommand.expect.has_keys.includes('tracked_git_reality') &&
       recoverStatusCommand.expect.has_keys.includes('git_push_recovery') &&
+      recoverStatusCommand.expect.has_keys.includes('proof_boundary') &&
       gateStatusJsonPaths['push_requirement.required_now'] === false &&
       gateStatusJsonPaths['push_requirement.operator_controlled'] === true &&
       gateStatusJsonPaths['operator_handoff.capability_flow_required_now'] === false &&
       gateStatusJsonPaths['signer_boundary.bha_private_key_access'] === false &&
       recoverStatusJsonPaths['local_state.required_for_tracked_verifier_pass'] === false &&
+      recoverStatusJsonPaths['local_payload_recovery.read_only'] === true &&
       recoverStatusJsonPaths['git_push_recovery.required_now'] === false &&
       recoverStatusJsonPaths['git_push_recovery.local_only'] === true &&
       fileContains(RUN_SCRIPT, 'push_requirement: {') &&

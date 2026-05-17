@@ -489,10 +489,15 @@
         "read_only": true,
         "json_paths": {
           "local_state.required_for_tracked_verifier_pass": false,
+          "local_payload_recovery.read_only": true,
           "git_push_recovery.required_now": false,
           "git_push_recovery.local_only": true
         },
         "has_keys": [
+          "schema",
+          "branch",
+          "remote",
+          "head",
           "tracked_trust",
           "local_state",
           "local_payload_recovery",
