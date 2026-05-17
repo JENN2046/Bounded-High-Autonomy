@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-17T05-43-46-750Z",
-  "created_at": "2026-05-17T05:43:46.772Z",
+  "checkpoint_id": "checkpoint-2026-05-17T05-51-28-441Z",
+  "created_at": "2026-05-17T05:51:28.463Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,9 +13,9 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "master",
-  "head": "b1ec43ef8bf740271401eac6bebb1de3d71e0c7c",
-  "ledger_head_hash": "18f362439bce81ff65a4e3749a2ad557d89cd263f2fb978cc318ac08350384e6",
-  "policy_hash": "9ad1cdd98c821ffe463e5b0105f9b5d72d9053b385179f5ed429d4de2d704fbf",
+  "head": "9a9ac9b2fcec4ae70c9e07361bf2dece387be100",
+  "ledger_head_hash": "5a477fe2f07107dbd6af9de4ee43e97829027ffa3fded9302d759cd370bd7f68",
+  "policy_hash": "fdae79a9bedaa42cefdf4b02376558895c81796357156af9aeca17fc1c01f91b",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
     "git_diff_check",
@@ -26,6 +26,7 @@
     "v12_regression_selftest",
     "v12_audit_readonly",
     "v1_stable_audit_readonly",
+    "capability_framework_status_readonly",
     "closeout_preview_readonly",
     "git_push_capability_flow_readonly",
     "rollback_drill_readonly",
@@ -88,18 +89,18 @@
     },
     {
       "status": "??",
-      "path": "BHA_V1_STABILITY.md"
+      "path": "BHA_V2_CAPABILITY_FRAMEWORK.md"
     }
   ],
   "validation_run": {
     "status": "PASS",
-    "completed_at": "2026-05-17T05:43:42.356Z",
-    "ledger_event_hash": "18f362439bce81ff65a4e3749a2ad557d89cd263f2fb978cc318ac08350384e6",
-    "command_count": 38
+    "completed_at": "2026-05-17T05:51:23.660Z",
+    "ledger_event_hash": "5a477fe2f07107dbd6af9de4ee43e97829027ffa3fded9302d759cd370bd7f68",
+    "command_count": 39
   },
   "validation_not_run": [],
   "verifier_status": "PASS",
-  "verifier_ledger_head_hash": "18f362439bce81ff65a4e3749a2ad557d89cd263f2fb978cc318ac08350384e6",
+  "verifier_ledger_head_hash": "5a477fe2f07107dbd6af9de4ee43e97829027ffa3fded9302d759cd370bd7f68",
   "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
@@ -134,9 +135,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "18f362439bce81ff65a4e3749a2ad557d89cd263f2fb978cc318ac08350384e6",
-    "checkpoint_event_hash": "9884ac0b48bc5bd266107484b216f902260c2e93d291b813e822331b44e59b83",
-    "final_ledger_head_hash": "9884ac0b48bc5bd266107484b216f902260c2e93d291b813e822331b44e59b83"
+    "verified_ledger_head_hash": "5a477fe2f07107dbd6af9de4ee43e97829027ffa3fded9302d759cd370bd7f68",
+    "checkpoint_event_hash": "66077da6528fba27eaa0dfa497e72cab951b037a40db492c66f6f9fa6d6f387e",
+    "final_ledger_head_hash": "66077da6528fba27eaa0dfa497e72cab951b037a40db492c66f6f9fa6d6f387e"
   },
-  "ledger_event_hash": "9884ac0b48bc5bd266107484b216f902260c2e93d291b813e822331b44e59b83"
+  "ledger_event_hash": "66077da6528fba27eaa0dfa497e72cab951b037a40db492c66f6f9fa6d6f387e"
 }

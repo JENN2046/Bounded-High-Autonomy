@@ -148,6 +148,34 @@
       }
     },
     {
+      "id": "capability_framework_status_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "capability-framework-status",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "CAPABILITY_FRAMEWORK_STATUS",
+        "recorded": false,
+        "read_only": true,
+        "json": {
+          "default_decision": "DENY",
+          "unknown_capability_policy": "DENY"
+        },
+        "has_keys": [
+          "production_capability_types",
+          "always_denied_capability_types",
+          "extension_policy",
+          "types",
+          "proof_boundary"
+        ]
+      }
+    },
+    {
       "id": "closeout_preview_readonly",
       "argv": [
         "node",

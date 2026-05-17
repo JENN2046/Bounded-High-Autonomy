@@ -11,6 +11,7 @@
     "allowed": [
       "BHA_DESIGN.md",
       "BHA_V1_STABILITY.md",
+      "BHA_V2_CAPABILITY_FRAMEWORK.md",
       "AGENTS.md",
       ".gitignore",
       ".bha/mission.yaml",
@@ -143,6 +144,16 @@
           "--self-test"
         ],
         "reason": "read-only verifier self-test"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "capability-framework-status",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V2 capability framework status"
       },
       {
         "command": "node",

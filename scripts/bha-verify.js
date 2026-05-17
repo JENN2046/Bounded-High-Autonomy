@@ -23,6 +23,7 @@ const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
 const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
 const STABILITY_PATH = path.join(ROOT, 'BHA_V1_STABILITY.md');
+const CAPABILITY_FRAMEWORK_PATH = path.join(ROOT, 'BHA_V2_CAPABILITY_FRAMEWORK.md');
 const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
 const GITIGNORE_PATH = path.join(ROOT, '.gitignore');
 const ROOT_REAL = fs.realpathSync.native(ROOT);
@@ -30,6 +31,7 @@ const ROOT_REAL = fs.realpathSync.native(ROOT);
 const VALIDATION_INPUTS = [
   DESIGN_PATH,
   STABILITY_PATH,
+  CAPABILITY_FRAMEWORK_PATH,
   AGENTS_PATH,
   GITIGNORE_PATH,
   MISSION_PATH,

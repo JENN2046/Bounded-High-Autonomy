@@ -25,12 +25,14 @@ const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
 const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
 const STABILITY_PATH = path.join(ROOT, 'BHA_V1_STABILITY.md');
+const CAPABILITY_FRAMEWORK_PATH = path.join(ROOT, 'BHA_V2_CAPABILITY_FRAMEWORK.md');
 const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
 const GITIGNORE_PATH = path.join(ROOT, '.gitignore');
 
 const VALIDATION_INPUTS = [
   DESIGN_PATH,
   STABILITY_PATH,
+  CAPABILITY_FRAMEWORK_PATH,
   AGENTS_PATH,
   GITIGNORE_PATH,
   MISSION_PATH,
@@ -55,6 +57,7 @@ function validationInputsForRoot(root) {
   return [
     path.join(root, 'BHA_DESIGN.md'),
     path.join(root, 'BHA_V1_STABILITY.md'),
+    path.join(root, 'BHA_V2_CAPABILITY_FRAMEWORK.md'),
     path.join(root, 'AGENTS.md'),
     path.join(root, '.gitignore'),
     path.join(root, '.bha', 'mission.yaml'),
@@ -917,6 +920,61 @@ function capabilityType(payload) {
   return String(payload.type || payload.for || payload.capability || '').trim();
 }
 
+function capabilityFramework() {
+  const policy = loadPolicy();
+  const rules = policy.capability_rules || {};
+  const productionTypes = (rules.capability_possible_v1 || []).map((item) => String(item));
+  const alwaysDenied = (rules.always_denied_v1 || []).map((item) => String(item));
+  return {
+    schema: 'bha.capability_framework.v2.preview',
+    recorded: false,
+    read_only: true,
+    default_decision: 'DENY',
+    production_capability_types: productionTypes,
+    always_denied_capability_types: alwaysDenied,
+    unknown_capability_policy: 'DENY',
+    extension_policy: {
+      default_open: false,
+      required_before_enablement: ['schema', 'binding', 'allowed_command', 'one_use_or_session_policy', 'local_or_tracked_evidence_policy', 'deny_tests', 'replay_tests'],
+      provider_deploy_release_default: 'DENY'
+    },
+    types: {
+      git_push: {
+        status: productionTypes.includes('git_push') ? 'PRODUCTION' : 'DISABLED',
+        schema: 'bha.capability.v1',
+        binding_required: ['run_id', 'remote', 'branch', 'head', 'ledger_head_hash', 'policy_hash', 'mission_hash', 'expires_at'],
+        allowed_command: 'git push <remote> <branch>',
+        signing_key_purpose: 'owner',
+        one_use_required: true,
+        replay_policy: 'BLOCK',
+        evidence_policy: {
+          issue_store: '.bha/local/capabilities.jsonl',
+          consume_store: '.bha/local/capabilities.jsonl',
+          session_store: '.bha/local/capability-sessions.jsonl',
+          tracked: false,
+          reason: 'git_push authorization is local-only and must not dirty tracked evidence before push'
+        }
+      }
+    },
+    proof_boundary: 'Framework status describes local policy and schema only; real trust still comes from repository reality, ledger/state evidence, verifier, policy/mission hash, local-only capability evidence when needed, and git reality.'
+  };
+}
+
+function capabilityTypePolicy(type) {
+  const normalized = String(type || '').trim();
+  const framework = capabilityFramework();
+  if (!normalized) {
+    return { allowed: false, reason: 'CAPABILITY_TYPE_MISSING', type: normalized };
+  }
+  if (framework.always_denied_capability_types.includes(normalized)) {
+    return { allowed: false, reason: 'DISALLOWED_CAPABILITY_TYPE', type: normalized };
+  }
+  if (!framework.production_capability_types.includes(normalized)) {
+    return { allowed: false, reason: 'CAPABILITY_TYPE_NOT_SUPPORTED', type: normalized };
+  }
+  return { allowed: true, reason: 'CAPABILITY_TYPE_SUPPORTED', type: normalized };
+}
+
 function disallowedCapabilityType(type) {
   const policy = loadPolicy();
   const disallowed = (((policy.capability_rules || {}).always_denied_v1) || []).map((item) => String(item));
@@ -1054,6 +1112,10 @@ function validateCanonicalSignedCapability(payload) {
     return capabilityResult(payload, false, 'SIGNING_KEY_HAS_NO_PUBLIC_KEY');
   }
   const type = capabilityType(payload);
+  const typePolicy = capabilityTypePolicy(type);
+  if (typePolicy.allowed !== true) {
+    return capabilityResult(payload, false, typePolicy.reason);
+  }
   if (!signingKeyPurposeAllowedForCapability(key, type)) {
     return capabilityResult(payload, false, 'CAPABILITY_SIGNING_KEY_PURPOSE_DENIED', signingKeyPurposeResult(key, type));
   }
@@ -1087,11 +1149,9 @@ async function verifySignedCapability(payload) {
   if (!payload.capability_id && !payload.id) {
     return capabilityResult(payload, false, 'CAPABILITY_ID_MISSING');
   }
-  if (disallowedCapabilityType(type)) {
-    return capabilityResult(payload, false, 'DISALLOWED_CAPABILITY_TYPE');
-  }
-  if (type !== 'git_push') {
-    return capabilityResult(payload, false, 'CAPABILITY_TYPE_NOT_SUPPORTED');
+  const typePolicy = capabilityTypePolicy(type);
+  if (typePolicy.allowed !== true) {
+    return capabilityResult(payload, false, typePolicy.reason);
   }
   if (payload.run_id !== state.run_id) {
     return capabilityResult(payload, false, 'CAPABILITY_RUN_ID_MISMATCH');
@@ -1159,11 +1219,9 @@ function validateCapabilityRequest(payload, type, state, events, options) {
   if (canonical.valid !== true) {
     return { valid: false, reason: canonical.reason };
   }
-  if (disallowedCapabilityType(type)) {
-    return { valid: false, reason: 'DISALLOWED_CAPABILITY_TYPE' };
-  }
-  if (type !== 'git_push') {
-    return { valid: false, reason: 'CAPABILITY_TYPE_NOT_SUPPORTED' };
+  const typePolicy = capabilityTypePolicy(type);
+  if (typePolicy.allowed !== true) {
+    return { valid: false, reason: typePolicy.reason };
   }
   if (payload.run_id !== state.run_id) {
     return { valid: false, reason: 'CAPABILITY_RUN_ID_MISMATCH' };
@@ -2990,6 +3048,20 @@ function auditCheck(id, requirement, pass, evidence, files) {
   };
 }
 
+async function handleCapabilityFrameworkStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const framework = capabilityFramework();
+  console.log(JSON.stringify(Object.assign({
+    ok: true,
+    status: 'CAPABILITY_FRAMEWORK_STATUS'
+  }, framework)));
+}
+
 async function handleAuditV1Stable(args) {
   const format = getOption(args, '--format') || 'json';
   if (format !== 'json') {
@@ -3072,6 +3144,23 @@ async function handleAuditV1Stable(args) {
     ['.bha/policy.yaml']
   ));
   checks.push(auditCheck(
+    'v2_capability_framework_preview_default_deny',
+    'V2 capability framework preview exists but keeps unknown, provider, deploy, release, and non-git_push capability types denied.',
+    fs.existsSync(CAPABILITY_FRAMEWORK_PATH) &&
+      fileContains(CAPABILITY_FRAMEWORK_PATH, 'Default deny') &&
+      fileContains(CAPABILITY_FRAMEWORK_PATH, 'git_push') &&
+      fileContains(CAPABILITY_FRAMEWORK_PATH, 'provider') &&
+      capabilityFramework().default_decision === 'DENY' &&
+      capabilityFramework().unknown_capability_policy === 'DENY' &&
+      capabilityFramework().production_capability_types.length === 1 &&
+      capabilityFramework().production_capability_types[0] === 'git_push',
+    {
+      framework_status_command: 'node scripts/bha-run.js capability-framework-status --format json',
+      production_capability_types: capabilityFramework().production_capability_types
+    },
+    ['BHA_V2_CAPABILITY_FRAMEWORK.md', 'scripts/bha-run.js', '.bha/policy.yaml']
+  ));
+  checks.push(auditCheck(
     'node_builtins_only_no_package_manifest',
     'V1 has no package manager dependency surface; runtime remains Node.js built-in modules only.',
     !fs.existsSync(path.join(ROOT, 'package.json')) &&
@@ -3107,6 +3196,7 @@ async function handleAuditV1Stable(args) {
     objective: 'BHA V1 stable local-first proof and boundary audit',
     proof_sources: [
       'BHA_V1_STABILITY.md',
+      'BHA_V2_CAPABILITY_FRAMEWORK.md',
       '.bha/policy.yaml',
       '.bha/validation.yaml',
       '.bha/state.json',
@@ -3147,6 +3237,7 @@ async function handleAuditV12(args) {
   const signedPayloadStatusCommand = validationCommandById(validation, 'signed_payload_status_readonly');
   const operatorSignerPreflightCommand = validationCommandById(validation, 'operator_signer_preflight_readonly');
   const recoverStatusCommand = validationCommandById(validation, 'recover_status_readonly');
+  const capabilityFrameworkCommand = validationCommandById(validation, 'capability_framework_status_readonly');
   const auditArgv = ['node', 'scripts/bha-run.js', 'audit-v12', '--format', 'json'];
 
   const regressionIds = [
@@ -3184,6 +3275,10 @@ async function handleAuditV12(args) {
     'operator_signer_preflight_blocks_repo_key_path',
     'operator_signer_preflight_accepts_external_key_path_without_reading_key',
     'recover_status_validation_wired',
+    'capability_framework_status_validation_wired',
+    'unknown_capability_type_rejected',
+    'disallowed_provider_capability_type_rejected',
+    'incomplete_git_push_capability_rejected',
     'fresh_clone_recover_status_explains_missing_local_capability',
     'fresh_clone_gate_status_blocks_without_local_capability',
     'fresh_clone_push_prep_generates_local_handoff',
@@ -3302,9 +3397,29 @@ async function handleAuditV12(args) {
       signed_payload_status_validation_command_present: Boolean(signedPayloadStatusCommand),
       operator_signer_preflight_validation_command_present: Boolean(operatorSignerPreflightCommand),
       recover_status_validation_command_present: Boolean(recoverStatusCommand),
+      capability_framework_status_validation_command_present: Boolean(capabilityFrameworkCommand),
       inspect_recorded_status: recordedValidationCommand(state, 'inspect_readonly') ? recordedValidationCommand(state, 'inspect_readonly').status : 'MISSING'
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', '.bha/state.json']
+  ));
+  checks.push(auditCheck(
+    'capability_framework_status_validation_wired',
+    'V2 capability framework status is read-only, default-deny, policy-allowed, and wired into validation.',
+    Boolean(capabilityFrameworkCommand &&
+      capabilityFrameworkCommand.expect &&
+      capabilityFrameworkCommand.expect.exit_code === 0 &&
+      capabilityFrameworkCommand.expect.read_only === true &&
+      capabilityFrameworkCommand.expect.recorded === false &&
+      policyAllowsArgv(policy, capabilityFrameworkCommand.argv) &&
+      capabilityFramework().default_decision === 'DENY' &&
+      capabilityFramework().unknown_capability_policy === 'DENY'),
+    {
+      validation_command_present: Boolean(capabilityFrameworkCommand),
+      policy_allowed: capabilityFrameworkCommand ? policyAllowsArgv(policy, capabilityFrameworkCommand.argv) : false,
+      default_decision: capabilityFramework().default_decision,
+      unknown_capability_policy: capabilityFramework().unknown_capability_policy
+    },
+    ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
   ));
   checks.push(auditCheck(
     'hook_status_validation_local_setup_not_proof',
@@ -3464,6 +3579,7 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
       allowed: [
         'BHA_DESIGN.md',
         'BHA_V1_STABILITY.md',
+        'BHA_V2_CAPABILITY_FRAMEWORK.md',
         'AGENTS.md',
         '.gitignore',
         '.bha/mission.yaml',
@@ -3594,6 +3710,7 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
   writeTextFile(path.join(fixtureRoot, 'AGENTS.md'), '# Regression Fixture\n\nAGENTS.md guides behavior and is not proof.\n');
   writeTextFile(path.join(fixtureRoot, 'BHA_DESIGN.md'), '# Regression Fixture Design\n\nLocal deterministic evidence fixture.\n');
   writeTextFile(path.join(fixtureRoot, 'BHA_V1_STABILITY.md'), '# Regression Fixture Stability\n\nProof comes from repository reality, ledger/state evidence, verifier, policy/mission hash, local-only capability evidence, and git reality.\n');
+  writeTextFile(path.join(fixtureRoot, 'BHA_V2_CAPABILITY_FRAMEWORK.md'), '# Regression Fixture Capability Framework\n\nDefault deny capability framework preview. git_push is the only enabled production capability.\n');
   writeTextFile(path.join(fixtureRoot, '.bha', 'roadmap.md'), '# Regression Fixture Roadmap\n\nKeep proof local and deterministic.\n');
   writeTextFile(path.join(fixtureRoot, '.bha', 'rollback.md'), regressionRollbackText());
   writeTextFile(path.join(fixtureRoot, '.githooks', 'pre-push'), '#!/bin/sh\nnode scripts/bha-run.js prepush-check --internal-git-hook "$@"\n');
@@ -4058,6 +4175,80 @@ async function handleRegressionSelftest(args) {
     command_has_newline: pushPrep.parsed && pushPrep.parsed.operator_next_step
       ? pushPrep.parsed.operator_next_step.powershell_after_signing.includes('\n')
       : 'NO_JSON'
+  }));
+  const frameworkStatus = await runFixtureBha(fixtureRoot, ['capability-framework-status', '--format', 'json']);
+  checks.push(regressionCheck('capability_framework_status_validation_wired', Boolean(rootValidation &&
+    rootValidation.required_commands &&
+    validationCommandById(rootValidation, 'capability_framework_status_readonly') &&
+    frameworkStatus.exit_code === 0 &&
+    frameworkStatus.parsed &&
+    frameworkStatus.parsed.status === 'CAPABILITY_FRAMEWORK_STATUS' &&
+    frameworkStatus.parsed.default_decision === 'DENY' &&
+    frameworkStatus.parsed.unknown_capability_policy === 'DENY' &&
+    Array.isArray(frameworkStatus.parsed.production_capability_types) &&
+    frameworkStatus.parsed.production_capability_types.length === 1 &&
+    frameworkStatus.parsed.production_capability_types[0] === 'git_push'), {
+    validation_command_present: Boolean(validationCommandById(rootValidation, 'capability_framework_status_readonly')),
+    default_decision: frameworkStatus.parsed ? frameworkStatus.parsed.default_decision : 'NO_JSON',
+    production_capability_types: frameworkStatus.parsed ? frameworkStatus.parsed.production_capability_types : 'NO_JSON'
+  }));
+  const unknownCapabilityPayload = pushPrepPayload ? Object.assign({}, pushPrepPayload, {
+    id: `unknown-${crypto.randomUUID()}`,
+    capability_id: `unknown-${crypto.randomUUID()}`,
+    type: 'unknown_local_capability'
+  }) : null;
+  if (unknownCapabilityPayload) {
+    delete unknownCapabilityPayload.payload_hash;
+    delete unknownCapabilityPayload.signature;
+    signCapabilityPayload(unknownCapabilityPayload, keypair.privateKey);
+  }
+  const unknownCapability = unknownCapabilityPayload
+    ? await runFixtureBha(fixtureRoot, ['verify-signed-capability', '--json', JSON.stringify(unknownCapabilityPayload)])
+    : { exit_code: 2, parsed: null };
+  checks.push(regressionCheck('unknown_capability_type_rejected', unknownCapability.exit_code === 2 &&
+    unknownCapability.parsed &&
+    unknownCapability.parsed.status === 'INVALID' &&
+    unknownCapability.parsed.reason === 'CAPABILITY_TYPE_NOT_SUPPORTED', {
+    reason: unknownCapability.parsed ? unknownCapability.parsed.reason : 'NO_JSON'
+  }));
+  const providerCapabilityPayload = pushPrepPayload ? Object.assign({}, pushPrepPayload, {
+    id: `provider-${crypto.randomUUID()}`,
+    capability_id: `provider-${crypto.randomUUID()}`,
+    type: 'provider_call',
+    command: 'openai models list'
+  }) : null;
+  if (providerCapabilityPayload) {
+    delete providerCapabilityPayload.payload_hash;
+    delete providerCapabilityPayload.signature;
+    signCapabilityPayload(providerCapabilityPayload, keypair.privateKey);
+  }
+  const providerCapability = providerCapabilityPayload
+    ? await runFixtureBha(fixtureRoot, ['verify-signed-capability', '--json', JSON.stringify(providerCapabilityPayload)])
+    : { exit_code: 2, parsed: null };
+  checks.push(regressionCheck('disallowed_provider_capability_type_rejected', providerCapability.exit_code === 2 &&
+    providerCapability.parsed &&
+    providerCapability.parsed.status === 'INVALID' &&
+    providerCapability.parsed.reason === 'DISALLOWED_CAPABILITY_TYPE', {
+    reason: providerCapability.parsed ? providerCapability.parsed.reason : 'NO_JSON'
+  }));
+  const incompleteGitPushPayload = pushPrepPayload ? Object.assign({}, pushPrepPayload, {
+    id: `incomplete-${crypto.randomUUID()}`,
+    capability_id: `incomplete-${crypto.randomUUID()}`
+  }) : null;
+  if (incompleteGitPushPayload) {
+    delete incompleteGitPushPayload.remote;
+    delete incompleteGitPushPayload.payload_hash;
+    delete incompleteGitPushPayload.signature;
+    signCapabilityPayload(incompleteGitPushPayload, keypair.privateKey);
+  }
+  const incompleteGitPushCapability = incompleteGitPushPayload
+    ? await runFixtureBha(fixtureRoot, ['verify-signed-capability', '--json', JSON.stringify(incompleteGitPushPayload)])
+    : { exit_code: 2, parsed: null };
+  checks.push(regressionCheck('incomplete_git_push_capability_rejected', incompleteGitPushCapability.exit_code === 2 &&
+    incompleteGitPushCapability.parsed &&
+    incompleteGitPushCapability.parsed.status === 'INVALID' &&
+    incompleteGitPushCapability.parsed.reason === 'CAPABILITY_BINDING_MISSING', {
+    reason: incompleteGitPushCapability.parsed ? incompleteGitPushCapability.parsed.reason : 'NO_JSON'
   }));
   checks.push(regressionCheck('push_prep_leaves_tracked_worktree_unchanged', pushPrepTrackedBefore === pushPrepTrackedAfter, {
     before: pushPrepTrackedBefore || 'CLEAN',
@@ -5373,6 +5564,8 @@ async function main() {
       await handleHookStatus(args);
     } else if (command === 'gate-status') {
       await handleGateStatus(args);
+    } else if (command === 'capability-framework-status') {
+      await handleCapabilityFrameworkStatus(args);
     } else if (command === 'audit-v1-stable') {
       await handleAuditV1Stable(args);
     } else if (command === 'audit-v12') {
