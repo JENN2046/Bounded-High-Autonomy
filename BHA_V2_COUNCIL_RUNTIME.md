@@ -76,6 +76,19 @@ The current Council Runtime draft shape is planning context only:
 
 These sketches do not satisfy the activation requirement by themselves. `council-status` must keep `draft_artifacts.satisfies_activation_requirement=false` until a new explicit objective adds a verifier-backed workflow model, local dry-run evidence, role boundary tests, activation regression tests, and validation wiring.
 
+## Machine-Readable Dry-Run Contract
+
+`council-status` exposes the Council preview as structured JSON, not only prose.
+
+The machine-readable dry-run trace schema is `bha.council_dry_run.v2.preview`. It is non-activating and must include:
+
+- dry-run trace fields: objective, Commander boundary, Domain Lead queue, Worker local actions, Verifier checks, Commander decision, blocked side effects, and proof sources
+- role boundary matrix: Commander, Domain Leads, Worker, and Verifier may create coordination context but may not create proof, grant remote authority, or spawn agents
+- side-effect guards: no automated agent spawn, provider call, memory write, push, deploy, release, tag, package publish, or private-key access
+- activation regression matrix: missing verifier evidence, stale local trace, blocked side effect, provider call attempt, memory write attempt, automated spawn attempt, and role attempt to grant remote authority must fail closed
+
+The dry-run model is non-activating: it cannot schedule workers, call providers, write memory, push, deploy, release, tag, or publish packages. It is evidence for future planning only, not authorization.
+
 The current draft explicitly does not provide:
 
 - a verifier-enforced workflow model

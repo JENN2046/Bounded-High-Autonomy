@@ -307,6 +307,16 @@
         "command": "node",
         "args": [
           "scripts/bha-run.js",
+          "audit-v2-preview",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V2 preview hardening audit"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
           "audit-v12",
           "--format",
           "json"

@@ -43,6 +43,8 @@ No capability is enabled merely because it appears in a payload. Policy must exp
 
 ## Non-Enabling Draft
 
+This section is intentionally non-enabling.
+
 The current V2 draft shape is planning context only:
 
 - schema sketch: `type`, binding fields, allowed command or local action, one-use or session policy, evidence policy, signing key purpose, replay behavior
@@ -53,6 +55,22 @@ The current V2 draft shape is planning context only:
 - verifier evidence plan sketch: every future type needs verifier-readable ledger or local-only evidence rules before it can affect a gate decision
 
 These sketches do not satisfy the enablement requirement by themselves. `capability-framework-status` must keep `draft_artifacts.satisfies_enablement_requirement=false` until a new explicit objective adds verifier-backed schema, deny tests, replay tests, validation wiring, and policy changes.
+
+## Machine-Readable Preview Contract
+
+`capability-framework-status` exposes the preview contract as structured JSON, not only prose.
+
+The machine-readable schema draft is `bha.capability_schema.v2.preview`. It includes:
+
+- schema draft fields: `type`, `binding`, `allowed_command`, `one_use_or_session_policy`, `evidence_policy`, `signing_key_purpose`, `expiry`, and `replay_policy`
+- binding model requirements: `run_id`, `policy_hash`, `mission_hash`, `expires_at`, and the smallest action-specific binding needed for the requested local action
+- allowed command constraints: no shell expansion, no provider/deploy/release/tag/package publish/memory/private-key command class, and exact command matching before any allow path
+- evidence policy: draft evidence is not authorization, verifier-readable evidence is required before allow, and tracked/local scope must be declared explicitly
+- replay policy: one-use or session policy is required, and duplicate consume, USED session, and stale session cases fail closed
+
+The deny/replay matrix is also machine-readable. It must include unknown type, disallowed type, incomplete binding, stale binding, wrong policy hash, wrong mission hash, expired, replayed, and overbroad command cases before any future allow path is considered.
+
+The verifier evidence contract is explicit: incomplete preview schema is a verifier failure, draft evidence is not authorization, and future authorization requires policy allow, verifier evidence, and validation wiring.
 
 The current draft explicitly does not provide:
 

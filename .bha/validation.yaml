@@ -154,6 +154,41 @@
       }
     },
     {
+      "id": "audit_v2_preview_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "audit-v2-preview",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "PASS",
+        "recorded": false,
+        "read_only": true,
+        "json_paths": {
+          "framework_summary.default_decision": "DENY",
+          "framework_summary.production_capability_types.0": "git_push",
+          "framework_summary.machine_readable_draft_status": "DRAFT_NON_ENABLING",
+          "framework_summary.deny_replay_matrix_status": "MACHINE_READABLE_PREVIEW",
+          "framework_summary.new_production_capability_allowed": false,
+          "council_summary.runtime_state": "PREVIEW_CONTRACT_ONLY",
+          "council_summary.dry_run_model_status": "DRAFT_NON_ACTIVATING",
+          "council_summary.runtime_activation_allowed": false,
+          "council_summary.automated_agent_spawn_allowed": false
+        },
+        "has_keys": [
+          "schema",
+          "checks",
+          "framework_summary",
+          "council_summary",
+          "proof_boundary"
+        ]
+      }
+    },
+    {
       "id": "capability_framework_status_readonly",
       "argv": [
         "node",
@@ -186,8 +221,20 @@
           "draft_artifacts.satisfies_enablement_requirement": false,
           "draft_artifacts.items.5": "verifier_evidence_plan_sketch",
           "draft_artifacts.non_enablement_reasons.5": "explicit_policy_change_missing",
+          "machine_readable_draft.status": "DRAFT_NON_ENABLING",
+          "machine_readable_draft.authorization_effect": false,
+          "machine_readable_draft.schema_draft.schema": "bha.capability_schema.v2.preview",
+          "machine_readable_draft.schema_draft.required_fields.0": "type",
+          "machine_readable_draft.schema_draft.required_fields.1": "binding",
+          "machine_readable_draft.allowed_command_constraints.provider_deploy_release_commands_allowed": false,
+          "machine_readable_draft.evidence_policy.draft_evidence_is_authorization": false,
+          "deny_replay_test_matrix.status": "MACHINE_READABLE_PREVIEW",
+          "deny_replay_test_matrix.coverage_complete": false,
+          "verifier_evidence_contract.verifier_must_reject_incomplete_preview_schema": true,
+          "verifier_evidence_contract.draft_evidence_is_authorization": false,
           "test_requirements.current_coverage.enablement_coverage_complete": false,
           "test_requirements.current_coverage.validation_commands.0": "v12_regression_selftest",
+          "test_requirements.current_coverage.validation_commands.3": "audit_v2_preview_readonly",
           "test_requirements.missing_before_enablement.0": "future_capability_schema",
           "test_requirements.missing_before_enablement.7": "explicit_policy_change",
           "types.git_push.evidence_policy.tracked": false
@@ -199,6 +246,9 @@
           "extension_policy",
           "enablement_gate",
           "draft_artifacts",
+          "machine_readable_draft",
+          "deny_replay_test_matrix",
+          "verifier_evidence_contract",
           "test_requirements",
           "types",
           "proof_boundary"
@@ -241,8 +291,20 @@
           "draft_artifacts.satisfies_activation_requirement": false,
           "draft_artifacts.items.4": "activation_regression_plan_sketch",
           "draft_artifacts.non_activation_reasons.5": "automated_spawn_provider_memory_and_remote_actions_forbidden",
+          "dry_run_model.schema": "bha.council_dry_run.v2.preview",
+          "dry_run_model.status": "DRAFT_NON_ACTIVATING",
+          "dry_run_model.authorization_effect": false,
+          "dry_run_model.can_spawn_agents": false,
+          "dry_run_model.can_write_memory": false,
+          "dry_run_model.can_push": false,
+          "role_boundary_matrix.0.may_grant_remote_authority": false,
+          "role_boundary_matrix.0.may_create_proof": false,
+          "role_boundary_matrix.0.may_spawn_agents": false,
+          "activation_regression_matrix.status": "MACHINE_READABLE_PREVIEW",
+          "activation_regression_matrix.coverage_complete": false,
           "test_requirements.current_coverage.activation_coverage_complete": false,
           "test_requirements.current_coverage.validation_commands.0": "council_status_readonly",
+          "test_requirements.current_coverage.validation_commands.3": "audit_v2_preview_readonly",
           "test_requirements.missing_before_activation.0": "verifier_backed_workflow_model",
           "test_requirements.missing_before_activation.3": "activation_regression_tests"
         },
@@ -250,6 +312,9 @@
           "schema",
           "activation_gate",
           "draft_artifacts",
+          "dry_run_model",
+          "role_boundary_matrix",
+          "activation_regression_matrix",
           "test_requirements",
           "roles",
           "loop",

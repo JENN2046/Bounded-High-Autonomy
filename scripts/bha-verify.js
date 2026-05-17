@@ -1108,6 +1108,69 @@ async function verifyUnverifiedWorktree(files, issues, warnings) {
   }
 }
 
+function verifyV2PreviewContractsFromText(runSource, frameworkDoc, councilDoc, issues) {
+  const requiredRunTokens = [
+    'machine_readable_draft',
+    'bha.capability_schema.v2.preview',
+    'deny_replay_test_matrix',
+    'verifier_evidence_contract',
+    'verifier_must_reject_incomplete_preview_schema',
+    'dry_run_model',
+    'bha.council_dry_run.v2.preview',
+    'role_boundary_matrix',
+    'activation_regression_matrix',
+    'audit-v2-preview'
+  ];
+  const missingRunTokens = requiredRunTokens.filter((token) => !String(runSource || '').includes(token));
+  if (missingRunTokens.length > 0) {
+    issues.push({
+      code: 'V2_CAPABILITY_PREVIEW_SCHEMA_INCOMPLETE',
+      severity: 'FAIL',
+      message: `V2 preview machine-readable contract is missing ${missingRunTokens.join(', ')}`
+    });
+  }
+  const requiredFrameworkTokens = [
+    'Machine-Readable Preview Contract',
+    'schema draft',
+    'binding model',
+    'deny/replay matrix',
+    'verifier evidence contract',
+    'non-enabling'
+  ];
+  const missingFrameworkTokens = requiredFrameworkTokens.filter((token) => !String(frameworkDoc || '').includes(token));
+  if (missingFrameworkTokens.length > 0) {
+    issues.push({
+      code: 'V2_CAPABILITY_PREVIEW_DOC_INCOMPLETE',
+      severity: 'FAIL',
+      message: `V2 capability framework doc is missing ${missingFrameworkTokens.join(', ')}`
+    });
+  }
+  const requiredCouncilTokens = [
+    'Machine-Readable Dry-Run Contract',
+    'dry-run trace',
+    'role boundary matrix',
+    'activation regression matrix',
+    'non-activating'
+  ];
+  const missingCouncilTokens = requiredCouncilTokens.filter((token) => !String(councilDoc || '').includes(token));
+  if (missingCouncilTokens.length > 0) {
+    issues.push({
+      code: 'V2_COUNCIL_PREVIEW_DOC_INCOMPLETE',
+      severity: 'FAIL',
+      message: `V2 council runtime doc is missing ${missingCouncilTokens.join(', ')}`
+    });
+  }
+}
+
+function verifyV2PreviewContracts(issues) {
+  verifyV2PreviewContractsFromText(
+    fs.existsSync(RUN_SCRIPT) ? readText(RUN_SCRIPT) : '',
+    fs.existsSync(CAPABILITY_FRAMEWORK_PATH) ? readText(CAPABILITY_FRAMEWORK_PATH) : '',
+    fs.existsSync(COUNCIL_RUNTIME_PATH) ? readText(COUNCIL_RUNTIME_PATH) : '',
+    issues
+  );
+}
+
 function selfTestLedgerDuplicateEventId() {
   const first = {
     schema: 'bha.ledger.event.v1',
@@ -1519,6 +1582,17 @@ function selfTestCloseoutStateNotLatest() {
   return issues;
 }
 
+function selfTestIncompleteV2PreviewContract() {
+  const issues = [];
+  verifyV2PreviewContractsFromText(
+    'function capabilityFramework() { return {}; }',
+    'Default deny only',
+    'Status: preview contract only',
+    issues
+  );
+  return issues;
+}
+
 function checkExpectedCodes(id, issues, expectedCodes) {
   const observed = Array.from(new Set(issues.map((issue) => issue.code))).sort();
   const missing = expectedCodes.filter((code) => !observed.includes(code));
@@ -1558,7 +1632,12 @@ function handleSelfTest() {
     ]),
     checkExpectedCodes('closeout_unsupported_claim_rejected', selfTestUnsupportedCloseoutClaim(), ['CLOSEOUT_UNSUPPORTED_CLAIM']),
     checkExpectedCodes('closeout_binding_mismatch_rejected', selfTestCloseoutEventBinding(), ['CLOSEOUT_BINDING_MISMATCH']),
-    checkExpectedCodes('closeout_state_not_latest_rejected', selfTestCloseoutStateNotLatest(), ['CLOSEOUT_NOT_LATEST'])
+    checkExpectedCodes('closeout_state_not_latest_rejected', selfTestCloseoutStateNotLatest(), ['CLOSEOUT_NOT_LATEST']),
+    checkExpectedCodes('incomplete_v2_preview_contract_rejected', selfTestIncompleteV2PreviewContract(), [
+      'V2_CAPABILITY_PREVIEW_SCHEMA_INCOMPLETE',
+      'V2_CAPABILITY_PREVIEW_DOC_INCOMPLETE',
+      'V2_COUNCIL_PREVIEW_DOC_INCOMPLETE'
+    ])
   ];
   const ok = checks.every((check) => check.status === 'PASS');
   console.log(JSON.stringify({
@@ -1590,6 +1669,7 @@ async function main() {
   verifyCheckpointFile(ledger, files.state, issues);
   verifyCloseoutFile(issues);
   verifyCloseoutEvents(ledger, files.state, issues, warnings);
+  verifyV2PreviewContracts(issues);
   await verifyDeniedPathTouched(files.mission, files.policy, issues, warnings);
   await verifyTrackedDeniedPaths(files.mission, files.policy, issues, warnings);
   await verifyUnverifiedWorktree(files, issues, warnings);
