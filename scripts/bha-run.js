@@ -3111,6 +3111,13 @@ async function gateStatus(remote, branch) {
       local_only_evidence: ['.bha/local/capabilities.jsonl git_push issue/consume events', '.bha/local/capability-sessions.jsonl push hook USED sessions'],
       reason: 'git_push authorization is local-only so push does not create tracked evidence commits'
     },
+    push_requirement: {
+      required_now: false,
+      operator_controlled: true,
+      reason: 'BHA never requires an immediate git push; generate and consume a git_push capability only when the operator chooses to perform a real push.',
+      capability_required_for_real_push: true,
+      current_gate_action_if_operator_pushes: action
+    },
     signer_boundary: {
       operator_controls_signer: true,
       bha_private_key_access: false,
@@ -3439,6 +3446,7 @@ async function handleAuditV12(args) {
     'push_prep_validation_wired',
     'signed_payload_status_validation_wired',
     'gate_status_reports_post_push_status',
+    'gate_status_reports_push_requirement_boundary',
     'local_git_push_replay_fail_closed_after_used_session',
     'gate_status_missing_local_payload_requests_generation',
     'gate_status_flags_stale_local_payload_files',
@@ -4290,6 +4298,16 @@ async function handleRegressionSelftest(args) {
     Object.prototype.hasOwnProperty.call(missingPayloadGateStatus.parsed.post_push_status, 'replay_blocked'), {
     phase: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.post_push_status ? missingPayloadGateStatus.parsed.post_push_status.phase : 'NO_JSON',
     remote_tracking_state_observed: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.post_push_status ? missingPayloadGateStatus.parsed.post_push_status.remote_tracking_state_observed : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('gate_status_reports_push_requirement_boundary', missingPayloadGateStatus.exit_code === 0 &&
+    missingPayloadGateStatus.parsed &&
+    missingPayloadGateStatus.parsed.push_requirement &&
+    missingPayloadGateStatus.parsed.push_requirement.required_now === false &&
+    missingPayloadGateStatus.parsed.push_requirement.operator_controlled === true &&
+    missingPayloadGateStatus.parsed.push_requirement.capability_required_for_real_push === true &&
+    String(missingPayloadGateStatus.parsed.push_requirement.reason || '').includes('never requires'), {
+    required_now: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.push_requirement ? missingPayloadGateStatus.parsed.push_requirement.required_now : 'NO_JSON',
+    operator_controlled: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.push_requirement ? missingPayloadGateStatus.parsed.push_requirement.operator_controlled : 'NO_JSON'
   }));
   checks.push(regressionCheck('signed_payload_status_readonly_reports_missing', missingSignedPayloadStatus.exit_code === 0 &&
     missingSignedPayloadStatus.parsed &&

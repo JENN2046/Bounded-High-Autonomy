@@ -780,6 +780,7 @@
           "next_action",
           "post_push_evidence_strategy",
           "post_push_status",
+          "push_requirement",
           "operator_handoff"
         ]
       }
