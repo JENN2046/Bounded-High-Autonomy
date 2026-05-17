@@ -4014,6 +4014,170 @@ async function handleStableExitReview(args) {
   }
 }
 
+async function handleNextLocalPlanStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const allowValidationInProgress = args.includes('--allow-validation-in-progress');
+  const remote = getOption(args, '--remote') || 'origin';
+  const branch = getOption(args, '--branch') || await currentBranch();
+  const validation = readJsonStrict(VALIDATION_PATH);
+  const reviewArgs = ['node', 'scripts/bha-run.js', 'stable-exit-review', '--remote', remote, '--branch', branch, '--format', 'json'];
+  if (allowValidationInProgress) {
+    reviewArgs.push('--allow-validation-in-progress');
+  }
+  const reviewResult = await readOnlyJsonCommand(reviewArgs);
+  const review = reviewResult.parsed || {};
+  const framework = capabilityFramework();
+  const council = councilRuntimeStatus();
+  const validationCommandPresent = (id) => Boolean(validationCommandById(validation, id));
+  const entryGate = {
+    stable_exit_review_pass: reviewResult.ok === true && review.status === 'PASS',
+    stable_exit_review_decision: review.decision || 'UNKNOWN',
+    stable_exit_review_failed_count: Array.isArray(review.failed) ? review.failed.length : null,
+    verifier_validation_audit_ready: Boolean(review.stable_exit_status && review.stable_exit_status.status === 'PASS'),
+    push_required_now: review.push_requirement ? review.push_requirement.required_now === true : null,
+    next_stage_requires_remote_action: false
+  };
+  const hardBoundaries = {
+    push_allowed: false,
+    private_key_access_allowed: false,
+    dependency_addition_allowed: false,
+    provider_call_allowed: false,
+    deploy_allowed: false,
+    release_allowed: false,
+    tag_allowed: false,
+    package_publish_allowed: false,
+    memory_write_allowed: false,
+    new_production_capability_allowed: false,
+    automated_agent_runtime_allowed: false
+  };
+  const currentPhaseQueue = [
+    {
+      id: 'v1_stable_candidate_maintenance',
+      status: 'ACTIVE_LOCAL_MAINTENANCE',
+      allowed_next_work: [
+        'keep stable-exit-review passing',
+        'repair stale tracked evidence with validate/checkpoint/closeout',
+        'keep proof and non-proof boundaries documented and audited'
+      ],
+      blocked_actions: ['push', 'release', 'deploy', 'tag', 'package_publish'],
+      entry_gate: 'stable-exit-review PASS from a clean worktree'
+    },
+    {
+      id: 'v1_3_operator_ux_freeze',
+      status: 'MAINTAIN_AND_HARDEN_ONLY',
+      allowed_next_work: [
+        'make stale or expired payload causes clearer',
+        'improve local handoff wording without private-key custody',
+        'keep push guidance conditional'
+      ],
+      blocked_actions: ['read_private_key', 'auto_sign', 'imply_push_required_now'],
+      entry_gate: 'operator UX changes must remain local-only and regression-covered'
+    },
+    {
+      id: 'v1_4_recovery_resume_freeze',
+      status: 'MAINTAIN_AND_HARDEN_ONLY',
+      allowed_next_work: [
+        'improve fresh clone explanations',
+        'keep missing .bha/local recovery self-explanatory',
+        'keep replay and USED session failures fail-closed'
+      ],
+      blocked_actions: ['tracked_trust_depends_on_bha_local', 'treat_closeout_prose_as_proof'],
+      entry_gate: 'recovery changes must keep verifier trust independent of .bha/local'
+    },
+    {
+      id: 'v2_capability_framework_hold_line',
+      status: 'PREVIEW_HOLD_LINE',
+      allowed_next_work: framework.enablement_gate ? framework.enablement_gate.allowed_next_work : [],
+      blocked_actions: framework.enablement_gate ? framework.enablement_gate.forbidden_without_new_objective : [],
+      entry_gate: 'new explicit objective plus schema, binding, policy, deny tests, replay tests, and verifier evidence'
+    },
+    {
+      id: 'v2_council_runtime_hold_line',
+      status: 'PREVIEW_HOLD_LINE',
+      allowed_next_work: council.activation_gate ? council.activation_gate.allowed_next_work : [],
+      blocked_actions: council.activation_gate ? council.activation_gate.forbidden_without_new_objective : [],
+      entry_gate: 'new explicit objective plus verifier-backed workflow model and local dry-run evidence'
+    }
+  ];
+  const validationCoverage = {
+    validate_command_present: true,
+    stable_exit_status_readonly: validationCommandPresent('stable_exit_status_readonly'),
+    stable_exit_review_readonly: validationCommandPresent('stable_exit_review_readonly'),
+    next_local_plan_status_readonly: validationCommandPresent('next_local_plan_status_readonly'),
+    audit_v1_stable_readonly: validationCommandPresent('v1_stable_audit_readonly'),
+    audit_v12_readonly: validationCommandPresent('v12_audit_readonly'),
+    regression_selftest: validationCommandPresent('v12_regression_selftest'),
+    recover_status_readonly: validationCommandPresent('recover_status_readonly'),
+    gate_status_readonly: validationCommandPresent('gate_status_readonly'),
+    capability_framework_status_readonly: validationCommandPresent('capability_framework_status_readonly'),
+    council_status_readonly: validationCommandPresent('council_status_readonly')
+  };
+  const v2HoldLine = {
+    production_capability_types: framework.production_capability_types,
+    new_production_capability_allowed: framework.enablement_gate
+      ? framework.enablement_gate.new_production_capability_allowed === true
+      : null,
+    requires_new_explicit_objective_for_capability: framework.enablement_gate
+      ? framework.enablement_gate.requires_new_explicit_objective === true
+      : null,
+    council_runtime_state: council.runtime_state,
+    council_runtime_activation_allowed: council.activation_gate
+      ? council.activation_gate.runtime_activation_allowed === true
+      : null,
+    requires_new_explicit_objective_for_council: council.activation_gate
+      ? council.activation_gate.requires_new_explicit_objective === true
+      : null
+  };
+  const ok = entryGate.stable_exit_review_pass === true &&
+    entryGate.push_required_now === false &&
+    Object.values(validationCoverage).every((value) => value === true) &&
+    v2HoldLine.new_production_capability_allowed === false &&
+    v2HoldLine.council_runtime_activation_allowed === false;
+  const remoteArg = powerShellSingleQuote(remote);
+  const branchArg = powerShellSingleQuote(branch || 'UNKNOWN');
+  const nextLocalPlanCommandText = `node scripts/bha-run.js next-local-plan-status --remote ${remoteArg} --branch ${branchArg} --format json`;
+  const stableExitReviewCommandText = `node scripts/bha-run.js stable-exit-review --remote ${remoteArg} --branch ${branchArg} --format json`;
+  console.log(JSON.stringify({
+    schema: 'bha.next_local_plan_status.v1',
+    ok,
+    status: ok ? 'NEXT_LOCAL_PLAN_READY' : 'NEXT_LOCAL_PLAN_BLOCKED',
+    decision: ok ? 'CONTINUE_LOCAL_PLANNING' : 'REPAIR_STABLE_EXIT_FIRST',
+    recorded: false,
+    read_only: true,
+    remote,
+    branch: branch || 'UNKNOWN',
+    validation_in_progress_allowed: allowValidationInProgress,
+    entry_gate: entryGate,
+    current_phase_queue: currentPhaseQueue,
+    validation_coverage: validationCoverage,
+    hard_boundaries: hardBoundaries,
+    v2_hold_line: v2HoldLine,
+    completion_boundary: {
+      long_term_goal_complete: false,
+      reason: 'This status only selects the next local planning queue; it does not complete future V2 capability or council-runtime objectives.',
+      push_performed: false
+    },
+    next_commands: ok ? [
+      nextLocalPlanCommandText,
+      stableExitReviewCommandText
+    ] : [
+      stableExitReviewCommandText,
+      'node scripts/bha-run.js validate',
+      'node scripts/bha-run.js checkpoint --format json',
+      'node scripts/bha-run.js closeout --record --format json'
+    ],
+    proof_boundary: 'next-local-plan-status is read-only planning context. It does not push, issue or consume capabilities, read private keys, call providers, write memory, deploy, release, tag, publish packages, spawn agents, or turn roadmap prose into proof.'
+  }));
+  if (!ok) {
+    process.exitCode = 1;
+  }
+}
+
 async function handleAuditV1Stable(args) {
   const format = getOption(args, '--format') || 'json';
   if (format !== 'json') {
@@ -4079,6 +4243,7 @@ async function handleAuditV1Stable(args) {
   const councilStatusCommand = validationCommandById(validation, 'council_status_readonly');
   const stableExitCommand = validationCommandById(validation, 'stable_exit_status_readonly');
   const stableExitReviewCommand = validationCommandById(validation, 'stable_exit_review_readonly');
+  const nextLocalPlanCommand = validationCommandById(validation, 'next_local_plan_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const verifierSelftestCommand = validationCommandById(validation, 'verifier_selftest_negative_matrix');
   const requireAudit = requireModuleAudit([RUN_SCRIPT, VERIFY_SCRIPT]);
@@ -4449,6 +4614,35 @@ async function handleAuditV1Stable(args) {
       missing_regression_ids: missingStableExitReviewRegressionIds
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js', 'BHA_V1_STABILITY.md', '.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md']
+  ));
+  checks.push(auditCheck(
+    'next_local_plan_status_wired',
+    'next-local-plan-status is read-only, policy-allowed, wired into validation, and reports the next local planning queue without enabling remote actions or V2 authority.',
+    Boolean(nextLocalPlanCommand &&
+      nextLocalPlanCommand.expect &&
+      nextLocalPlanCommand.expect.exit_code === 0 &&
+      nextLocalPlanCommand.expect.read_only === true &&
+      nextLocalPlanCommand.expect.recorded === false &&
+      nextLocalPlanCommand.expect.json_paths &&
+      nextLocalPlanCommand.expect.json_paths.decision === 'CONTINUE_LOCAL_PLANNING' &&
+      nextLocalPlanCommand.expect.json_paths['completion_boundary.long_term_goal_complete'] === false &&
+      nextLocalPlanCommand.expect.json_paths['hard_boundaries.push_allowed'] === false &&
+      nextLocalPlanCommand.expect.json_paths['hard_boundaries.private_key_access_allowed'] === false &&
+      nextLocalPlanCommand.expect.json_paths['v2_hold_line.new_production_capability_allowed'] === false &&
+      nextLocalPlanCommand.expect.json_paths['v2_hold_line.council_runtime_activation_allowed'] === false &&
+      nextLocalPlanCommand.expect.json_paths['next_commands.0'] === "node scripts/bha-run.js next-local-plan-status --remote 'origin' --branch 'master' --format json" &&
+      nextLocalPlanCommand.expect.json_paths['next_commands.1'] === "node scripts/bha-run.js stable-exit-review --remote 'origin' --branch 'master' --format json" &&
+      policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'next-local-plan-status', '--remote', 'origin', '--branch', 'master', '--format', 'json']) &&
+      policyAllowsArgv(policy, nextLocalPlanCommand.argv || []) &&
+      fileContains(RUN_SCRIPT, 'async function handleNextLocalPlanStatus') &&
+      fileContains(ROADMAP_PATH, '`next-local-plan-status` reports the next local planning queue') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'next-local-plan-status')),
+    {
+      validation_command_present: Boolean(nextLocalPlanCommand),
+      strict_policy_allowed: policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'next-local-plan-status', '--remote', 'origin', '--branch', 'master', '--format', 'json']),
+      validation_command_policy_allowed: nextLocalPlanCommand ? policyAllowsArgv(policy, nextLocalPlanCommand.argv || []) : false
+    },
+    ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js', '.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md']
   ));
   checks.push(auditCheck(
     'verifier_pass_required_for_stable_audit',
@@ -7629,6 +7823,8 @@ async function main() {
       await handleStableExitStatus(args);
     } else if (command === 'stable-exit-review') {
       await handleStableExitReview(args);
+    } else if (command === 'next-local-plan-status') {
+      await handleNextLocalPlanStatus(args);
     } else if (command === 'audit-v1-stable') {
       await handleAuditV1Stable(args);
     } else if (command === 'audit-v12') {

@@ -228,6 +228,35 @@
         "command": "node",
         "args": [
           "scripts/bha-run.js",
+          "next-local-plan-status",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V1 stable candidate next local planning status"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "next-local-plan-status",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json",
+          "--allow-validation-in-progress"
+        ],
+        "reason": "read-only V1 stable candidate next local planning status during validation bootstrap"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
           "audit-v1-stable",
           "--format",
           "json"

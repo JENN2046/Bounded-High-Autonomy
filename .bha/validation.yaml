@@ -324,6 +324,54 @@
       }
     },
     {
+      "id": "next_local_plan_status_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "next-local-plan-status",
+        "--remote",
+        "origin",
+        "--branch",
+        "master",
+        "--format",
+        "json",
+        "--allow-validation-in-progress"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "NEXT_LOCAL_PLAN_READY",
+        "recorded": false,
+        "read_only": true,
+        "json_paths": {
+          "decision": "CONTINUE_LOCAL_PLANNING",
+          "entry_gate.stable_exit_review_pass": true,
+          "entry_gate.push_required_now": false,
+          "hard_boundaries.push_allowed": false,
+          "hard_boundaries.private_key_access_allowed": false,
+          "hard_boundaries.memory_write_allowed": false,
+          "v2_hold_line.new_production_capability_allowed": false,
+          "v2_hold_line.council_runtime_activation_allowed": false,
+          "completion_boundary.long_term_goal_complete": false,
+          "completion_boundary.push_performed": false,
+          "current_phase_queue.0.id": "v1_stable_candidate_maintenance",
+          "current_phase_queue.4.id": "v2_council_runtime_hold_line",
+          "next_commands.0": "node scripts/bha-run.js next-local-plan-status --remote 'origin' --branch 'master' --format json",
+          "next_commands.1": "node scripts/bha-run.js stable-exit-review --remote 'origin' --branch 'master' --format json"
+        },
+        "has_keys": [
+          "schema",
+          "entry_gate",
+          "current_phase_queue",
+          "validation_coverage",
+          "hard_boundaries",
+          "v2_hold_line",
+          "completion_boundary",
+          "proof_boundary"
+        ]
+      }
+    },
+    {
       "id": "closeout_preview_readonly",
       "argv": [
         "node",
