@@ -6,6 +6,7 @@ V1 is the smallest local-first BHA kernel that should remain reliable, repeatabl
 
 - Runtime code uses Node.js built-in modules only.
 - Stable audit checks the runtime `require()` set directly; current V1 runtime modules are `fs`, `path`, `crypto`, and `child_process`.
+- Stable audit also rejects dependency manifests, lockfiles, or `node_modules` in tracked project space outside `.git` and local-only `.bha/local`.
 - Repository-tracked trust stays in policy, mission, validation, ledger, state, verifier, checkpoint, closeout, scripts, and documented rollback evidence.
 - Local git_push authorization evidence stays under `.bha/local/` and is intentionally not required for fresh-clone verifier trust.
 - The only production-quality V1 capability family is `git_push`.

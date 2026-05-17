@@ -3339,6 +3339,63 @@ function requireModuleAudit(files) {
   };
 }
 
+function dependencySurfaceAudit(rootPath) {
+  const scanRoot = path.resolve(rootPath || ROOT);
+  const artifactNames = new Set([
+    'package.json',
+    'package-lock.json',
+    'npm-shrinkwrap.json',
+    'pnpm-lock.yaml',
+    'yarn.lock',
+    '.pnp.cjs',
+    '.pnp.loader.mjs'
+  ]);
+  const artifacts = [];
+  const skipped = [];
+
+  function visit(dir) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (error) {
+      skipped.push({ path: rel(dir), error: error.message });
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const scanRelativePath = path.relative(scanRoot, fullPath).replace(/\\/g, '/') || '.';
+      const repoRelativePath = rel(fullPath).replace(/\\/g, '/');
+      if (scanRelativePath === '.git' || scanRelativePath.startsWith('.git/')) {
+        continue;
+      }
+      if (scanRelativePath === '.bha/local' || scanRelativePath.startsWith('.bha/local/')) {
+        continue;
+      }
+      if (entry.name === 'node_modules') {
+        artifacts.push({ path: repoRelativePath, kind: 'node_modules_directory' });
+        continue;
+      }
+      if (artifactNames.has(entry.name)) {
+        artifacts.push({ path: repoRelativePath, kind: 'dependency_artifact' });
+      }
+      if (entry.isDirectory()) {
+        visit(fullPath);
+      }
+    }
+  }
+
+  visit(scanRoot);
+  artifacts.sort((a, b) => a.path.localeCompare(b.path));
+  skipped.sort((a, b) => a.path.localeCompare(b.path));
+  return {
+    scanned_root: scanRoot === ROOT ? '.' : rel(scanRoot),
+    ignored_roots: ['.git', '.bha/local'],
+    forbidden_names: Array.from(artifactNames).concat(['node_modules']).sort(),
+    artifacts,
+    skipped
+  };
+}
+
 function sourceFunctionText(file, functionName) {
   if (!fs.existsSync(file)) {
     return null;
@@ -3506,6 +3563,7 @@ async function handleAuditV1Stable(args) {
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const verifierSelftestCommand = validationCommandById(validation, 'verifier_selftest_negative_matrix');
   const requireAudit = requireModuleAudit([RUN_SCRIPT, VERIFY_SCRIPT]);
+  const dependencyAudit = dependencySurfaceAudit();
   const privateKeyAudit = operatorSignerPrivateKeyAudit();
   const requiredDenied = [
     'provider_call',
@@ -3720,19 +3778,22 @@ async function handleAuditV1Stable(args) {
   ));
   checks.push(auditCheck(
     'node_builtins_only_no_package_manifest',
-    'V1 has no package manager dependency surface; runtime remains Node.js built-in modules only.',
-    !fs.existsSync(path.join(ROOT, 'package.json')) &&
-      !fs.existsSync(path.join(ROOT, 'package-lock.json')) &&
-      !fs.existsSync(path.join(ROOT, 'pnpm-lock.yaml')) &&
-      !fs.existsSync(path.join(ROOT, 'yarn.lock')) &&
+    'V1 has no package manager dependency surface anywhere in tracked project space; runtime remains Node.js built-in modules only.',
+    dependencyAudit.artifacts.length === 0 &&
+      dependencyAudit.skipped.length === 0 &&
       requireAudit.disallowed_modules.length === 0 &&
       requireAudit.dynamic_require_files.length === 0 &&
-      fileContains(STABILITY_PATH, 'Node.js built-in modules only'),
+      fileContains(RUN_SCRIPT, 'dependency_surface_audit_detects_nested_package_artifacts') &&
+      fileContains(STABILITY_PATH, 'Node.js built-in modules only') &&
+      fileContains(STABILITY_PATH, 'dependency manifests, lockfiles, or `node_modules`'),
     {
       allowed_modules: requireAudit.allowed_modules,
       observed_modules: requireAudit.module_names,
       disallowed_modules: requireAudit.disallowed_modules,
-      dynamic_require_files: requireAudit.dynamic_require_files
+      dynamic_require_files: requireAudit.dynamic_require_files,
+      dependency_artifacts: dependencyAudit.artifacts,
+      dependency_scan_skipped: dependencyAudit.skipped,
+      dependency_scan_ignored_roots: dependencyAudit.ignored_roots
     },
     ['scripts/bha-run.js', 'scripts/bha-verify.js', 'BHA_V1_STABILITY.md']
   ));
@@ -4797,6 +4858,18 @@ async function handleRegressionSelftest(args) {
   checks.push(regressionCheck('validation_input_hash_lf_crlf_stable', sha256(canonicalText(lf)) === sha256(canonicalText(crlf)), {
     lf_hash: sha256(canonicalText(lf)),
     crlf_hash: sha256(canonicalText(crlf))
+  }));
+  const dependencyAuditRoot = path.join(scratchParent, `dependency-surface-${crypto.randomUUID()}`);
+  const dependencyAuditNested = path.join(dependencyAuditRoot, 'nested');
+  fs.mkdirSync(path.join(dependencyAuditNested, 'node_modules'), { recursive: true });
+  writeTextFile(path.join(dependencyAuditNested, 'package.json'), '{}\n');
+  const dependencyFixtureAudit = dependencySurfaceAudit(dependencyAuditRoot);
+  const dependencyFixtureArtifactPaths = dependencyFixtureAudit.artifacts.map((item) => item.path.replace(/\\/g, '/'));
+  checks.push(regressionCheck('dependency_surface_audit_detects_nested_package_artifacts',
+    dependencyFixtureArtifactPaths.some((item) => item.endsWith('/nested/package.json')) &&
+    dependencyFixtureArtifactPaths.some((item) => item.endsWith('/nested/node_modules')), {
+    artifacts: dependencyFixtureArtifactPaths,
+    skipped: dependencyFixtureAudit.skipped
   }));
 
   const gitInit = await runCommand(['git', 'init'], { cwd: fixtureRoot });
