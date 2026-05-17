@@ -278,6 +278,20 @@
       },
       {
         "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "operator-signer-preflight",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only operator signer environment and unsigned payload preflight"
+      },
+      {
+        "command": "node",
         "args_prefix": [
           "scripts/bha-run.js",
           "verify-signed-capability",

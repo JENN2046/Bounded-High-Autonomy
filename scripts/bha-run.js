@@ -2556,6 +2556,92 @@ async function handleSignedPayloadStatus(args) {
   }));
 }
 
+async function handleOperatorSignerPreflight(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const remote = getOption(args, '--remote') || 'origin';
+  const branch = getOption(args, '--branch') || await currentBranch();
+  const payloadPath = getOption(args, '--payload') || '.bha/local/push-payload.json';
+  const keyPath = process.env.BHA_PRIVATE_KEY_PATH || '';
+  const keyResolved = keyPath ? path.resolve(ROOT, keyPath) : null;
+  const keyPathInsideRepo = Boolean(keyResolved && isInsideDir(ROOT, keyResolved));
+  const keyFileExists = Boolean(keyResolved && fs.existsSync(keyResolved));
+  const head = await currentHead();
+  const verifier = await verifierResult();
+  const currentContext = currentPayloadContext(remote, branch, head, verifier.parsed ? verifier.parsed.ledger_head_hash : null);
+  const unsigned = capabilityFileSummary(payloadPath, remote, branch, head, false, currentContext);
+  const payloadFile = readLocalJsonFileSummary(payloadPath);
+  const payload = payloadFile.value && typeof payloadFile.value === 'object' && !Array.isArray(payloadFile.value)
+    ? payloadFile.value
+    : null;
+  const expectedHash = payload ? unsignedPayloadHash(payload) : null;
+  const blockers = [];
+  if (!keyPath) {
+    blockers.push('BHA_PRIVATE_KEY_PATH_NOT_SET');
+  }
+  if (keyPath && !keyFileExists) {
+    blockers.push('BHA_PRIVATE_KEY_PATH_NOT_FOUND');
+  }
+  if (keyPathInsideRepo) {
+    blockers.push('BHA_PRIVATE_KEY_PATH_INSIDE_REPOSITORY');
+  }
+  if (unsigned.exists !== true || unsigned.json_valid !== true) {
+    blockers.push('UNSIGNED_PAYLOAD_MISSING_OR_INVALID');
+  } else if (unsigned.matches_current_context !== true) {
+    blockers.push('UNSIGNED_PAYLOAD_STALE_OR_CONTEXT_MISMATCH');
+  }
+  if (payload && (payload.signature || payload.payload_hash)) {
+    blockers.push('UNSIGNED_PAYLOAD_ALREADY_CONTAINS_SIGNATURE_FIELDS');
+  }
+  const ok = blockers.length === 0;
+  console.log(JSON.stringify({
+    ok,
+    status: ok ? 'OPERATOR_SIGNER_PREFLIGHT_READY' : 'OPERATOR_SIGNER_PREFLIGHT_BLOCKED',
+    recorded: false,
+    read_only: true,
+    schema: 'bha.operator_signer_preflight.v1',
+    remote,
+    branch,
+    head,
+    payload_path: payloadPath,
+    unsigned_payload: unsigned,
+    expected_unsigned_payload_hash: expectedHash,
+    private_key_path: {
+      env_var: 'BHA_PRIVATE_KEY_PATH',
+      set: Boolean(keyPath),
+      file_exists: keyFileExists,
+      inside_repository: keyPathInsideRepo,
+      value_printed: false,
+      file_read: false
+    },
+    operator_confirmation: payload ? {
+      capability_id: payload.capability_id || null,
+      head: payload.head || null,
+      ledger_head_hash: payload.ledger_head_hash || null,
+      policy_hash: payload.policy_hash || null,
+      mission_hash: payload.mission_hash || null,
+      expires_at: payload.expires_at || null,
+      expected_unsigned_payload_hash: expectedHash
+    } : null,
+    blockers,
+    next_action: ok
+      ? 'SIGN_PAYLOAD_OUTSIDE_BHA_AND_WRITE_SIGNED_PAYLOAD'
+      : 'FIX_SIGNER_ENV_AND_REGENERATE_CURRENT_UNSIGNED_PAYLOAD_IF_NEEDED',
+    signer_boundary: {
+      operator_controls_signer: true,
+      bha_private_key_access: false,
+      private_key_material_read: false,
+      private_key_path_value_printed: false,
+      bha_handles_only: ['unsigned payload file under .bha/local/', 'signed payload file under .bha/local/']
+    },
+    proof_boundary: 'operator-signer-preflight checks local signer readiness without reading private key material and does not sign, issue, consume, reserve, push, or prove remote state.'
+  }));
+}
+
 async function signedCapabilityFileSummary(localPath, remote, branch, head, context) {
   const summary = capabilityFileSummary(localPath, remote, branch, head, true, context);
   if (!summary.exists || !summary.json_valid) {
@@ -2847,6 +2933,7 @@ async function handleAuditV12(args) {
   const hookCommand = validationCommandById(validation, 'hook_status_readonly');
   const pushPrepCommand = validationCommandById(validation, 'push_prep_current_head_payload');
   const signedPayloadStatusCommand = validationCommandById(validation, 'signed_payload_status_readonly');
+  const operatorSignerPreflightCommand = validationCommandById(validation, 'operator_signer_preflight_readonly');
   const auditArgv = ['node', 'scripts/bha-run.js', 'audit-v12', '--format', 'json'];
 
   const regressionIds = [
@@ -2879,6 +2966,10 @@ async function handleAuditV12(args) {
     'signed_payload_status_readonly_reports_missing',
     'signed_payload_status_reports_stale_payload',
     'signed_payload_status_reports_ready_payload',
+    'operator_signer_preflight_validation_wired',
+    'operator_signer_preflight_blocks_missing_key_path',
+    'operator_signer_preflight_blocks_repo_key_path',
+    'operator_signer_preflight_accepts_external_key_path_without_reading_key',
     'gate_status_flags_unsigned_payload_stale_after_local_evidence_advances',
     'push_prep_validation_wired',
     'signed_payload_status_validation_wired',
@@ -2971,6 +3062,9 @@ async function handleAuditV12(args) {
       fileContains(RUN_SCRIPT, '--print-next-command') &&
       fileContains(RUN_SCRIPT, '--write-handoff') &&
       fileContains(RUN_SCRIPT, 'signed-payload-status') &&
+      fileContains(RUN_SCRIPT, 'operator-signer-preflight') &&
+      fileContains(RUN_SCRIPT, 'BHA_PRIVATE_KEY_PATH') &&
+      fileContains(RUN_SCRIPT, 'private_key_material_read: false') &&
       fileContains(RUN_SCRIPT, 'single_line_commands') &&
       fileContains(RUN_SCRIPT, 'next_powershell_command') &&
       fileContains(RUN_SCRIPT, 'local_payload_status') &&
@@ -2988,6 +3082,7 @@ async function handleAuditV12(args) {
       hook_status_validation_command_present: Boolean(hookCommand),
       push_prep_validation_command_present: Boolean(pushPrepCommand),
       signed_payload_status_validation_command_present: Boolean(signedPayloadStatusCommand),
+      operator_signer_preflight_validation_command_present: Boolean(operatorSignerPreflightCommand),
       inspect_recorded_status: recordedValidationCommand(state, 'inspect_readonly') ? recordedValidationCommand(state, 'inspect_readonly').status : 'MISSING'
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', '.bha/state.json']
@@ -3572,6 +3667,7 @@ async function handleRegressionSelftest(args) {
   const rootHookCommand = validationCommandById(rootValidation, 'hook_status_readonly');
   const rootPushPrepCommand = validationCommandById(rootValidation, 'push_prep_current_head_payload');
   const rootSignedPayloadStatusCommand = validationCommandById(rootValidation, 'signed_payload_status_readonly');
+  const rootOperatorSignerPreflightCommand = validationCommandById(rootValidation, 'operator_signer_preflight_readonly');
   const hookExpect = rootHookCommand && rootHookCommand.expect ? rootHookCommand.expect : {};
   checks.push(regressionCheck('hook_status_validation_allows_blocked_local_setup', Boolean(rootHookCommand &&
     hookExpect.exit_code === 0 &&
@@ -3601,11 +3697,25 @@ async function handleRegressionSelftest(args) {
     validation_command_present: Boolean(rootSignedPayloadStatusCommand),
     read_only: rootSignedPayloadStatusCommand && rootSignedPayloadStatusCommand.expect ? rootSignedPayloadStatusCommand.expect.read_only : 'MISSING'
   }));
+  checks.push(regressionCheck('operator_signer_preflight_validation_wired', Boolean(rootOperatorSignerPreflightCommand &&
+    rootOperatorSignerPreflightCommand.expect &&
+    rootOperatorSignerPreflightCommand.expect.exit_code === 0 &&
+    rootOperatorSignerPreflightCommand.expect.read_only === true &&
+    rootOperatorSignerPreflightCommand.expect.recorded === false), {
+    validation_command_present: Boolean(rootOperatorSignerPreflightCommand),
+    read_only: rootOperatorSignerPreflightCommand && rootOperatorSignerPreflightCommand.expect ? rootOperatorSignerPreflightCommand.expect.read_only : 'MISSING'
+  }));
 
   const branchResult = await runCommand(['git', 'branch', '--show-current'], { cwd: fixtureRoot });
   const branch = branchResult.stdout.trim() || 'master';
   const missingPayloadGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
   const missingSignedPayloadStatus = await runFixtureBha(fixtureRoot, ['signed-payload-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  const originalPrivateKeyPath = process.env.BHA_PRIVATE_KEY_PATH;
+  delete process.env.BHA_PRIVATE_KEY_PATH;
+  const missingKeyPreflight = await runFixtureBha(fixtureRoot, ['operator-signer-preflight', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  if (originalPrivateKeyPath) {
+    process.env.BHA_PRIVATE_KEY_PATH = originalPrivateKeyPath;
+  }
   const missingPayloadHandoff = missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.operator_handoff
     ? missingPayloadGateStatus.parsed.operator_handoff
     : null;
@@ -3637,6 +3747,19 @@ async function handleRegressionSelftest(args) {
     missingSignedPayloadStatus.parsed.signed_payload.exists === false, {
     status: missingSignedPayloadStatus.parsed ? missingSignedPayloadStatus.parsed.status : 'NO_JSON',
     exists: missingSignedPayloadStatus.parsed && missingSignedPayloadStatus.parsed.signed_payload ? missingSignedPayloadStatus.parsed.signed_payload.exists : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('operator_signer_preflight_blocks_missing_key_path', missingKeyPreflight.exit_code === 0 &&
+    missingKeyPreflight.parsed &&
+    missingKeyPreflight.parsed.ok === false &&
+    missingKeyPreflight.parsed.status === 'OPERATOR_SIGNER_PREFLIGHT_BLOCKED' &&
+    missingKeyPreflight.parsed.private_key_path &&
+    missingKeyPreflight.parsed.private_key_path.set === false &&
+    missingKeyPreflight.parsed.private_key_path.value_printed === false &&
+    missingKeyPreflight.parsed.private_key_path.file_read === false &&
+    Array.isArray(missingKeyPreflight.parsed.blockers) &&
+    missingKeyPreflight.parsed.blockers.includes('BHA_PRIVATE_KEY_PATH_NOT_SET'), {
+    status: missingKeyPreflight.parsed ? missingKeyPreflight.parsed.status : 'NO_JSON',
+    blockers: missingKeyPreflight.parsed ? missingKeyPreflight.parsed.blockers : 'NO_JSON'
   }));
 
   const pushPrepTrackedBefore = await regressionGitStatus(fixtureRoot);
@@ -3727,6 +3850,50 @@ async function handleRegressionSelftest(args) {
     quotes_branch: typeof pushPrepPowerShellCommand === 'string'
       ? pushPrepPowerShellCommand.includes(`--branch '${branch}'`)
       : 'NO_JSON'
+  }));
+  const repoKeyPath = path.join(fixtureRoot, '.bha', 'local', 'repo-private-key.pem');
+  writeTextFile(repoKeyPath, 'not-a-real-private-key\n');
+  process.env.BHA_PRIVATE_KEY_PATH = repoKeyPath;
+  const repoKeyPreflight = await runFixtureBha(fixtureRoot, ['operator-signer-preflight', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  const externalKeyPath = path.join(scratchParent, `operator-key-${crypto.randomUUID()}.pem`);
+  writeTextFile(externalKeyPath, 'not-a-real-private-key\n');
+  process.env.BHA_PRIVATE_KEY_PATH = externalKeyPath;
+  const externalKeyPreflight = await runFixtureBha(fixtureRoot, ['operator-signer-preflight', '--remote', 'origin', '--branch', branch, '--format', 'json']);
+  if (originalPrivateKeyPath) {
+    process.env.BHA_PRIVATE_KEY_PATH = originalPrivateKeyPath;
+  } else {
+    delete process.env.BHA_PRIVATE_KEY_PATH;
+  }
+  checks.push(regressionCheck('operator_signer_preflight_blocks_repo_key_path', repoKeyPreflight.exit_code === 0 &&
+    repoKeyPreflight.parsed &&
+    repoKeyPreflight.parsed.ok === false &&
+    repoKeyPreflight.parsed.private_key_path &&
+    repoKeyPreflight.parsed.private_key_path.file_exists === true &&
+    repoKeyPreflight.parsed.private_key_path.inside_repository === true &&
+    repoKeyPreflight.parsed.private_key_path.value_printed === false &&
+    repoKeyPreflight.parsed.private_key_path.file_read === false &&
+    Array.isArray(repoKeyPreflight.parsed.blockers) &&
+    repoKeyPreflight.parsed.blockers.includes('BHA_PRIVATE_KEY_PATH_INSIDE_REPOSITORY'), {
+    blockers: repoKeyPreflight.parsed ? repoKeyPreflight.parsed.blockers : 'NO_JSON',
+    value_printed: repoKeyPreflight.parsed && repoKeyPreflight.parsed.private_key_path ? repoKeyPreflight.parsed.private_key_path.value_printed : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('operator_signer_preflight_accepts_external_key_path_without_reading_key', externalKeyPreflight.exit_code === 0 &&
+    externalKeyPreflight.parsed &&
+    externalKeyPreflight.parsed.ok === true &&
+    externalKeyPreflight.parsed.private_key_path &&
+    externalKeyPreflight.parsed.private_key_path.file_exists === true &&
+    externalKeyPreflight.parsed.private_key_path.inside_repository === false &&
+    externalKeyPreflight.parsed.private_key_path.value_printed === false &&
+    externalKeyPreflight.parsed.private_key_path.file_read === false &&
+    externalKeyPreflight.parsed.signer_boundary &&
+    externalKeyPreflight.parsed.signer_boundary.private_key_material_read === false &&
+    externalKeyPreflight.parsed.unsigned_payload &&
+    externalKeyPreflight.parsed.unsigned_payload.matches_current_context === true &&
+    externalKeyPreflight.parsed.operator_confirmation &&
+    externalKeyPreflight.parsed.operator_confirmation.expected_unsigned_payload_hash === externalKeyPreflight.parsed.expected_unsigned_payload_hash, {
+    status: externalKeyPreflight.parsed ? externalKeyPreflight.parsed.status : 'NO_JSON',
+    inside_repository: externalKeyPreflight.parsed && externalKeyPreflight.parsed.private_key_path ? externalKeyPreflight.parsed.private_key_path.inside_repository : 'NO_JSON',
+    file_read: externalKeyPreflight.parsed && externalKeyPreflight.parsed.private_key_path ? externalKeyPreflight.parsed.private_key_path.file_read : 'NO_JSON'
   }));
   const pushPrepPrint = await runFixtureBha(fixtureRoot, [
     'push-prep',
@@ -4875,6 +5042,8 @@ async function main() {
       await handlePushPrep(args);
     } else if (command === 'signed-payload-status') {
       await handleSignedPayloadStatus(args);
+    } else if (command === 'operator-signer-preflight') {
+      await handleOperatorSignerPreflight(args);
     } else if (command === 'git-push-capability-flow') {
       await handleGitPushCapabilityFlow(args);
     } else if (command === 'rollback-drill') {
