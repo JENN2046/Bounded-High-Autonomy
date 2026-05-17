@@ -3031,6 +3031,8 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
   return {
     purpose: 'Prepare a git_push capability without BHA reading private key material.',
     action,
+    capability_flow_required_now: false,
+    capability_flow_condition: 'Only required if the operator chooses to perform a real git push.',
     blocked_before_capability: blockedBeforeCapability,
     signer_boundary: {
       operator_controls_signer: true,
@@ -3448,6 +3450,7 @@ async function handleAuditV12(args) {
     'gate_status_reports_post_push_status',
     'gate_status_reports_push_requirement_boundary',
     'gate_status_operator_meaning_is_conditional',
+    'operator_handoff_capability_flow_is_conditional',
     'local_git_push_replay_fail_closed_after_used_session',
     'gate_status_missing_local_payload_requests_generation',
     'gate_status_flags_stale_local_payload_files',
@@ -4317,6 +4320,18 @@ async function handleRegressionSelftest(args) {
     String(missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning || '').includes('if the operator chooses a real push'), {
     next_operator_meaning: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.post_push_status
       ? missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning
+      : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('operator_handoff_capability_flow_is_conditional', missingPayloadGateStatus.exit_code === 0 &&
+    missingPayloadGateStatus.parsed &&
+    missingPayloadGateStatus.parsed.operator_handoff &&
+    missingPayloadGateStatus.parsed.operator_handoff.capability_flow_required_now === false &&
+    String(missingPayloadGateStatus.parsed.operator_handoff.capability_flow_condition || '').includes('operator chooses'), {
+    capability_flow_required_now: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.operator_handoff
+      ? missingPayloadGateStatus.parsed.operator_handoff.capability_flow_required_now
+      : 'NO_JSON',
+    capability_flow_condition: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.operator_handoff
+      ? missingPayloadGateStatus.parsed.operator_handoff.capability_flow_condition
       : 'NO_JSON'
   }));
   checks.push(regressionCheck('signed_payload_status_readonly_reports_missing', missingSignedPayloadStatus.exit_code === 0 &&
