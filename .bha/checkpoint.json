@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-17T11-02-02-664Z",
-  "created_at": "2026-05-17T11:02:02.730Z",
+  "checkpoint_id": "checkpoint-2026-05-17T11-09-26-490Z",
+  "created_at": "2026-05-17T11:09:26.555Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,8 +13,8 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "master",
-  "head": "8088024689f8ff06c37e0fa35e2a830ee6deec80",
-  "ledger_head_hash": "f6adabd8145bb97e3977290bf6b6a937ab257a0905283dfff88c4ed28582cc07",
+  "head": "570e6b9d31aa1255a91326c90220b3e433047bd0",
+  "ledger_head_hash": "2bb31f0d2aeb7dc62a8837ecb8f781a7d6e6d315d3942db87da637ae8fcfced3",
   "policy_hash": "7766169f4c5d80100edbec4f3aa86a869b7461d69f0b9081ce6b9bec3130f596",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
@@ -74,10 +74,6 @@
     },
     {
       "status": "M",
-      "path": ".bha/roadmap.md"
-    },
-    {
-      "status": "M",
       "path": ".bha/state.json"
     },
     {
@@ -90,18 +86,26 @@
     },
     {
       "status": "M",
+      "path": "BHA_V2_CAPABILITY_FRAMEWORK.md"
+    },
+    {
+      "status": "M",
+      "path": "BHA_V2_COUNCIL_RUNTIME.md"
+    },
+    {
+      "status": "M",
       "path": "scripts/bha-run.js"
     }
   ],
   "validation_run": {
     "status": "PASS",
-    "completed_at": "2026-05-17T11:02:01.874Z",
-    "ledger_event_hash": "f6adabd8145bb97e3977290bf6b6a937ab257a0905283dfff88c4ed28582cc07",
+    "completed_at": "2026-05-17T11:09:25.686Z",
+    "ledger_event_hash": "2bb31f0d2aeb7dc62a8837ecb8f781a7d6e6d315d3942db87da637ae8fcfced3",
     "command_count": 44
   },
   "validation_not_run": [],
   "verifier_status": "PASS",
-  "verifier_ledger_head_hash": "f6adabd8145bb97e3977290bf6b6a937ab257a0905283dfff88c4ed28582cc07",
+  "verifier_ledger_head_hash": "2bb31f0d2aeb7dc62a8837ecb8f781a7d6e6d315d3942db87da637ae8fcfced3",
   "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
@@ -136,9 +140,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "f6adabd8145bb97e3977290bf6b6a937ab257a0905283dfff88c4ed28582cc07",
-    "checkpoint_event_hash": "26f9ddb0610e1072605b16f70b009d8969d986a478dca5153a8aea1e87a5ef30",
-    "final_ledger_head_hash": "26f9ddb0610e1072605b16f70b009d8969d986a478dca5153a8aea1e87a5ef30"
+    "verified_ledger_head_hash": "2bb31f0d2aeb7dc62a8837ecb8f781a7d6e6d315d3942db87da637ae8fcfced3",
+    "checkpoint_event_hash": "629457efd54f7988580fce6da5a97e395cf6aa8752c4cc3ecd24376c4c308bfb",
+    "final_ledger_head_hash": "629457efd54f7988580fce6da5a97e395cf6aa8752c4cc3ecd24376c4c308bfb"
   },
-  "ledger_event_hash": "26f9ddb0610e1072605b16f70b009d8969d986a478dca5153a8aea1e87a5ef30"
+  "ledger_event_hash": "629457efd54f7988580fce6da5a97e395cf6aa8752c4cc3ecd24376c4c308bfb"
 }

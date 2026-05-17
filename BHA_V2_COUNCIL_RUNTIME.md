@@ -64,6 +64,16 @@ The workflow must stop when the next step would cross any of these boundaries:
 
 `node scripts/bha-run.js council-status --format json` reports this preview contract. It does not execute the workflow, spawn agents, write memory, push, deploy, release, tag, or call providers.
 
+## Non-Enabling Draft
+
+The current Council Runtime draft shape is planning context only:
+
+- workflow schema sketch: Commander boundary, Domain Lead queue, Worker local change, Verifier check, Commander decision
+- role boundary matrix sketch: every role may create coordination context, but no role output is proof and no role may grant remote authority
+- local dry-run trace sketch: future activation would need a recorded local trace that proves no provider call, memory write, push, deploy, release, tag, package publish, private-key access, or automated agent spawn occurred
+
+These sketches do not satisfy the activation requirement by themselves. `council-status` must keep `draft_artifacts.satisfies_activation_requirement=false` until a new explicit objective adds a verifier-backed workflow model, local dry-run evidence, role boundary tests, activation regression tests, and validation wiring.
+
 ## Activation Gate
 
 `council-status` must report `activation_gate.runtime_activation_allowed=false` until a new explicit objective adds a verifier-backed workflow model and local dry-run evidence. Planning can continue locally, but automated agent spawning, provider calls, memory writes, push, deploy, release, tag, package publishing, and private key access remain forbidden without a new objective.

@@ -182,6 +182,8 @@
           "enablement_gate.requires_deny_tests_before_allow": true,
           "enablement_gate.requires_replay_tests_before_allow": true,
           "enablement_gate.forbidden_without_new_objective.0": "provider_call",
+          "draft_artifacts.status": "NON_ENABLING_DRAFTS_ONLY",
+          "draft_artifacts.satisfies_enablement_requirement": false,
           "test_requirements.current_coverage.enablement_coverage_complete": false,
           "test_requirements.current_coverage.validation_commands.0": "v12_regression_selftest",
           "test_requirements.missing_before_enablement.0": "future_capability_schema",
@@ -194,6 +196,7 @@
           "always_denied_capability_types",
           "extension_policy",
           "enablement_gate",
+          "draft_artifacts",
           "test_requirements",
           "types",
           "proof_boundary"
@@ -232,6 +235,8 @@
           "activation_gate.forbidden_without_new_objective.0": "automated_agent_spawn",
           "activation_gate.forbidden_without_new_objective.2": "memory_write",
           "activation_gate.forbidden_without_new_objective.3": "push",
+          "draft_artifacts.status": "NON_ENABLING_DRAFTS_ONLY",
+          "draft_artifacts.satisfies_activation_requirement": false,
           "test_requirements.current_coverage.activation_coverage_complete": false,
           "test_requirements.current_coverage.validation_commands.0": "council_status_readonly",
           "test_requirements.missing_before_activation.0": "verifier_backed_workflow_model",
@@ -240,6 +245,7 @@
         "has_keys": [
           "schema",
           "activation_gate",
+          "draft_artifacts",
           "test_requirements",
           "roles",
           "loop",

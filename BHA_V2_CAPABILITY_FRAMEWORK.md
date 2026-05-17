@@ -41,6 +41,16 @@ Each future capability type must define:
 
 No capability is enabled merely because it appears in a payload. Policy must explicitly list it, verifier must understand it, and regression tests must cover the deny path before any allow path exists.
 
+## Non-Enabling Draft
+
+The current V2 draft shape is planning context only:
+
+- schema sketch: `type`, binding fields, allowed command or local action, one-use or session policy, evidence policy, signing key purpose, replay behavior
+- binding contract sketch: every capability binds to current policy hash, mission hash, run id, and the smallest git or local state needed for the requested action
+- evidence policy sketch: tracked evidence is allowed only when it cannot dirty the protected action path; local-only evidence is required for action authorization that would otherwise recurse into new tracked commits
+
+These sketches do not satisfy the enablement requirement by themselves. `capability-framework-status` must keep `draft_artifacts.satisfies_enablement_requirement=false` until a new explicit objective adds verifier-backed schema, deny tests, replay tests, validation wiring, and policy changes.
+
 ## Test Gate
 
 Before any new capability can move from preview to enabled, it must have:

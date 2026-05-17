@@ -1084,6 +1084,16 @@ function capabilityFramework() {
         'production_write'
       ]
     },
+    draft_artifacts: {
+      status: 'NON_ENABLING_DRAFTS_ONLY',
+      satisfies_enablement_requirement: false,
+      docs: ['BHA_V2_CAPABILITY_FRAMEWORK.md'],
+      items: [
+        'future_capability_schema_sketch',
+        'binding_contract_sketch',
+        'evidence_policy_sketch'
+      ]
+    },
     test_requirements: {
       deny_tests_required_before_allow: true,
       replay_tests_required_before_allow: true,
@@ -1193,6 +1203,16 @@ function councilRuntimeStatus() {
         'tag',
         'package_publish',
         'private_key_access'
+      ]
+    },
+    draft_artifacts: {
+      status: 'NON_ENABLING_DRAFTS_ONLY',
+      satisfies_activation_requirement: false,
+      docs: ['BHA_V2_COUNCIL_RUNTIME.md'],
+      items: [
+        'workflow_schema_sketch',
+        'role_boundary_matrix_sketch',
+        'local_dry_run_trace_sketch'
       ]
     },
     test_requirements: {
@@ -4716,17 +4736,23 @@ async function handleAuditV1Stable(args) {
       capabilityFramework().enablement_gate.requires_verifier_evidence === true &&
       capabilityFramework().enablement_gate.requires_deny_tests_before_allow === true &&
       capabilityFramework().enablement_gate.requires_replay_tests_before_allow === true &&
+      capabilityFramework().draft_artifacts &&
+      capabilityFramework().draft_artifacts.status === 'NON_ENABLING_DRAFTS_ONLY' &&
+      capabilityFramework().draft_artifacts.satisfies_enablement_requirement === false &&
       capabilityFramework().extension_policy.required_before_enablement.includes('verifier_evidence') &&
       capabilityFrameworkJsonPaths['production_capability_types.0'] === 'git_push' &&
       capabilityFrameworkJsonPaths['extension_policy.provider_deploy_release_default'] === 'DENY' &&
       capabilityFrameworkJsonPaths['enablement_gate.new_production_capability_allowed'] === false &&
       capabilityFrameworkJsonPaths['enablement_gate.forbidden_without_new_objective.0'] === 'provider_call' &&
+      capabilityFrameworkJsonPaths['draft_artifacts.status'] === 'NON_ENABLING_DRAFTS_ONLY' &&
+      capabilityFrameworkJsonPaths['draft_artifacts.satisfies_enablement_requirement'] === false &&
       capabilityFrameworkJsonPaths['test_requirements.current_coverage.enablement_coverage_complete'] === false &&
       capabilityFrameworkJsonPaths['test_requirements.missing_before_enablement.0'] === 'future_capability_schema' &&
       capabilityFrameworkJsonPaths['test_requirements.missing_before_enablement.7'] === 'explicit_policy_change' &&
       capabilityFrameworkJsonPaths['types.git_push.evidence_policy.tracked'] === false &&
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'verifier evidence') &&
       fileContains(CAPABILITY_FRAMEWORK_PATH, 'enablement coverage as incomplete') &&
+      fileContains(CAPABILITY_FRAMEWORK_PATH, 'Non-Enabling Draft') &&
       fileContains(ROADMAP_PATH, 'verifier evidence'),
     {
       validation_command_present: Boolean(capabilityFrameworkStatusCommand),
@@ -4755,6 +4781,7 @@ async function handleAuditV1Stable(args) {
       fileContains(COUNCIL_RUNTIME_PATH, 'not proof') &&
       fileContains(COUNCIL_RUNTIME_PATH, 'does not execute the workflow') &&
       fileContains(COUNCIL_RUNTIME_PATH, 'activation coverage as incomplete') &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'Non-Enabling Draft') &&
       councilRuntimeStatus().runtime_state === 'PREVIEW_CONTRACT_ONLY' &&
       councilRuntimeStatus().default_decision === 'NO_AUTOMATED_DELEGATION' &&
       councilRuntimeStatus().external_side_effects_allowed === false &&
@@ -4765,6 +4792,9 @@ async function handleAuditV1Stable(args) {
       councilRuntimeStatus().activation_gate.runtime_activation_allowed === false &&
       councilRuntimeStatus().activation_gate.requires_new_explicit_objective === true &&
       councilRuntimeStatus().activation_gate.requires_verifier_backed_workflow_model === true &&
+      councilRuntimeStatus().draft_artifacts &&
+      councilRuntimeStatus().draft_artifacts.status === 'NON_ENABLING_DRAFTS_ONLY' &&
+      councilRuntimeStatus().draft_artifacts.satisfies_activation_requirement === false &&
       councilRuntimeStatus().test_requirements &&
       councilRuntimeStatus().test_requirements.current_coverage &&
       councilRuntimeStatus().test_requirements.current_coverage.activation_coverage_complete === false &&
@@ -4775,6 +4805,8 @@ async function handleAuditV1Stable(args) {
       councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.0'] === 'automated_agent_spawn' &&
       councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.2'] === 'memory_write' &&
       councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.3'] === 'push' &&
+      councilStatusJsonPaths['draft_artifacts.status'] === 'NON_ENABLING_DRAFTS_ONLY' &&
+      councilStatusJsonPaths['draft_artifacts.satisfies_activation_requirement'] === false &&
       councilStatusJsonPaths['test_requirements.current_coverage.activation_coverage_complete'] === false &&
       councilStatusJsonPaths['test_requirements.missing_before_activation.0'] === 'verifier_backed_workflow_model',
     {
@@ -4787,6 +4819,7 @@ async function handleAuditV1Stable(args) {
       automated_agent_spawn_allowed: councilRuntimeStatus().automated_agent_spawn_allowed,
       provider_calls_allowed: councilRuntimeStatus().provider_calls_allowed,
       memory_writes_allowed: councilRuntimeStatus().memory_writes_allowed,
+      draft_artifacts: councilRuntimeStatus().draft_artifacts,
       activation_gate: councilRuntimeStatus().activation_gate,
       test_requirements: councilRuntimeStatus().test_requirements
     },
