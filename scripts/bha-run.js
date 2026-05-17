@@ -3936,10 +3936,13 @@ async function handleAuditV1Stable(args) {
       gateStatusCommand.expect.has_keys.includes('next_action_condition') &&
       gateStatusCommand.expect.has_keys.includes('next_action_scope') &&
       gateStatusCommand.expect.has_keys.includes('push_requirement') &&
+      gateStatusCommand.expect.has_keys.includes('tracked_git_reality') &&
       gateStatusCommand.expect.has_keys.includes('operator_handoff') &&
       recoverStatusCommand.expect &&
       Array.isArray(recoverStatusCommand.expect.has_keys) &&
       recoverStatusCommand.expect.has_keys.includes('local_payload_recovery') &&
+      recoverStatusCommand.expect.has_keys.includes('git_reality') &&
+      recoverStatusCommand.expect.has_keys.includes('tracked_git_reality') &&
       recoverStatusCommand.expect.has_keys.includes('git_push_recovery') &&
       gateStatusJsonPaths['push_requirement.required_now'] === false &&
       gateStatusJsonPaths['push_requirement.operator_controlled'] === true &&

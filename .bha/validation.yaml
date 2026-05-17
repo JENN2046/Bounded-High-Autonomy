@@ -813,6 +813,7 @@
           "next_action_scope",
           "post_push_evidence_strategy",
           "post_push_status",
+          "tracked_git_reality",
           "push_requirement",
           "operator_handoff"
         ]
