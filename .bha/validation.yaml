@@ -361,6 +361,7 @@
           "hard_boundaries.memory_write_allowed": false,
           "v2_hold_line.new_production_capability_allowed": false,
           "v2_hold_line.council_runtime_activation_allowed": false,
+          "validation_coverage.long_term_goal_status_readonly": true,
           "completion_boundary.long_term_goal_complete": false,
           "completion_boundary.push_performed": false,
           "current_phase_queue.0.id": "v1_stable_candidate_maintenance",
@@ -373,6 +374,53 @@
           "entry_gate",
           "current_phase_queue",
           "validation_coverage",
+          "hard_boundaries",
+          "v2_hold_line",
+          "completion_boundary",
+          "proof_boundary"
+        ]
+      }
+    },
+    {
+      "id": "long_term_goal_status_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "long-term-goal-status",
+        "--remote",
+        "origin",
+        "--branch",
+        "master",
+        "--format",
+        "json",
+        "--allow-validation-in-progress"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "LONG_TERM_GOAL_IN_PROGRESS",
+        "recorded": false,
+        "read_only": true,
+        "json_paths": {
+          "status": "LONG_TERM_GOAL_IN_PROGRESS",
+          "decision": "CONTINUE_LOCAL_HOLD_LINE",
+          "current_local_state.v1_stable_candidate_ready": true,
+          "current_local_state.push_required_now": false,
+          "future_work.0.status": "FUTURE_REQUIRES_NEW_EXPLICIT_OBJECTIVE",
+          "future_work.1.status": "FUTURE_REQUIRES_NEW_EXPLICIT_OBJECTIVE",
+          "hard_boundaries.push_allowed": false,
+          "hard_boundaries.private_key_access_allowed": false,
+          "hard_boundaries.memory_write_allowed": false,
+          "v2_hold_line.new_production_capability_allowed": false,
+          "v2_hold_line.council_runtime_activation_allowed": false,
+          "completion_boundary.long_term_goal_complete": false,
+          "completion_boundary.push_performed": false
+        },
+        "has_keys": [
+          "schema",
+          "current_local_state",
+          "prompt_to_artifact_checklist",
+          "future_work",
           "hard_boundaries",
           "v2_hold_line",
           "completion_boundary",

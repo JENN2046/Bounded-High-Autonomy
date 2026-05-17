@@ -257,6 +257,35 @@
         "command": "node",
         "args": [
           "scripts/bha-run.js",
+          "long-term-goal-status",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only long-term goal completion boundary status"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "long-term-goal-status",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json",
+          "--allow-validation-in-progress"
+        ],
+        "reason": "read-only long-term goal completion boundary status during validation bootstrap"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
           "audit-v1-stable",
           "--format",
           "json"

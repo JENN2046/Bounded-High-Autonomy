@@ -4109,6 +4109,7 @@ async function handleNextLocalPlanStatus(args) {
     stable_exit_status_readonly: validationCommandPresent('stable_exit_status_readonly'),
     stable_exit_review_readonly: validationCommandPresent('stable_exit_review_readonly'),
     next_local_plan_status_readonly: validationCommandPresent('next_local_plan_status_readonly'),
+    long_term_goal_status_readonly: validationCommandPresent('long_term_goal_status_readonly'),
     audit_v1_stable_readonly: validationCommandPresent('v1_stable_audit_readonly'),
     audit_v12_readonly: validationCommandPresent('v12_audit_readonly'),
     regression_selftest: validationCommandPresent('v12_regression_selftest'),
@@ -4172,6 +4173,197 @@ async function handleNextLocalPlanStatus(args) {
       'node scripts/bha-run.js closeout --record --format json'
     ],
     proof_boundary: 'next-local-plan-status is read-only planning context. It does not push, issue or consume capabilities, read private keys, call providers, write memory, deploy, release, tag, publish packages, spawn agents, or turn roadmap prose into proof.'
+  }));
+  if (!ok) {
+    process.exitCode = 1;
+  }
+}
+
+async function handleLongTermGoalStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const allowValidationInProgress = args.includes('--allow-validation-in-progress');
+  const remote = getOption(args, '--remote') || 'origin';
+  const branch = getOption(args, '--branch') || await currentBranch();
+  const validation = readJsonStrict(VALIDATION_PATH);
+  const reviewArgs = ['node', 'scripts/bha-run.js', 'stable-exit-review', '--remote', remote, '--branch', branch, '--format', 'json'];
+  const nextPlanArgs = ['node', 'scripts/bha-run.js', 'next-local-plan-status', '--remote', remote, '--branch', branch, '--format', 'json'];
+  if (allowValidationInProgress) {
+    reviewArgs.push('--allow-validation-in-progress');
+    nextPlanArgs.push('--allow-validation-in-progress');
+  }
+  const reviewResult = await readOnlyJsonCommand(reviewArgs);
+  const nextPlanResult = await readOnlyJsonCommand(nextPlanArgs);
+  const review = reviewResult.parsed || {};
+  const nextPlan = nextPlanResult.parsed || {};
+  const framework = capabilityFramework();
+  const council = councilRuntimeStatus();
+  const validationCommandPresent = (id) => Boolean(validationCommandById(validation, id));
+  const reviewChecks = Array.isArray(review.prompt_to_artifact_checklist) ? review.prompt_to_artifact_checklist : [];
+  const reviewPass = (id) => reviewChecks.some((check) => check && check.id === id && check.status === 'PASS');
+  const hardBoundaries = {
+    push_allowed: false,
+    private_key_access_allowed: false,
+    dependency_addition_allowed: false,
+    provider_call_allowed: false,
+    deploy_allowed: false,
+    release_allowed: false,
+    tag_allowed: false,
+    package_publish_allowed: false,
+    memory_write_allowed: false,
+    new_production_capability_allowed: false,
+    automated_agent_runtime_allowed: false
+  };
+  const v2HoldLine = {
+    production_capability_types: framework.production_capability_types,
+    new_production_capability_allowed: framework.enablement_gate
+      ? framework.enablement_gate.new_production_capability_allowed === true
+      : null,
+    capability_requires_new_explicit_objective: framework.enablement_gate
+      ? framework.enablement_gate.requires_new_explicit_objective === true
+      : null,
+    council_runtime_state: council.runtime_state,
+    council_runtime_activation_allowed: council.activation_gate
+      ? council.activation_gate.runtime_activation_allowed === true
+      : null,
+    council_requires_new_explicit_objective: council.activation_gate
+      ? council.activation_gate.requires_new_explicit_objective === true
+      : null
+  };
+  const checklist = [
+    auditCheck(
+      'v1_stable_candidate_ready',
+      'V1 stable local-first kernel is verifier-backed, validation-backed, and ready for local maintenance.',
+      reviewResult.ok === true &&
+        review.status === 'PASS' &&
+        reviewPass('tracked_trust_sources_pass') &&
+        reviewPass('hard_boundaries_and_dependency_surface_frozen'),
+      {
+        stable_exit_review_status: review.status || 'UNKNOWN',
+        tracked_trust_sources_pass: reviewPass('tracked_trust_sources_pass'),
+        hard_boundaries_frozen: reviewPass('hard_boundaries_and_dependency_surface_frozen')
+      },
+      ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
+    ),
+    auditCheck(
+      'v1_3_operator_ux_freeze_ready',
+      'V1.3 operator UX keeps push conditional and signer operator-controlled.',
+      reviewPass('operator_ux_freeze_covered'),
+      { stable_exit_review_check: 'operator_ux_freeze_covered' },
+      ['scripts/bha-run.js', '.bha/validation.yaml']
+    ),
+    auditCheck(
+      'v1_4_recovery_freeze_ready',
+      'V1.4 recovery explains fresh clone, missing local evidence, stale payloads, and replay fail-closed paths.',
+      reviewPass('recovery_freeze_covered'),
+      { stable_exit_review_check: 'recovery_freeze_covered' },
+      ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
+    ),
+    auditCheck(
+      'v2_capability_framework_hold_line',
+      'V2 capability framework remains preview/default deny and enables no new production capability.',
+      reviewPass('v2_hold_line_preview_only') &&
+        Array.isArray(framework.production_capability_types) &&
+        framework.production_capability_types.length === 1 &&
+        framework.production_capability_types[0] === 'git_push' &&
+        v2HoldLine.new_production_capability_allowed === false,
+      {
+        production_capability_types: framework.production_capability_types,
+        new_production_capability_allowed: v2HoldLine.new_production_capability_allowed,
+        requires_new_explicit_objective: v2HoldLine.capability_requires_new_explicit_objective
+      },
+      ['BHA_V2_CAPABILITY_FRAMEWORK.md', 'scripts/bha-run.js', '.bha/validation.yaml']
+    ),
+    auditCheck(
+      'v2_council_runtime_hold_line',
+      'V2+ Council Runtime remains preview/status only and does not activate automated delegation.',
+      reviewPass('v2_hold_line_preview_only') &&
+        council.runtime_state === 'PREVIEW_CONTRACT_ONLY' &&
+        v2HoldLine.council_runtime_activation_allowed === false,
+      {
+        council_runtime_state: council.runtime_state,
+        council_runtime_activation_allowed: v2HoldLine.council_runtime_activation_allowed,
+        requires_new_explicit_objective: v2HoldLine.council_requires_new_explicit_objective
+      },
+      ['BHA_V2_COUNCIL_RUNTIME.md', 'scripts/bha-run.js', '.bha/validation.yaml']
+    ),
+    auditCheck(
+      'long_term_status_wired',
+      'long-term-goal-status is read-only, validation-wired, and explicitly not a proof replacement.',
+      validationCommandPresent('long_term_goal_status_readonly') &&
+        fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'long-term-goal-status') &&
+        fileContains(ROADMAP_PATH, '`long-term-goal-status` reports'),
+      {
+        validation_command_present: validationCommandPresent('long_term_goal_status_readonly')
+      },
+      ['.bha/validation.yaml', 'BHA_LONG_TERM_GOAL_AUDIT.md', '.bha/roadmap.md']
+    )
+  ];
+  const failed = checklist.filter((check) => check.status !== 'PASS');
+  const currentLocalReady = failed.length === 0 &&
+    nextPlanResult.ok === true &&
+    nextPlan.status === 'NEXT_LOCAL_PLAN_READY';
+  const futureWork = [
+    {
+      id: 'v2_capability_framework_enablement',
+      status: 'FUTURE_REQUIRES_NEW_EXPLICIT_OBJECTIVE',
+      required_before_enablement: framework.extension_policy ? framework.extension_policy.required_before_enablement : [],
+      allowed_now: false
+    },
+    {
+      id: 'v2_council_runtime_activation',
+      status: 'FUTURE_REQUIRES_NEW_EXPLICIT_OBJECTIVE',
+      required_before_activation: [
+        'verifier_backed_workflow_model',
+        'local_dry_run_evidence',
+        'role_boundary_tests',
+        'validation_wiring'
+      ],
+      allowed_now: false
+    }
+  ];
+  const ok = currentLocalReady;
+  console.log(JSON.stringify({
+    schema: 'bha.long_term_goal_status.v1',
+    ok,
+    status: ok ? 'LONG_TERM_GOAL_IN_PROGRESS' : 'LONG_TERM_GOAL_BLOCKED',
+    decision: ok ? 'CONTINUE_LOCAL_HOLD_LINE' : 'REPAIR_LOCAL_EVIDENCE_FIRST',
+    recorded: false,
+    read_only: true,
+    remote,
+    branch: branch || 'UNKNOWN',
+    validation_in_progress_allowed: allowValidationInProgress,
+    current_local_state: {
+      v1_stable_candidate_ready: currentLocalReady,
+      next_local_plan_status: nextPlan.status || 'UNKNOWN',
+      stable_exit_review_status: review.status || 'UNKNOWN',
+      push_required_now: review.push_requirement ? review.push_requirement.required_now === true : null
+    },
+    prompt_to_artifact_checklist: checklist,
+    failed,
+    future_work: futureWork,
+    hard_boundaries: hardBoundaries,
+    v2_hold_line: v2HoldLine,
+    completion_boundary: {
+      long_term_goal_complete: false,
+      reason: 'Current repository evidence supports a V1 Stable Candidate and V2 hold-line preview only; future V2 capability and council-runtime enablement remain incomplete by design.',
+      push_performed: false,
+      remote_release_performed: false
+    },
+    next_commands: ok ? [
+      `node scripts/bha-run.js long-term-goal-status --remote ${powerShellSingleQuote(remote)} --branch ${powerShellSingleQuote(branch || 'UNKNOWN')} --format json`,
+      `node scripts/bha-run.js next-local-plan-status --remote ${powerShellSingleQuote(remote)} --branch ${powerShellSingleQuote(branch || 'UNKNOWN')} --format json`
+    ] : [
+      `node scripts/bha-run.js stable-exit-review --remote ${powerShellSingleQuote(remote)} --branch ${powerShellSingleQuote(branch || 'UNKNOWN')} --format json`,
+      'node scripts/bha-run.js validate',
+      'node scripts/bha-run.js checkpoint --format json',
+      'node scripts/bha-run.js closeout --record --format json'
+    ],
+    proof_boundary: 'long-term-goal-status is read-only checklist context. It does not replace validate or the verifier, does not mark the long-term goal complete, and does not push, issue or consume capabilities, read private keys, call providers, write memory, deploy, release, tag, publish packages, spawn agents, or turn roadmap prose into proof.'
   }));
   if (!ok) {
     process.exitCode = 1;
@@ -4248,6 +4440,7 @@ async function handleAuditV1Stable(args) {
   const stableExitJsonPaths = stableExitCommand && stableExitCommand.expect ? (stableExitCommand.expect.json_paths || {}) : {};
   const stableExitReviewCommand = validationCommandById(validation, 'stable_exit_review_readonly');
   const nextLocalPlanCommand = validationCommandById(validation, 'next_local_plan_status_readonly');
+  const longTermGoalCommand = validationCommandById(validation, 'long_term_goal_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const verifierSelftestCommand = validationCommandById(validation, 'verifier_selftest_negative_matrix');
   const requireAudit = requireModuleAudit([RUN_SCRIPT, VERIFY_SCRIPT]);
@@ -4651,6 +4844,7 @@ async function handleAuditV1Stable(args) {
       nextLocalPlanCommand.expect.json_paths &&
       nextLocalPlanCommand.expect.json_paths.decision === 'CONTINUE_LOCAL_PLANNING' &&
       nextLocalPlanCommand.expect.json_paths['completion_boundary.long_term_goal_complete'] === false &&
+      nextLocalPlanCommand.expect.json_paths['validation_coverage.long_term_goal_status_readonly'] === true &&
       nextLocalPlanCommand.expect.json_paths['hard_boundaries.push_allowed'] === false &&
       nextLocalPlanCommand.expect.json_paths['hard_boundaries.private_key_access_allowed'] === false &&
       nextLocalPlanCommand.expect.json_paths['v2_hold_line.new_production_capability_allowed'] === false &&
@@ -4666,6 +4860,35 @@ async function handleAuditV1Stable(args) {
       validation_command_present: Boolean(nextLocalPlanCommand),
       strict_policy_allowed: policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'next-local-plan-status', '--remote', 'origin', '--branch', 'master', '--format', 'json']),
       validation_command_policy_allowed: nextLocalPlanCommand ? policyAllowsArgv(policy, nextLocalPlanCommand.argv || []) : false
+    },
+    ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js', '.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md']
+  ));
+  checks.push(auditCheck(
+    'long_term_goal_status_wired',
+    'long-term-goal-status is read-only, policy-allowed, wired into validation, and reports long-term completion boundaries without declaring future V2 work complete.',
+    Boolean(longTermGoalCommand &&
+      longTermGoalCommand.expect &&
+      longTermGoalCommand.expect.exit_code === 0 &&
+      longTermGoalCommand.expect.read_only === true &&
+      longTermGoalCommand.expect.recorded === false &&
+      longTermGoalCommand.expect.json_paths &&
+      longTermGoalCommand.expect.json_paths.status === 'LONG_TERM_GOAL_IN_PROGRESS' &&
+      longTermGoalCommand.expect.json_paths.decision === 'CONTINUE_LOCAL_HOLD_LINE' &&
+      longTermGoalCommand.expect.json_paths['completion_boundary.long_term_goal_complete'] === false &&
+      longTermGoalCommand.expect.json_paths['current_local_state.v1_stable_candidate_ready'] === true &&
+      longTermGoalCommand.expect.json_paths['future_work.0.status'] === 'FUTURE_REQUIRES_NEW_EXPLICIT_OBJECTIVE' &&
+      longTermGoalCommand.expect.json_paths['hard_boundaries.push_allowed'] === false &&
+      longTermGoalCommand.expect.json_paths['v2_hold_line.new_production_capability_allowed'] === false &&
+      longTermGoalCommand.expect.json_paths['v2_hold_line.council_runtime_activation_allowed'] === false &&
+      policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'long-term-goal-status', '--remote', 'origin', '--branch', 'master', '--format', 'json']) &&
+      policyAllowsArgv(policy, longTermGoalCommand.argv || []) &&
+      fileContains(RUN_SCRIPT, 'async function handleLongTermGoalStatus') &&
+      fileContains(ROADMAP_PATH, '`long-term-goal-status` reports') &&
+      fileContains(LONG_TERM_GOAL_AUDIT_PATH, 'long-term-goal-status')),
+    {
+      validation_command_present: Boolean(longTermGoalCommand),
+      strict_policy_allowed: policyAllowsArgv(policy, ['node', 'scripts/bha-run.js', 'long-term-goal-status', '--remote', 'origin', '--branch', 'master', '--format', 'json']),
+      validation_command_policy_allowed: longTermGoalCommand ? policyAllowsArgv(policy, longTermGoalCommand.argv || []) : false
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js', '.bha/roadmap.md', 'BHA_LONG_TERM_GOAL_AUDIT.md']
   ));
@@ -7857,6 +8080,8 @@ async function main() {
       await handleStableExitReview(args);
     } else if (command === 'next-local-plan-status') {
       await handleNextLocalPlanStatus(args);
+    } else if (command === 'long-term-goal-status') {
+      await handleLongTermGoalStatus(args);
     } else if (command === 'audit-v1-stable') {
       await handleAuditV1Stable(args);
     } else if (command === 'audit-v12') {

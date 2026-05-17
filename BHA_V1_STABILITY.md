@@ -92,6 +92,7 @@ node scripts/bha-run.js audit-v1-stable --format json
 node scripts/bha-run.js stable-exit-status --remote 'origin' --branch 'master' --format json
 node scripts/bha-run.js stable-exit-review --remote 'origin' --branch 'master' --format json
 node scripts/bha-run.js next-local-plan-status --remote 'origin' --branch 'master' --format json
+node scripts/bha-run.js long-term-goal-status --remote 'origin' --branch 'master' --format json
 node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json
 node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json
 ```
@@ -103,6 +104,8 @@ node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format
 `stable-exit-review` is a read-only prompt-to-artifact exit review. It restates the V1 Stable Candidate objective as concrete local checklist items and maps each item to repository artifacts, validation, verifier, audit, recovery, gate, and V2 hold-line evidence. It is not a proof replacement and does not complete future V2 work.
 
 `next-local-plan-status` is a read-only next-stage planning report. It lists the safe local phase queue and hard boundaries after stable exit review passes, but it does not authorize push, provider calls, private-key access, dependency changes, V2 capability enablement, or council runtime activation.
+
+`long-term-goal-status` is a read-only completion-boundary report. It may report the current V1 stable candidate as locally ready, but it must keep `completion_boundary.long_term_goal_complete=false` while future V2 capability framework enablement and council runtime activation still require a new explicit objective and verifier-backed evidence.
 
 `node scripts/bha-run.js audit-v1-stable --format json` is the strict operator audit path. Operators should use the strict command, and its output should report `validation_in_progress_override=false` for stable local trust. The `--allow-validation-in-progress` flag is validation bootstrap only: it exists so `validate` can run the stable audit while validation inputs are being refreshed, and it must not be treated as the normal operator proof command.
 
