@@ -24,11 +24,13 @@ const RUN_SCRIPT = path.join(ROOT, 'scripts', 'bha-run.js');
 const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
 const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
+const STABILITY_PATH = path.join(ROOT, 'BHA_V1_STABILITY.md');
 const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
 const GITIGNORE_PATH = path.join(ROOT, '.gitignore');
 
 const VALIDATION_INPUTS = [
   DESIGN_PATH,
+  STABILITY_PATH,
   AGENTS_PATH,
   GITIGNORE_PATH,
   MISSION_PATH,
@@ -52,6 +54,7 @@ function relFromRoot(root, file) {
 function validationInputsForRoot(root) {
   return [
     path.join(root, 'BHA_DESIGN.md'),
+    path.join(root, 'BHA_V1_STABILITY.md'),
     path.join(root, 'AGENTS.md'),
     path.join(root, '.gitignore'),
     path.join(root, '.bha', 'mission.yaml'),
@@ -2987,6 +2990,142 @@ function auditCheck(id, requirement, pass, evidence, files) {
   };
 }
 
+async function handleAuditV1Stable(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const policy = loadPolicy();
+  const validation = readJsonStrict(VALIDATION_PATH);
+  const verify = await verifierResult();
+  const alwaysDenied = ((policy.capability_rules || {}).always_denied_v1 || []);
+  const capabilityPossible = ((policy.capability_rules || {}).capability_possible_v1 || []);
+  const denyCommands = ((policy.action_rules || {}).deny_commands || {});
+  const auditArgv = ['node', 'scripts/bha-run.js', 'audit-v1-stable', '--format', 'json'];
+  const validationCommand = validationCommandById(validation, 'v1_stable_audit_readonly');
+  const requiredDenied = [
+    'provider_call',
+    'memory_write',
+    'private_key_access',
+    'secret_access',
+    'deploy',
+    'release',
+    'tag',
+    'force_push',
+    'destructive_fs',
+    'production_write',
+    'package_publish'
+  ];
+  const checks = [];
+  checks.push(auditCheck(
+    'stability_doc_present',
+    'V1 stability document exists and defines the local-first proof boundary.',
+    fs.existsSync(STABILITY_PATH) &&
+      fileContains(STABILITY_PATH, 'BHA V1 Stability') &&
+      fileContains(STABILITY_PATH, 'Proof Sources') &&
+      fileContains(STABILITY_PATH, 'Not Proof') &&
+      fileContains(STABILITY_PATH, 'Hard Boundaries'),
+    { path: rel(STABILITY_PATH) },
+    ['BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'hard_boundaries_documented_and_policy_denied',
+    'V1 hard boundaries are documented and denied by policy capability rules.',
+    requiredDenied.every((item) => alwaysDenied.includes(item)) &&
+      (denyCommands.provider_commands || []).length > 0 &&
+      (denyCommands.memory_commands || []).length > 0 &&
+      (denyCommands.git_remote_subcommands || []).includes('push') &&
+      (denyCommands.destructive_commands || []).length > 0 &&
+      fileContains(STABILITY_PATH, 'no provider calls') &&
+      fileContains(STABILITY_PATH, 'no deploy, release, tag, or package publish') &&
+      fileContains(STABILITY_PATH, 'no private key access'),
+    { always_denied_v1: alwaysDenied },
+    ['.bha/policy.yaml', 'BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'proof_and_non_proof_sources_separated',
+    'V1 distinguishes trusted proof sources from prose, prompts, hooks, approvals, and closeout prose.',
+    fileContains(STABILITY_PATH, 'repository reality') &&
+      fileContains(STABILITY_PATH, 'ledger/state evidence') &&
+      fileContains(STABILITY_PATH, 'verifier output') &&
+      fileContains(STABILITY_PATH, 'policy hash') &&
+      fileContains(STABILITY_PATH, 'mission hash') &&
+      fileContains(STABILITY_PATH, 'local-only capability evidence') &&
+      fileContains(STABILITY_PATH, 'git reality') &&
+      fileContains(STABILITY_PATH, 'AGENTS.md') &&
+      fileContains(STABILITY_PATH, 'prompt') &&
+      fileContains(STABILITY_PATH, 'hook') &&
+      fileContains(STABILITY_PATH, 'approval') &&
+      fileContains(STABILITY_PATH, 'closeout prose'),
+    {},
+    ['BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'v1_capability_scope_default_deny',
+    'V1 allows only git_push as the possible capability family and keeps other capabilities denied by default.',
+    capabilityPossible.length === 1 &&
+      capabilityPossible[0] === 'git_push' &&
+      requiredDenied.every((item) => alwaysDenied.includes(item)),
+    { capability_possible_v1: capabilityPossible, always_denied_v1: alwaysDenied },
+    ['.bha/policy.yaml']
+  ));
+  checks.push(auditCheck(
+    'node_builtins_only_no_package_manifest',
+    'V1 has no package manager dependency surface; runtime remains Node.js built-in modules only.',
+    !fs.existsSync(path.join(ROOT, 'package.json')) &&
+      !fs.existsSync(path.join(ROOT, 'package-lock.json')) &&
+      !fs.existsSync(path.join(ROOT, 'pnpm-lock.yaml')) &&
+      !fs.existsSync(path.join(ROOT, 'yarn.lock')) &&
+      fileContains(STABILITY_PATH, 'Node.js built-in modules only'),
+    {},
+    ['scripts/bha-run.js', 'scripts/bha-verify.js', 'BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'audit_v1_stable_wired',
+    'audit-v1-stable is read-only, policy-allowed, and wired into validation.',
+    Boolean(validationCommand &&
+      validationCommand.expect &&
+      validationCommand.expect.read_only === true &&
+      validationCommand.expect.recorded === false &&
+      policyAllowsArgv(policy, auditArgv)),
+    {
+      validation_command_present: Boolean(validationCommand),
+      policy_allowed: policyAllowsArgv(policy, auditArgv)
+    },
+    ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
+  ));
+
+  const failed = checks.filter((check) => check.status !== 'PASS');
+  console.log(JSON.stringify({
+    ok: failed.length === 0,
+    status: failed.length === 0 ? 'PASS' : 'FAIL',
+    schema: 'bha.audit.v1_stable.v1',
+    recorded: false,
+    read_only: true,
+    objective: 'BHA V1 stable local-first proof and boundary audit',
+    proof_sources: [
+      'BHA_V1_STABILITY.md',
+      '.bha/policy.yaml',
+      '.bha/validation.yaml',
+      '.bha/state.json',
+      '.bha/ledger.jsonl',
+      'scripts/bha-run.js',
+      'scripts/bha-verify.js',
+      'git status'
+    ],
+    checks,
+    failed,
+    verifier: verify.parsed || { ok: false, status: 'UNAVAILABLE' },
+    limitations: [
+      'audit-v1-stable is an artifact coverage audit and does not replace validate or verifier execution',
+      'local-only git_push capability evidence remains outside tracked fresh-clone trust',
+      'remote push still requires explicit operator authorization and a fresh signed consumed capability'
+    ]
+  }));
+}
+
 async function handleAuditV12(args) {
   const format = getOption(args, '--format') || 'json';
   if (format !== 'json') {
@@ -3324,6 +3463,7 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
     paths: {
       allowed: [
         'BHA_DESIGN.md',
+        'BHA_V1_STABILITY.md',
         'AGENTS.md',
         '.gitignore',
         '.bha/mission.yaml',
@@ -3453,6 +3593,7 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
   writeTextFile(path.join(fixtureRoot, '.gitignore'), '.bha/local/\n');
   writeTextFile(path.join(fixtureRoot, 'AGENTS.md'), '# Regression Fixture\n\nAGENTS.md guides behavior and is not proof.\n');
   writeTextFile(path.join(fixtureRoot, 'BHA_DESIGN.md'), '# Regression Fixture Design\n\nLocal deterministic evidence fixture.\n');
+  writeTextFile(path.join(fixtureRoot, 'BHA_V1_STABILITY.md'), '# Regression Fixture Stability\n\nProof comes from repository reality, ledger/state evidence, verifier, policy/mission hash, local-only capability evidence, and git reality.\n');
   writeTextFile(path.join(fixtureRoot, '.bha', 'roadmap.md'), '# Regression Fixture Roadmap\n\nKeep proof local and deterministic.\n');
   writeTextFile(path.join(fixtureRoot, '.bha', 'rollback.md'), regressionRollbackText());
   writeTextFile(path.join(fixtureRoot, '.githooks', 'pre-push'), '#!/bin/sh\nnode scripts/bha-run.js prepush-check --internal-git-hook "$@"\n');
@@ -5232,6 +5373,8 @@ async function main() {
       await handleHookStatus(args);
     } else if (command === 'gate-status') {
       await handleGateStatus(args);
+    } else if (command === 'audit-v1-stable') {
+      await handleAuditV1Stable(args);
     } else if (command === 'audit-v12') {
       await handleAuditV12(args);
     } else if (command === 'regression-selftest') {

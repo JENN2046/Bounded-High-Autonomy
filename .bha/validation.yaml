@@ -125,6 +125,29 @@
       }
     },
     {
+      "id": "v1_stable_audit_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "audit-v1-stable",
+        "--format",
+        "json"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "ok": true,
+        "status": "PASS",
+        "recorded": false,
+        "read_only": true,
+        "has_keys": [
+          "checks",
+          "proof_sources",
+          "verifier",
+          "limitations"
+        ]
+      }
+    },
+    {
       "id": "closeout_preview_readonly",
       "argv": [
         "node",

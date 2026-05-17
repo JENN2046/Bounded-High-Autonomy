@@ -10,6 +10,7 @@
   "paths": {
     "allowed": [
       "BHA_DESIGN.md",
+      "BHA_V1_STABILITY.md",
       "AGENTS.md",
       ".gitignore",
       ".bha/mission.yaml",
@@ -142,6 +143,16 @@
           "--self-test"
         ],
         "reason": "read-only verifier self-test"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "audit-v1-stable",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only V1 stability boundary audit"
       },
       {
         "command": "node",
