@@ -59,3 +59,29 @@ Closeout can record evidence bindings, warnings, skipped validation, risks, and 
 ## Stable V1 Cut Rule
 
 V1 changes should be narrow, locally reversible, and validated through checked commands. Scope expansion to provider calls, deployment, release, generic external capabilities, dependency changes, or remote automation belongs outside V1 unless explicitly approved as a later version.
+
+## Local Reproduction
+
+A new operator or contributor should be able to reproduce tracked trust locally with:
+
+```powershell
+node scripts/bha-run.js validate
+node scripts/bha-run.js checkpoint --format json
+node scripts/bha-run.js closeout --record --format json
+node scripts/bha-verify.js
+node scripts/bha-run.js audit-v12 --format json
+node scripts/bha-run.js audit-v1-stable --format json
+node scripts/bha-run.js recover-status --remote origin --branch master --format json
+node scripts/bha-run.js gate-status --remote origin --branch master --format json
+```
+
+`gate-status` is expected to fail closed when no valid current consumed git_push capability exists. That is not a request to push. It means a git_push capability is needed only if the operator separately chooses a real push.
+
+Fresh clone recovery starts with tracked trust:
+
+```powershell
+node scripts/bha-verify.js
+node scripts/bha-run.js recover-status --remote origin --branch master --format json
+```
+
+If tracked evidence is stale, regenerate local evidence with `validate`, `checkpoint`, and `closeout --record`, then rerun the verifier. If `.bha/local/` is missing or stale, regenerate local push payload files only before an operator-chosen real git push.

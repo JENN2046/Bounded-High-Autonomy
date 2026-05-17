@@ -3422,6 +3422,23 @@ async function handleAuditV1Stable(args) {
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md']
   ));
+  checks.push(auditCheck(
+    'stable_local_reproduction_documented',
+    'V1 stable documentation gives a local-only validation and recovery command path without implying that push is required.',
+    fileContains(STABILITY_PATH, 'Local Reproduction') &&
+      fileContains(STABILITY_PATH, 'node scripts/bha-run.js validate') &&
+      fileContains(STABILITY_PATH, 'node scripts/bha-run.js checkpoint --format json') &&
+      fileContains(STABILITY_PATH, 'node scripts/bha-run.js closeout --record --format json') &&
+      fileContains(STABILITY_PATH, 'node scripts/bha-verify.js') &&
+      fileContains(STABILITY_PATH, 'node scripts/bha-run.js audit-v12 --format json') &&
+      fileContains(STABILITY_PATH, 'node scripts/bha-run.js audit-v1-stable --format json') &&
+      fileContains(STABILITY_PATH, 'node scripts/bha-run.js recover-status --remote origin --branch master --format json') &&
+      fileContains(STABILITY_PATH, 'node scripts/bha-run.js gate-status --remote origin --branch master --format json') &&
+      fileContains(STABILITY_PATH, 'not a request to push') &&
+      fileContains(STABILITY_PATH, 'operator-chosen real git push'),
+    {},
+    ['BHA_V1_STABILITY.md']
+  ));
 
   const failed = checks.filter((check) => check.status !== 'PASS');
   console.log(JSON.stringify({
