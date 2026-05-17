@@ -180,6 +180,17 @@
         "command": "node",
         "args": [
           "scripts/bha-run.js",
+          "audit-v1-stable",
+          "--format",
+          "json",
+          "--allow-validation-in-progress"
+        ],
+        "reason": "read-only V1 stability boundary audit during validation bootstrap"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
           "audit-v12",
           "--format",
           "json"

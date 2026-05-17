@@ -3264,9 +3264,35 @@ async function handleAuditV1Stable(args) {
     process.exitCode = 2;
     return;
   }
+  const allowValidationInProgress = args.includes('--allow-validation-in-progress');
   const policy = loadPolicy();
   const validation = readJsonStrict(VALIDATION_PATH);
   const verify = await verifierResult();
+  const verifier = verify.parsed || {};
+  const verifierIssues = Array.isArray(verifier.issues) ? verifier.issues : [];
+  const verifierWarnings = Array.isArray(verifier.warnings) ? verifier.warnings : [];
+  const verifierIssueCodes = verifierIssues.map((issue) => String(issue.code || 'UNKNOWN'));
+  const verifierWarningCodes = verifierWarnings.map((warning) => String(warning.code || 'UNKNOWN'));
+  const validationBootstrapIssueCodes = [
+    'STATE_POLICY_HASH_MISMATCH',
+    'VALIDATION_NOT_PASSING',
+    'VALIDATION_STALE_INPUTS',
+    'VALIDATION_POLICY_HASH_MISMATCH',
+    'VALIDATION_COMMAND_STALE',
+    'VALIDATION_COMMAND_FAILED',
+    'CHECKPOINT_POLICY_HASH_MISMATCH',
+    'UNVERIFIED_WORKTREE_CHANGE'
+  ];
+  const validationBootstrapWarningCodes = ['CLOSEOUT_NOT_CURRENT_LEDGER_HEAD'];
+  const verifierStrictPass = verifier.ok === true &&
+    verifier.status === 'PASS' &&
+    verifierIssues.length === 0 &&
+    verifierWarnings.length === 0;
+  const verifierValidationBootstrapPass = allowValidationInProgress &&
+    verifier.status === 'FAIL' &&
+    verifierIssueCodes.length > 0 &&
+    verifierIssueCodes.every((code) => validationBootstrapIssueCodes.includes(code)) &&
+    verifierWarningCodes.every((code) => validationBootstrapWarningCodes.includes(code));
   const alwaysDenied = ((policy.capability_rules || {}).always_denied_v1 || []);
   const capabilityPossible = ((policy.capability_rules || {}).capability_possible_v1 || []);
   const denyCommands = ((policy.action_rules || {}).deny_commands || {});
@@ -3413,12 +3439,28 @@ async function handleAuditV1Stable(args) {
       validationCommand.expect &&
       validationCommand.expect.read_only === true &&
       validationCommand.expect.recorded === false &&
-      policyAllowsArgv(policy, auditArgv)),
+      policyAllowsArgv(policy, auditArgv) &&
+      policyAllowsArgv(policy, validationCommand.argv || [])),
     {
       validation_command_present: Boolean(validationCommand),
-      policy_allowed: policyAllowsArgv(policy, auditArgv)
+      policy_allowed: policyAllowsArgv(policy, auditArgv),
+      validation_command_policy_allowed: validationCommand ? policyAllowsArgv(policy, validationCommand.argv || []) : false
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
+  ));
+  checks.push(auditCheck(
+    'verifier_pass_required_for_stable_audit',
+    'V1 stable audit cannot pass unless verifier is clean, except for explicit validation-in-progress bootstrap issues.',
+    verifierStrictPass || verifierValidationBootstrapPass,
+    {
+      verifier_status: verifier.status || 'UNAVAILABLE',
+      issues: verifierIssues.length,
+      warnings: verifierWarnings.length,
+      issue_codes: verifierIssueCodes,
+      warning_codes: verifierWarningCodes,
+      validation_in_progress_override: verifierValidationBootstrapPass
+    },
+    ['.bha/state.json', '.bha/ledger.jsonl', 'scripts/bha-verify.js']
   ));
   checks.push(auditCheck(
     'conditional_push_guidance_freeze_wired',
@@ -3472,6 +3514,22 @@ async function handleAuditV1Stable(args) {
     {},
     ['BHA_V1_STABILITY.md']
   ));
+  checks.push(auditCheck(
+    'roadmap_stable_candidate_aligned',
+    'The roadmap names the V1 Stable Candidate freeze and keeps operator UX, recovery, and V2 work on hold-line boundaries.',
+    fs.existsSync(ROADMAP_PATH) &&
+      fileContains(ROADMAP_PATH, 'V1 Stable Candidate Freeze') &&
+      fileContains(ROADMAP_PATH, 'Stable candidate local acceptance commands') &&
+      fileContains(ROADMAP_PATH, 'Push requirement: `required_now=false`') &&
+      fileContains(ROADMAP_PATH, 'V1.3 operator UX freeze') &&
+      fileContains(ROADMAP_PATH, 'V1.4 recovery and resume freeze') &&
+      fileContains(ROADMAP_PATH, 'V2 capability framework hold line') &&
+      fileContains(ROADMAP_PATH, 'V2+ Council Runtime hold line') &&
+      fileContains(ROADMAP_PATH, 'Only if the operator separately chooses a real push') &&
+      fileContains(ROADMAP_PATH, 'requires separate operator intent'),
+    { path: rel(ROADMAP_PATH) },
+    ['.bha/roadmap.md']
+  ));
 
   const failed = checks.filter((check) => check.status !== 'PASS');
   console.log(JSON.stringify({
@@ -3485,6 +3543,7 @@ async function handleAuditV1Stable(args) {
       'BHA_V1_STABILITY.md',
       'BHA_V2_CAPABILITY_FRAMEWORK.md',
       'BHA_V2_COUNCIL_RUNTIME.md',
+      '.bha/roadmap.md',
       '.bha/policy.yaml',
       '.bha/validation.yaml',
       '.bha/state.json',
@@ -3495,7 +3554,7 @@ async function handleAuditV1Stable(args) {
     ],
     checks,
     failed,
-    verifier: verify.parsed || { ok: false, status: 'UNAVAILABLE' },
+    verifier: verifier.ok === undefined ? { ok: false, status: 'UNAVAILABLE' } : verifier,
     limitations: [
       'audit-v1-stable is an artifact coverage audit and does not replace validate or verifier execution',
       'local-only git_push capability evidence remains outside tracked fresh-clone trust',

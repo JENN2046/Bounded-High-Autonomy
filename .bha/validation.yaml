@@ -131,7 +131,8 @@
         "scripts/bha-run.js",
         "audit-v1-stable",
         "--format",
-        "json"
+        "json",
+        "--allow-validation-in-progress"
       ],
       "expect": {
         "exit_code": 0,
