@@ -3987,14 +3987,40 @@ async function handleAuditV1Stable(args) {
       pushPrepCommand &&
       signedPayloadStatusCommand &&
       operatorSignerPreflightCommand &&
+      pushPrepCommand.expect &&
+      Array.isArray(pushPrepCommand.expect.has_keys) &&
+      pushPrepCommand.expect.has_keys.includes('schema') &&
+      pushPrepCommand.expect.has_keys.includes('signed_payload_path') &&
+      pushPrepCommand.expect.has_keys.includes('capability_id') &&
+      pushPrepCommand.expect.has_keys.includes('current_head') &&
+      pushPrepCommand.expect.has_keys.includes('ledger_head_hash') &&
+      pushPrepCommand.expect.has_keys.includes('expected_unsigned_payload_hash') &&
+      pushPrepCommand.expect.has_keys.includes('handoff') &&
+      signedPayloadStatusCommand.expect &&
+      Array.isArray(signedPayloadStatusCommand.expect.has_keys) &&
+      signedPayloadStatusCommand.expect.has_keys.includes('schema') &&
+      signedPayloadStatusCommand.expect.has_keys.includes('current_context') &&
+      signedPayloadStatusCommand.expect.has_keys.includes('next_powershell_command') &&
+      operatorSignerPreflightCommand.expect &&
+      Array.isArray(operatorSignerPreflightCommand.expect.has_keys) &&
+      operatorSignerPreflightCommand.expect.has_keys.includes('schema') &&
+      operatorSignerPreflightCommand.expect.has_keys.includes('payload_path') &&
+      operatorSignerPreflightCommand.expect.has_keys.includes('expected_unsigned_payload_hash') &&
+      operatorSignerPreflightCommand.expect.has_keys.includes('blockers') &&
+      operatorSignerPreflightCommand.expect.has_keys.includes('next_action') &&
       pushPrepJsonPaths['signer_boundary.operator_controls_signer'] === true &&
       pushPrepJsonPaths['signer_boundary.bha_private_key_access'] === false &&
+      pushPrepJsonPaths['handoff.signer_boundary.operator_controls_signer'] === true &&
+      pushPrepJsonPaths['handoff.signer_boundary.bha_private_key_access'] === false &&
+      pushPrepJsonPaths.local_only === true &&
+      pushPrepJsonPaths.private_key_required === false &&
       signedPayloadStatusJsonPaths['signer_boundary.operator_controls_signer'] === true &&
       signedPayloadStatusJsonPaths['signer_boundary.bha_private_key_access'] === false &&
       operatorSignerPreflightJsonPaths['private_key_path.value_printed'] === false &&
       operatorSignerPreflightJsonPaths['private_key_path.file_read'] === false &&
       operatorSignerPreflightJsonPaths['signer_boundary.bha_private_key_access'] === false &&
       operatorSignerPreflightJsonPaths['signer_boundary.private_key_material_read'] === false &&
+      operatorSignerPreflightJsonPaths['signer_boundary.private_key_path_value_printed'] === false &&
       missingOperatorUxRegressionIds.length === 0 &&
       fileContains(RUN_SCRIPT, 'command_has_newline') &&
       fileContains(RUN_SCRIPT, '--print-next-command') &&

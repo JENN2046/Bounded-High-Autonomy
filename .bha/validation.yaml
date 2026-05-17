@@ -374,15 +374,26 @@
         "read_only": false,
         "json_paths": {
           "signer_boundary.operator_controls_signer": true,
-          "signer_boundary.bha_private_key_access": false
+          "signer_boundary.bha_private_key_access": false,
+          "handoff.signer_boundary.operator_controls_signer": true,
+          "handoff.signer_boundary.bha_private_key_access": false,
+          "local_only": true,
+          "private_key_required": false
         },
         "has_keys": [
+          "schema",
           "payload_path",
+          "signed_payload_path",
+          "capability_id",
           "head",
+          "current_head",
           "head_bound",
+          "ledger_head_hash",
+          "expected_unsigned_payload_hash",
           "signer_boundary",
           "local_payload_status_before",
           "local_payload_status_after",
+          "handoff",
           "operator_next_step",
           "hard_boundaries"
         ]
@@ -410,9 +421,12 @@
           "signer_boundary.bha_private_key_access": false
         },
         "has_keys": [
+          "schema",
+          "current_context",
           "signed_payload",
           "local_payload_status",
           "next_action",
+          "next_powershell_command",
           "signer_boundary",
           "proof_boundary"
         ]
@@ -439,12 +453,18 @@
           "private_key_path.value_printed": false,
           "private_key_path.file_read": false,
           "signer_boundary.bha_private_key_access": false,
-          "signer_boundary.private_key_material_read": false
+          "signer_boundary.private_key_material_read": false,
+          "signer_boundary.private_key_path_value_printed": false
         },
         "has_keys": [
+          "schema",
+          "payload_path",
           "private_key_path",
           "unsigned_payload",
+          "expected_unsigned_payload_hash",
           "operator_confirmation",
+          "blockers",
+          "next_action",
           "signer_boundary",
           "proof_boundary"
         ]
