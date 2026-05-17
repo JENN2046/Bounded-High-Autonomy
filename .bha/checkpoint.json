@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-17T05-24-27-978Z",
-  "created_at": "2026-05-17T05:24:28.000Z",
+  "checkpoint_id": "checkpoint-2026-05-17T05-27-34-670Z",
+  "created_at": "2026-05-17T05:27:34.691Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,9 +13,9 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "master",
-  "head": "aa86d756d8e6ea7ff1039660b908e6b6e85bafa3",
-  "ledger_head_hash": "e935bb3d3f55c315e7f351e4b1e3c082667cceed7a83568c03c372b538df30a5",
-  "policy_hash": "5eee95f55c15724f81f0effd4980598b8bb6d213ba605895c3f9c753206026ed",
+  "head": "ebf24bba9521f629adde9d91c4448790c1ab162b",
+  "ledger_head_hash": "d99121513f2080a45409210e5752681eed812ee7887dc47c68aaac2cbe9967f9",
+  "policy_hash": "15db406e2dd4b77255020027d754cf075bedc48dca5da0b0777d8246d66e06d2",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
     "git_diff_check",
@@ -33,6 +33,7 @@
     "push_prep_current_head_payload",
     "signed_payload_status_readonly",
     "operator_signer_preflight_readonly",
+    "recover_status_readonly",
     "verify_signed_reject_nested_envelope",
     "verify_signed_reject_head_sha",
     "verify_signed_reject_prefixed_payload_hash",
@@ -83,13 +84,13 @@
   ],
   "validation_run": {
     "status": "PASS",
-    "completed_at": "2026-05-17T05:24:27.507Z",
-    "ledger_event_hash": "e935bb3d3f55c315e7f351e4b1e3c082667cceed7a83568c03c372b538df30a5",
-    "command_count": 36
+    "completed_at": "2026-05-17T05:27:34.196Z",
+    "ledger_event_hash": "d99121513f2080a45409210e5752681eed812ee7887dc47c68aaac2cbe9967f9",
+    "command_count": 37
   },
   "validation_not_run": [],
   "verifier_status": "PASS",
-  "verifier_ledger_head_hash": "e935bb3d3f55c315e7f351e4b1e3c082667cceed7a83568c03c372b538df30a5",
+  "verifier_ledger_head_hash": "d99121513f2080a45409210e5752681eed812ee7887dc47c68aaac2cbe9967f9",
   "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
@@ -122,9 +123,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "e935bb3d3f55c315e7f351e4b1e3c082667cceed7a83568c03c372b538df30a5",
-    "checkpoint_event_hash": "6a50a34ab1386f601e9f3892ea5a1b4c9533d0c87f873cc8e5127dcfe8df7909",
-    "final_ledger_head_hash": "6a50a34ab1386f601e9f3892ea5a1b4c9533d0c87f873cc8e5127dcfe8df7909"
+    "verified_ledger_head_hash": "d99121513f2080a45409210e5752681eed812ee7887dc47c68aaac2cbe9967f9",
+    "checkpoint_event_hash": "a5a70e132fb3b10ec284382a28b63a470cfa7f31919ac07ae1c372300a91a5ea",
+    "final_ledger_head_hash": "a5a70e132fb3b10ec284382a28b63a470cfa7f31919ac07ae1c372300a91a5ea"
   },
-  "ledger_event_hash": "6a50a34ab1386f601e9f3892ea5a1b4c9533d0c87f873cc8e5127dcfe8df7909"
+  "ledger_event_hash": "a5a70e132fb3b10ec284382a28b63a470cfa7f31919ac07ae1c372300a91a5ea"
 }

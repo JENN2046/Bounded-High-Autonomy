@@ -292,6 +292,20 @@
       },
       {
         "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "recover-status",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only fresh clone and local capability recovery status"
+      },
+      {
+        "command": "node",
         "args_prefix": [
           "scripts/bha-run.js",
           "verify-signed-capability",

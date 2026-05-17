@@ -2642,6 +2642,79 @@ async function handleOperatorSignerPreflight(args) {
   }));
 }
 
+async function recoverStatus(remote, branch) {
+  const targetRemote = remote || 'origin';
+  const targetBranch = branch || await currentBranch();
+  const head = await currentHead();
+  const verify = await verifierResult();
+  const gitStatus = await gitStatusShort();
+  const localDirExists = fs.existsSync(BHA_LOCAL_DIR);
+  const unsignedPath = path.join(BHA_LOCAL_DIR, 'push-payload.json');
+  const signedPath = path.join(BHA_LOCAL_DIR, 'signed-push-capability.json');
+  const localCapabilitiesPath = path.join(BHA_LOCAL_DIR, 'capabilities.jsonl');
+  const localSessionsPath = path.join(BHA_LOCAL_DIR, 'capability-sessions.jsonl');
+  const verifierPass = Boolean(verify.parsed && verify.parsed.ok === true && verify.parsed.status === 'PASS');
+  const hasUsableCapability = head && targetRemote && targetBranch
+    ? await matchingConsumedCapability(targetRemote, targetBranch, head, { reserve: false })
+    : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
+  const needsLocalGitPushCapability = hasUsableCapability.ok !== true;
+  return {
+    ok: verifierPass,
+    status: verifierPass ? 'RECOVER_STATUS_READY' : 'RECOVER_STATUS_BLOCKED',
+    recorded: false,
+    read_only: true,
+    schema: 'bha.recover_status.v1',
+    branch: targetBranch || 'UNKNOWN',
+    remote: targetRemote,
+    head: head || 'UNKNOWN',
+    tracked_trust: {
+      verifier_pass: verifierPass,
+      verifier_status: verify.parsed ? verify.parsed.status : 'UNKNOWN',
+      verifier_ledger_head_hash: verify.parsed ? verify.parsed.ledger_head_hash : null,
+      validation_status: verify.parsed ? verify.parsed.validation_status : null,
+      proof_sources: ['.bha/ledger.jsonl', '.bha/state.json', '.bha/policy.yaml', '.bha/mission.yaml', '.bha/validation.yaml', 'scripts/bha-verify.js']
+    },
+    local_state: {
+      bha_local_exists: localDirExists,
+      unsigned_payload_exists: fs.existsSync(unsignedPath),
+      signed_payload_exists: fs.existsSync(signedPath),
+      local_capability_store_exists: fs.existsSync(localCapabilitiesPath),
+      local_session_store_exists: fs.existsSync(localSessionsPath),
+      required_for_tracked_verifier_pass: false
+    },
+    git_reality: {
+      clean: gitStatus.clean,
+      short: gitStatus.stdout.trim() || 'CLEAN'
+    },
+    git_push_recovery: {
+      requires_new_local_capability: needsLocalGitPushCapability,
+      current_capability_status: hasUsableCapability.ok === true ? 'READY' : 'MISSING_OR_NOT_USABLE',
+      reason: hasUsableCapability.ok === true ? null : hasUsableCapability.reason,
+      local_only: true,
+      next_commands: [
+        `node scripts/bha-run.js push-prep --remote ${targetRemote} --branch ${targetBranch || 'master'} --expires-minutes 20 --key-id owner-main-pkcs8 --format json --write-handoff`,
+        `node scripts/bha-run.js operator-signer-preflight --remote ${targetRemote} --branch ${targetBranch || 'master'} --format json`,
+        'operator signs .bha/local/push-payload.json outside BHA and writes .bha/local/signed-push-capability.json',
+        `node scripts/bha-run.js signed-payload-status --remote ${targetRemote} --branch ${targetBranch || 'master'} --format json`,
+        `node scripts/bha-run.js gate-status --remote ${targetRemote} --branch ${targetBranch || 'master'} --format json`
+      ]
+    },
+    proof_boundary: '.bha/local/ is local-only capability evidence and is not required for tracked verifier trust; fresh clones must regenerate local git_push capability evidence before pushing.'
+  };
+}
+
+async function handleRecoverStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const remote = getOption(args, '--remote') || 'origin';
+  const branch = getOption(args, '--branch') || await currentBranch();
+  console.log(JSON.stringify(await recoverStatus(remote, branch)));
+}
+
 async function signedCapabilityFileSummary(localPath, remote, branch, head, context) {
   const summary = capabilityFileSummary(localPath, remote, branch, head, true, context);
   if (!summary.exists || !summary.json_valid) {
@@ -2934,6 +3007,7 @@ async function handleAuditV12(args) {
   const pushPrepCommand = validationCommandById(validation, 'push_prep_current_head_payload');
   const signedPayloadStatusCommand = validationCommandById(validation, 'signed_payload_status_readonly');
   const operatorSignerPreflightCommand = validationCommandById(validation, 'operator_signer_preflight_readonly');
+  const recoverStatusCommand = validationCommandById(validation, 'recover_status_readonly');
   const auditArgv = ['node', 'scripts/bha-run.js', 'audit-v12', '--format', 'json'];
 
   const regressionIds = [
@@ -2970,6 +3044,8 @@ async function handleAuditV12(args) {
     'operator_signer_preflight_blocks_missing_key_path',
     'operator_signer_preflight_blocks_repo_key_path',
     'operator_signer_preflight_accepts_external_key_path_without_reading_key',
+    'recover_status_validation_wired',
+    'fresh_clone_recover_status_explains_missing_local_capability',
     'gate_status_flags_unsigned_payload_stale_after_local_evidence_advances',
     'push_prep_validation_wired',
     'signed_payload_status_validation_wired',
@@ -3063,6 +3139,7 @@ async function handleAuditV12(args) {
       fileContains(RUN_SCRIPT, '--write-handoff') &&
       fileContains(RUN_SCRIPT, 'signed-payload-status') &&
       fileContains(RUN_SCRIPT, 'operator-signer-preflight') &&
+      fileContains(RUN_SCRIPT, 'recover-status') &&
       fileContains(RUN_SCRIPT, 'BHA_PRIVATE_KEY_PATH') &&
       fileContains(RUN_SCRIPT, 'private_key_material_read: false') &&
       fileContains(RUN_SCRIPT, 'single_line_commands') &&
@@ -3083,6 +3160,7 @@ async function handleAuditV12(args) {
       push_prep_validation_command_present: Boolean(pushPrepCommand),
       signed_payload_status_validation_command_present: Boolean(signedPayloadStatusCommand),
       operator_signer_preflight_validation_command_present: Boolean(operatorSignerPreflightCommand),
+      recover_status_validation_command_present: Boolean(recoverStatusCommand),
       inspect_recorded_status: recordedValidationCommand(state, 'inspect_readonly') ? recordedValidationCommand(state, 'inspect_readonly').status : 'MISSING'
     },
     ['scripts/bha-run.js', '.bha/validation.yaml', '.bha/state.json']
@@ -3668,6 +3746,7 @@ async function handleRegressionSelftest(args) {
   const rootPushPrepCommand = validationCommandById(rootValidation, 'push_prep_current_head_payload');
   const rootSignedPayloadStatusCommand = validationCommandById(rootValidation, 'signed_payload_status_readonly');
   const rootOperatorSignerPreflightCommand = validationCommandById(rootValidation, 'operator_signer_preflight_readonly');
+  const rootRecoverStatusCommand = validationCommandById(rootValidation, 'recover_status_readonly');
   const hookExpect = rootHookCommand && rootHookCommand.expect ? rootHookCommand.expect : {};
   checks.push(regressionCheck('hook_status_validation_allows_blocked_local_setup', Boolean(rootHookCommand &&
     hookExpect.exit_code === 0 &&
@@ -3704,6 +3783,14 @@ async function handleRegressionSelftest(args) {
     rootOperatorSignerPreflightCommand.expect.recorded === false), {
     validation_command_present: Boolean(rootOperatorSignerPreflightCommand),
     read_only: rootOperatorSignerPreflightCommand && rootOperatorSignerPreflightCommand.expect ? rootOperatorSignerPreflightCommand.expect.read_only : 'MISSING'
+  }));
+  checks.push(regressionCheck('recover_status_validation_wired', Boolean(rootRecoverStatusCommand &&
+    rootRecoverStatusCommand.expect &&
+    rootRecoverStatusCommand.expect.exit_code === 0 &&
+    rootRecoverStatusCommand.expect.read_only === true &&
+    rootRecoverStatusCommand.expect.recorded === false), {
+    validation_command_present: Boolean(rootRecoverStatusCommand),
+    read_only: rootRecoverStatusCommand && rootRecoverStatusCommand.expect ? rootRecoverStatusCommand.expect.read_only : 'MISSING'
   }));
 
   const branchResult = await runCommand(['git', 'branch', '--show-current'], { cwd: fixtureRoot });
@@ -4208,6 +4295,8 @@ async function handleRegressionSelftest(args) {
   const clone = await runCommand(['git', 'clone', fixtureRoot, cloneRoot], { cwd: scratchParent });
   const cloneVerify = await runCommand([process.execPath, 'scripts/bha-verify.js'], { cwd: cloneRoot });
   const cloneVerifyParsed = parseJsonLine(cloneVerify.stdout);
+  const cloneRecoverStatus = await runCommand([process.execPath, 'scripts/bha-run.js', 'recover-status', '--remote', 'origin', '--branch', branch, '--format', 'json'], { cwd: cloneRoot });
+  const cloneRecoverParsed = parseJsonLine(cloneRecoverStatus.stdout);
   checks.push(regressionCheck('fresh_clone_without_bha_local_verifier_passes', clone.exit_code === 0 &&
     cloneVerify.exit_code === 0 &&
     cloneVerifyParsed &&
@@ -4216,6 +4305,22 @@ async function handleRegressionSelftest(args) {
     clone_exit_code: clone.exit_code,
     verifier_status: cloneVerifyParsed ? cloneVerifyParsed.status : 'NO_JSON',
     bha_local_exists: fs.existsSync(path.join(cloneRoot, '.bha', 'local'))
+  }));
+  checks.push(regressionCheck('fresh_clone_recover_status_explains_missing_local_capability', clone.exit_code === 0 &&
+    cloneRecoverStatus.exit_code === 0 &&
+    cloneRecoverParsed &&
+    cloneRecoverParsed.read_only === true &&
+    cloneRecoverParsed.tracked_trust &&
+    cloneRecoverParsed.tracked_trust.verifier_pass === true &&
+    cloneRecoverParsed.local_state &&
+    cloneRecoverParsed.local_state.bha_local_exists === false &&
+    cloneRecoverParsed.git_push_recovery &&
+    cloneRecoverParsed.git_push_recovery.requires_new_local_capability === true &&
+    Array.isArray(cloneRecoverParsed.git_push_recovery.next_commands) &&
+    cloneRecoverParsed.git_push_recovery.next_commands.some((commandText) => commandText.includes('push-prep')), {
+    verifier_pass: cloneRecoverParsed && cloneRecoverParsed.tracked_trust ? cloneRecoverParsed.tracked_trust.verifier_pass : 'NO_JSON',
+    bha_local_exists: cloneRecoverParsed && cloneRecoverParsed.local_state ? cloneRecoverParsed.local_state.bha_local_exists : 'NO_JSON',
+    requires_new_local_capability: cloneRecoverParsed && cloneRecoverParsed.git_push_recovery ? cloneRecoverParsed.git_push_recovery.requires_new_local_capability : 'NO_JSON'
   }));
   checks.push(regressionCheck('local_git_push_replay_fail_closed_after_used_session', hookReserve.exit_code === 0 &&
     replay.exit_code === 1 &&
@@ -5044,6 +5149,8 @@ async function main() {
       await handleSignedPayloadStatus(args);
     } else if (command === 'operator-signer-preflight') {
       await handleOperatorSignerPreflight(args);
+    } else if (command === 'recover-status') {
+      await handleRecoverStatus(args);
     } else if (command === 'git-push-capability-flow') {
       await handleGitPushCapabilityFlow(args);
     } else if (command === 'rollback-drill') {
