@@ -3435,6 +3435,19 @@ async function handleAuditV1Stable(args) {
     'production_write',
     'package_publish'
   ];
+  const requiredDenyRegressionIds = [
+    'provider_call_denied',
+    'memory_write_denied',
+    'deploy_denied',
+    'release_denied',
+    'tag_denied',
+    'package_publish_denied',
+    'production_write_denied',
+    'force_push_denied',
+    'destructive_external_action_denied'
+  ];
+  const missingDenyRegressionIds = requiredDenyRegressionIds
+    .filter((id) => !fileContains(RUN_SCRIPT, `'${id}'`) && !fileContains(RUN_SCRIPT, `"${id}"`));
   const checks = [];
   checks.push(auditCheck(
     'stability_doc_present',
@@ -3460,6 +3473,24 @@ async function handleAuditV1Stable(args) {
       fileContains(STABILITY_PATH, 'no private key access'),
     { always_denied_v1: alwaysDenied },
     ['.bha/policy.yaml', 'BHA_V1_STABILITY.md']
+  ));
+  checks.push(auditCheck(
+    'hard_boundary_deny_regressions_covered',
+    'V1 hard boundaries have regression cases that prove denied commands fail before spawning external or destructive effects.',
+    Boolean(regressionCommand &&
+      missingDenyRegressionIds.length === 0 &&
+      fileContains(RUN_SCRIPT, 'denied_before_spawn_events') &&
+      fileContains(RUN_SCRIPT, 'forbidden_spawned: false') &&
+      fileContains(RUN_SCRIPT, 'real_git_push_executed: false') &&
+      fileContains(RUN_SCRIPT, 'provider_call_executed: false') &&
+      fileContains(RUN_SCRIPT, 'memory_write_executed: false') &&
+      fileContains(RUN_SCRIPT, 'package_install_executed: false')),
+    {
+      regression_selftest_validation_command_present: Boolean(regressionCommand),
+      required_regression_ids: requiredDenyRegressionIds,
+      missing_regression_ids: missingDenyRegressionIds
+    },
+    ['scripts/bha-run.js', '.bha/validation.yaml']
   ));
   checks.push(auditCheck(
     'proof_and_non_proof_sources_separated',
