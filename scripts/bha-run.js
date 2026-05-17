@@ -3284,6 +3284,7 @@ function operatorSignerPrivateKeyAudit() {
     { id: 'fs_read_key_path', pattern: /\bfs\.readFile(?:Sync)?\s*\(\s*key(?:Path|Resolved)\b/ },
     { id: 'write_key_path', pattern: /\b(?:fs\.)?(?:writeFile|writeFileSync|appendFile|appendFileSync)\s*\(\s*key(?:Path|Resolved)\b/ },
     { id: 'print_key_path_value', pattern: /\bconsole\.(?:log|error|warn)\s*\(\s*key(?:Path|Resolved)\b/ },
+    { id: 'return_private_key_path_value', pattern: /\bprivate_key_path\s*:\s*key(?:Path|Resolved)\b/ },
     { id: 'return_key_path_value', pattern: /\b(?:value|path)\s*:\s*key(?:Path|Resolved)\b/ }
   ];
   const violations = source
