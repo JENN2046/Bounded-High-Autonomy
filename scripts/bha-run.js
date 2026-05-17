@@ -1223,7 +1223,17 @@ function councilRuntimeStatus() {
       items: [
         'workflow_schema_sketch',
         'role_boundary_matrix_sketch',
-        'local_dry_run_trace_sketch'
+        'local_dry_run_trace_sketch',
+        'role_boundary_test_plan_sketch',
+        'activation_regression_plan_sketch'
+      ],
+      non_activation_reasons: [
+        'workflow_model_is_not_verifier_enforced',
+        'local_dry_run_trace_evidence_missing',
+        'role_boundary_tests_not_implemented',
+        'activation_regression_tests_not_implemented',
+        'validation_wiring_cannot_activate_runtime',
+        'automated_spawn_provider_memory_and_remote_actions_forbidden'
       ]
     },
     test_requirements: {
@@ -4829,6 +4839,10 @@ async function handleAuditV1Stable(args) {
       fileContains(COUNCIL_RUNTIME_PATH, 'does not execute the workflow') &&
       fileContains(COUNCIL_RUNTIME_PATH, 'activation coverage as incomplete') &&
       fileContains(COUNCIL_RUNTIME_PATH, 'Non-Enabling Draft') &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'role boundary test plan sketch') &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'activation regression plan sketch') &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'a verifier-enforced workflow model') &&
+      fileContains(COUNCIL_RUNTIME_PATH, 'authority for automated sub-agent spawning') &&
       councilRuntimeStatus().runtime_state === 'PREVIEW_CONTRACT_ONLY' &&
       councilRuntimeStatus().default_decision === 'NO_AUTOMATED_DELEGATION' &&
       councilRuntimeStatus().external_side_effects_allowed === false &&
@@ -4854,6 +4868,8 @@ async function handleAuditV1Stable(args) {
       councilStatusJsonPaths['activation_gate.forbidden_without_new_objective.3'] === 'push' &&
       councilStatusJsonPaths['draft_artifacts.status'] === 'NON_ENABLING_DRAFTS_ONLY' &&
       councilStatusJsonPaths['draft_artifacts.satisfies_activation_requirement'] === false &&
+      councilStatusJsonPaths['draft_artifacts.items.4'] === 'activation_regression_plan_sketch' &&
+      councilStatusJsonPaths['draft_artifacts.non_activation_reasons.5'] === 'automated_spawn_provider_memory_and_remote_actions_forbidden' &&
       councilStatusJsonPaths['test_requirements.current_coverage.activation_coverage_complete'] === false &&
       councilStatusJsonPaths['test_requirements.missing_before_activation.0'] === 'verifier_backed_workflow_model',
     {

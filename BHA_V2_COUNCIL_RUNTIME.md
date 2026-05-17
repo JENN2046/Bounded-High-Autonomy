@@ -71,8 +71,19 @@ The current Council Runtime draft shape is planning context only:
 - workflow schema sketch: Commander boundary, Domain Lead queue, Worker local change, Verifier check, Commander decision
 - role boundary matrix sketch: every role may create coordination context, but no role output is proof and no role may grant remote authority
 - local dry-run trace sketch: future activation would need a recorded local trace that proves no provider call, memory write, push, deploy, release, tag, package publish, private-key access, or automated agent spawn occurred
+- role boundary test plan sketch: every future role transition needs tests that prove the role cannot grant remote authority, bypass validation, read private keys, write memory, or turn prose into proof
+- activation regression plan sketch: any future runtime must first prove fail-closed behavior for missing verifier evidence, stale local trace, blocked side effect, attempted provider call, attempted memory write, and attempted automated spawn
 
 These sketches do not satisfy the activation requirement by themselves. `council-status` must keep `draft_artifacts.satisfies_activation_requirement=false` until a new explicit objective adds a verifier-backed workflow model, local dry-run evidence, role boundary tests, activation regression tests, and validation wiring.
+
+The current draft explicitly does not provide:
+
+- a verifier-enforced workflow model
+- executable local dry-run trace evidence
+- implemented role boundary tests
+- implemented activation regression tests
+- validation wiring that can activate automated scheduling
+- authority for automated sub-agent spawning, provider calls, memory writes, push, deploy, release, tag, package publish, or private-key access
 
 ## Activation Gate
 

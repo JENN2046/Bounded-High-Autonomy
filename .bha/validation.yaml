@@ -239,6 +239,8 @@
           "activation_gate.forbidden_without_new_objective.3": "push",
           "draft_artifacts.status": "NON_ENABLING_DRAFTS_ONLY",
           "draft_artifacts.satisfies_activation_requirement": false,
+          "draft_artifacts.items.4": "activation_regression_plan_sketch",
+          "draft_artifacts.non_activation_reasons.5": "automated_spawn_provider_memory_and_remote_actions_forbidden",
           "test_requirements.current_coverage.activation_coverage_complete": false,
           "test_requirements.current_coverage.validation_commands.0": "council_status_readonly",
           "test_requirements.missing_before_activation.0": "verifier_backed_workflow_model",
