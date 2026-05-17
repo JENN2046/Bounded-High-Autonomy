@@ -2593,6 +2593,7 @@ async function handleHookStatus(args) {
   };
   const ok = Object.values(checks).every(Boolean);
   console.log(JSON.stringify({
+    schema: 'bha.hook_status.v1',
     ok,
     status: ok ? 'PASS' : 'BLOCKED',
     read_only: true,
@@ -4488,10 +4489,13 @@ async function handleAuditV12(args) {
       hookCommand.expect.exit_code === 0 &&
       hookCommand.expect.read_only === true &&
       hookCommand.expect.recorded === false &&
+      Array.isArray(hookCommand.expect.has_keys) &&
+      hookCommand.expect.has_keys.includes('schema') &&
       !Object.prototype.hasOwnProperty.call(hookCommand.expect, 'ok') &&
       !Object.prototype.hasOwnProperty.call(hookCommand.expect, 'status')),
     {
       validation_command_present: Boolean(hookCommand),
+      schema_required: Boolean(hookCommand && hookCommand.expect && Array.isArray(hookCommand.expect.has_keys) && hookCommand.expect.has_keys.includes('schema')),
       requires_ok: Boolean(hookCommand && hookCommand.expect && Object.prototype.hasOwnProperty.call(hookCommand.expect, 'ok')),
       requires_status: Boolean(hookCommand && hookCommand.expect && Object.prototype.hasOwnProperty.call(hookCommand.expect, 'status'))
     },

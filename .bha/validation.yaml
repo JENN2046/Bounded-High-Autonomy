@@ -799,6 +799,7 @@
         "read_only": true,
         "recorded": false,
         "has_keys": [
+          "schema",
           "ok",
           "status",
           "hook",
