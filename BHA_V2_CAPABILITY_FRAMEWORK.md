@@ -40,6 +40,17 @@ Each future capability type must define:
 
 No capability is enabled merely because it appears in a payload. Policy must explicitly list it, verifier must understand it, and regression tests must cover the deny path before any allow path exists.
 
+## Test Gate
+
+Before any new capability can move from preview to enabled, it must have:
+
+- runtime regression coverage for unknown, disallowed, incomplete, expired, and replayed payloads
+- verifier self-test coverage for unsupported, policy-denied, incomplete, and replayed records
+- validation wiring that runs the relevant negative matrix locally
+- an explicit evidence policy stating whether records are tracked or local-only
+
+The framework status command reports these requirements so operator/Codex can see that new capability types are not enabled by documentation alone.
+
 ## git_push Capability
 
 `git_push` is the first production capability.

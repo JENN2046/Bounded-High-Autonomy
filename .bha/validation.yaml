@@ -170,6 +170,7 @@
           "production_capability_types",
           "always_denied_capability_types",
           "extension_policy",
+          "test_requirements",
           "types",
           "proof_boundary"
         ]

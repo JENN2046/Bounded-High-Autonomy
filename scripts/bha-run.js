@@ -938,6 +938,30 @@ function capabilityFramework() {
       required_before_enablement: ['schema', 'binding', 'allowed_command', 'one_use_or_session_policy', 'local_or_tracked_evidence_policy', 'deny_tests', 'replay_tests'],
       provider_deploy_release_default: 'DENY'
     },
+    test_requirements: {
+      deny_tests_required_before_allow: true,
+      replay_tests_required_before_allow: true,
+      current_coverage: {
+        runtime_regression_cases: [
+          'unknown_capability_type_rejected',
+          'disallowed_provider_capability_type_rejected',
+          'incomplete_git_push_capability_rejected',
+          'replayed_local_capability_rejected',
+          'local_git_push_replay_fail_closed_after_used_session'
+        ],
+        verifier_selftest_cases: [
+          'unsupported_capability_type_rejected',
+          'disallowed_capability_type_rejected',
+          'incomplete_capability_binding_rejected',
+          'capability_replay_rejected'
+        ],
+        validation_commands: [
+          'v12_regression_selftest',
+          'verifier_selftest_negative_matrix',
+          'capability_framework_status_readonly'
+        ]
+      }
+    },
     types: {
       git_push: {
         status: productionTypes.includes('git_push') ? 'PRODUCTION' : 'DISABLED',
@@ -3153,10 +3177,14 @@ async function handleAuditV1Stable(args) {
       capabilityFramework().default_decision === 'DENY' &&
       capabilityFramework().unknown_capability_policy === 'DENY' &&
       capabilityFramework().production_capability_types.length === 1 &&
-      capabilityFramework().production_capability_types[0] === 'git_push',
+      capabilityFramework().production_capability_types[0] === 'git_push' &&
+      capabilityFramework().test_requirements &&
+      capabilityFramework().test_requirements.deny_tests_required_before_allow === true &&
+      capabilityFramework().test_requirements.replay_tests_required_before_allow === true,
     {
       framework_status_command: 'node scripts/bha-run.js capability-framework-status --format json',
-      production_capability_types: capabilityFramework().production_capability_types
+      production_capability_types: capabilityFramework().production_capability_types,
+      test_requirements: capabilityFramework().test_requirements
     },
     ['BHA_V2_CAPABILITY_FRAMEWORK.md', 'scripts/bha-run.js', '.bha/policy.yaml']
   ));
@@ -3412,12 +3440,16 @@ async function handleAuditV12(args) {
       capabilityFrameworkCommand.expect.recorded === false &&
       policyAllowsArgv(policy, capabilityFrameworkCommand.argv) &&
       capabilityFramework().default_decision === 'DENY' &&
-      capabilityFramework().unknown_capability_policy === 'DENY'),
+      capabilityFramework().unknown_capability_policy === 'DENY' &&
+      capabilityFramework().test_requirements &&
+      capabilityFramework().test_requirements.deny_tests_required_before_allow === true &&
+      capabilityFramework().test_requirements.replay_tests_required_before_allow === true),
     {
       validation_command_present: Boolean(capabilityFrameworkCommand),
       policy_allowed: capabilityFrameworkCommand ? policyAllowsArgv(policy, capabilityFrameworkCommand.argv) : false,
       default_decision: capabilityFramework().default_decision,
-      unknown_capability_policy: capabilityFramework().unknown_capability_policy
+      unknown_capability_policy: capabilityFramework().unknown_capability_policy,
+      test_requirements: capabilityFramework().test_requirements
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
   ));
@@ -4185,12 +4217,16 @@ async function handleRegressionSelftest(args) {
     frameworkStatus.parsed.status === 'CAPABILITY_FRAMEWORK_STATUS' &&
     frameworkStatus.parsed.default_decision === 'DENY' &&
     frameworkStatus.parsed.unknown_capability_policy === 'DENY' &&
+    frameworkStatus.parsed.test_requirements &&
+    frameworkStatus.parsed.test_requirements.deny_tests_required_before_allow === true &&
+    frameworkStatus.parsed.test_requirements.replay_tests_required_before_allow === true &&
     Array.isArray(frameworkStatus.parsed.production_capability_types) &&
     frameworkStatus.parsed.production_capability_types.length === 1 &&
     frameworkStatus.parsed.production_capability_types[0] === 'git_push'), {
     validation_command_present: Boolean(validationCommandById(rootValidation, 'capability_framework_status_readonly')),
     default_decision: frameworkStatus.parsed ? frameworkStatus.parsed.default_decision : 'NO_JSON',
-    production_capability_types: frameworkStatus.parsed ? frameworkStatus.parsed.production_capability_types : 'NO_JSON'
+    production_capability_types: frameworkStatus.parsed ? frameworkStatus.parsed.production_capability_types : 'NO_JSON',
+    test_requirements: frameworkStatus.parsed ? frameworkStatus.parsed.test_requirements : 'NO_JSON'
   }));
   const unknownCapabilityPayload = pushPrepPayload ? Object.assign({}, pushPrepPayload, {
     id: `unknown-${crypto.randomUUID()}`,
