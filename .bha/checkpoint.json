@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-17T08-40-17-933Z",
-  "created_at": "2026-05-17T08:40:17.980Z",
+  "checkpoint_id": "checkpoint-2026-05-17T08-42-19-425Z",
+  "created_at": "2026-05-17T08:42:19.470Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,8 +13,8 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "master",
-  "head": "7a4ca55d2e120c9492933dbe44332ac935c540ad",
-  "ledger_head_hash": "110cc7eaa634ec696b70113484097745f27fa40fe7d7997b76ba35d5381474bc",
+  "head": "84c33a8aa2ed186c9115abf3d26d157f4e4363e3",
+  "ledger_head_hash": "bcafe097cfa8aba3c98bd72ad7d75861614b2766795e97e387de0ff03f770fca",
   "policy_hash": "6bc0d5d0ce99f42e1a99584ca8e2775a5e341d9d4d485958732cb7b1f395d3b6",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
@@ -79,13 +79,13 @@
   ],
   "validation_run": {
     "status": "PASS",
-    "completed_at": "2026-05-17T08:40:17.295Z",
-    "ledger_event_hash": "110cc7eaa634ec696b70113484097745f27fa40fe7d7997b76ba35d5381474bc",
+    "completed_at": "2026-05-17T08:42:18.790Z",
+    "ledger_event_hash": "bcafe097cfa8aba3c98bd72ad7d75861614b2766795e97e387de0ff03f770fca",
     "command_count": 40
   },
   "validation_not_run": [],
   "verifier_status": "PASS",
-  "verifier_ledger_head_hash": "110cc7eaa634ec696b70113484097745f27fa40fe7d7997b76ba35d5381474bc",
+  "verifier_ledger_head_hash": "bcafe097cfa8aba3c98bd72ad7d75861614b2766795e97e387de0ff03f770fca",
   "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
@@ -97,12 +97,12 @@
     "next_session_commands": [
       "node scripts/bha-run.js inspect --format json",
       "node scripts/bha-verify.js",
-      "node scripts/bha-run.js recover-status --remote origin --branch master --format json",
-      "node scripts/bha-run.js gate-status --remote origin --branch master --format json"
+      "node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json",
+      "node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json"
     ],
     "fresh_clone_path": [
       "node scripts/bha-verify.js",
-      "node scripts/bha-run.js recover-status --remote origin --branch master --format json",
+      "node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json",
       "if verifier is not PASS because tracked evidence is stale: node scripts/bha-run.js validate",
       "node scripts/bha-run.js checkpoint --format json",
       "node scripts/bha-run.js closeout --record --format json",
@@ -120,9 +120,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "110cc7eaa634ec696b70113484097745f27fa40fe7d7997b76ba35d5381474bc",
-    "checkpoint_event_hash": "5ee98f30316d8ae7bd4395371cb6b3f4832d9a0b05bf1e33cda94678eb75cec5",
-    "final_ledger_head_hash": "5ee98f30316d8ae7bd4395371cb6b3f4832d9a0b05bf1e33cda94678eb75cec5"
+    "verified_ledger_head_hash": "bcafe097cfa8aba3c98bd72ad7d75861614b2766795e97e387de0ff03f770fca",
+    "checkpoint_event_hash": "d09bc67e36a7a2df2508d6b6a6de14c927082a0582747a1b2687096c4402553b",
+    "final_ledger_head_hash": "d09bc67e36a7a2df2508d6b6a6de14c927082a0582747a1b2687096c4402553b"
   },
-  "ledger_event_hash": "5ee98f30316d8ae7bd4395371cb6b3f4832d9a0b05bf1e33cda94678eb75cec5"
+  "ledger_event_hash": "d09bc67e36a7a2df2508d6b6a6de14c927082a0582747a1b2687096c4402553b"
 }

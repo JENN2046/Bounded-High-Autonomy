@@ -1020,7 +1020,7 @@ async function handleInspect(args) {
       verify: 'node scripts/bha-verify.js',
       checkpoint: 'node scripts/bha-run.js checkpoint --format json',
       closeout_preview: 'node scripts/bha-run.js closeout --format json',
-      gate_status: `node scripts/bha-run.js gate-status --remote origin --branch ${branch || 'master'} --format json`
+      gate_status: `node scripts/bha-run.js gate-status --remote 'origin' --branch ${powerShellSingleQuote(branch || 'master')} --format json`
     },
     proof_boundary: 'AGENTS.md, prompts, approvals, hooks, and closeout prose are behavior guidance, not proof.'
   }));
@@ -6430,12 +6430,12 @@ async function handleCheckpoint(args) {
       next_session_commands: [
         'node scripts/bha-run.js inspect --format json',
         'node scripts/bha-verify.js',
-        `node scripts/bha-run.js recover-status --remote origin --branch ${branch || 'master'} --format json`,
-        `node scripts/bha-run.js gate-status --remote origin --branch ${branch || 'master'} --format json`
+        `node scripts/bha-run.js recover-status --remote 'origin' --branch ${powerShellSingleQuote(branch || 'master')} --format json`,
+        `node scripts/bha-run.js gate-status --remote 'origin' --branch ${powerShellSingleQuote(branch || 'master')} --format json`
       ],
       fresh_clone_path: [
         'node scripts/bha-verify.js',
-        'node scripts/bha-run.js recover-status --remote origin --branch master --format json',
+        "node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json",
         'if verifier is not PASS because tracked evidence is stale: node scripts/bha-run.js validate',
         'node scripts/bha-run.js checkpoint --format json',
         'node scripts/bha-run.js closeout --record --format json',
@@ -6663,15 +6663,15 @@ async function handleCloseout(args) {
       next_gates: [
         'node scripts/bha-run.js validate',
         'node scripts/bha-verify.js',
-        'node scripts/bha-run.js recover-status --remote origin --branch master --format json',
+        "node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json",
         'node scripts/bha-run.js checkpoint --format json',
         'node scripts/bha-run.js closeout --record --format json',
-        'node scripts/bha-run.js gate-status --remote origin --branch master --format json'
+        "node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json"
       ]
     },
     fresh_clone_recovery: {
       tracked_trust_without_local_gate_evidence: 'node scripts/bha-verify.js',
-      recovery_status: 'node scripts/bha-run.js recover-status --remote origin --branch master --format json',
+      recovery_status: "node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json",
       if_tracked_evidence_is_stale: [
         'node scripts/bha-run.js validate',
         'node scripts/bha-run.js checkpoint --format json',
