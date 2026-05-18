@@ -34,6 +34,11 @@ Current runtime reality addendum:
   `.bha/checkpoint.json` may be dirty by design. Stable-exit and the local push gate may treat only
   those authorized runtime evidence files as acceptable dirtiness; code, policy, hook, validation, or
   documentation dirtiness remains blocking unless revalidated and committed.
+- A Git commit changes repository HEAD but does not, by itself, make validation stale. Validation
+  freshness is bound to the validation input hash, policy hash, mission hash, and the recorded
+  `validation_completed` event. When those inputs are unchanged, BHA should use
+  `evidence-ux-status` and `repair-evidence --fast` to rebind checkpoint/closeout evidence instead
+  of rerunning the full validation matrix.
 - After a real push succeeds, the one-use `git_push` capability must become USED and replay-blocked.
   `gate-status` should report that as a successful post-push state for that capability, not as a
   reusable authorization.
@@ -3796,6 +3801,8 @@ remote writes outside BHA runtime unless explicitly authorized.
 | `rollback-drill` | `recover` | yes | no | no | verify that rollback guidance is local, non-destructive, and evidence-based |
 | `validate` | `validate` | no | yes | yes | run configured validation and record result |
 | `verify` | `verify` | yes by default; no with `--record` | no by default; yes with `--record` | no by default; yes with `--record` | verify policy, ledger, state, validation, and capability consistency |
+| `evidence-ux-status` | `recover` | yes | no | no | report whether validation can be reused or full validation is required |
+| `repair-evidence --fast` | `recover` | no | yes | yes | reuse fresh validation and record only checkpoint/closeout binding |
 | `checkpoint` | `checkpoint` | no | yes | yes | write resumable handoff state |
 | `closeout` | `closeout` | yes by default; no with `--record` | no by default; yes with `--record` | no by default; yes with `--record` | preview final state or record closeout evidence |
 
@@ -3904,6 +3911,19 @@ Validation record should include:
 
 Validation output should be summarized. Raw output may be truncated or stored only if it contains no
 secrets and is useful for debugging.
+
+Validation should not be rerun merely because `git commit` changed HEAD. If the validation input
+hash, policy hash, mission hash, and recorded validation ledger event still match current repository
+content, ordinary post-commit repair should use the fast path:
+
+```bash
+node scripts/bha-run.js evidence-ux-status --remote origin --branch master --format json
+node scripts/bha-run.js repair-evidence --fast --remote origin --branch master --format json
+```
+
+The fast path must fail closed when validation evidence is missing, failed, or stale. It may record
+checkpoint and closeout evidence, but it must not hide validation drift or claim that validation
+commands were rerun.
 
 Validation failure should not automatically trigger broad repair. BHA should mark validation failed,
 record evidence, and let the agent decide whether a narrow local fix is safe.

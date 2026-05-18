@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-17T17-39-27-657Z",
-  "created_at": "2026-05-17T17:39:27.778Z",
+  "checkpoint_id": "checkpoint-2026-05-17T18-21-41-515Z",
+  "created_at": "2026-05-17T18:21:41.642Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,9 +13,9 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "master",
-  "head": "b279bfc9ee877f52dfa8025f7ce44f708e231d21",
-  "ledger_head_hash": "266c1d63a91c8348d32e53c605d1c9aefe130a604a89cfb56e1df290d5128923",
-  "policy_hash": "1d544fc633eed6b1dcd19e9eae462c28c161a86e013f53dffde0c77255e45ced",
+  "head": "2f8238c672ff2509c97260b1f2ba3b5e29f09e82",
+  "ledger_head_hash": "63d57c4f73236b8ec6b47344fab5a65c3bbd8c76865cac2253de66f2e4cb522e",
+  "policy_hash": "73d78dda67f8c4d76e8e092ce83c76d8afa67fdd6fdcf4150147e2483e83c456",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
     "git_diff_check",
@@ -45,6 +45,7 @@
     "signed_payload_status_readonly",
     "operator_signer_preflight_readonly",
     "recover_status_readonly",
+    "evidence_ux_status_readonly",
     "verify_signed_reject_nested_envelope",
     "verify_signed_reject_head_sha",
     "verify_signed_reject_prefixed_payload_hash",
@@ -78,22 +79,34 @@
     },
     {
       "status": "M",
+      "path": ".bha/policy.yaml"
+    },
+    {
+      "status": "M",
       "path": ".bha/state.json"
     },
     {
       "status": "M",
+      "path": ".bha/validation.yaml"
+    },
+    {
+      "status": "M",
       "path": "BHA_DESIGN.md"
+    },
+    {
+      "status": "M",
+      "path": "scripts/bha-run.js"
     }
   ],
   "validation_run": {
     "status": "PASS",
-    "completed_at": "2026-05-17T17:39:20.563Z",
-    "ledger_event_hash": "266c1d63a91c8348d32e53c605d1c9aefe130a604a89cfb56e1df290d5128923",
-    "command_count": 48
+    "completed_at": "2026-05-17T18:21:35.947Z",
+    "ledger_event_hash": "63d57c4f73236b8ec6b47344fab5a65c3bbd8c76865cac2253de66f2e4cb522e",
+    "command_count": 49
   },
   "validation_not_run": [],
   "verifier_status": "PASS",
-  "verifier_ledger_head_hash": "266c1d63a91c8348d32e53c605d1c9aefe130a604a89cfb56e1df290d5128923",
+  "verifier_ledger_head_hash": "63d57c4f73236b8ec6b47344fab5a65c3bbd8c76865cac2253de66f2e4cb522e",
   "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
@@ -128,9 +141,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "266c1d63a91c8348d32e53c605d1c9aefe130a604a89cfb56e1df290d5128923",
-    "checkpoint_event_hash": "63f34895f8c440469f860911d811352a8ef5cbada05a73e791420936cdcf70b0",
-    "final_ledger_head_hash": "63f34895f8c440469f860911d811352a8ef5cbada05a73e791420936cdcf70b0"
+    "verified_ledger_head_hash": "63d57c4f73236b8ec6b47344fab5a65c3bbd8c76865cac2253de66f2e4cb522e",
+    "checkpoint_event_hash": "1cf767cc20e7b6bc0e97e3523fc337b95e12c708ba6629b60ec41b988aab6a2f",
+    "final_ledger_head_hash": "1cf767cc20e7b6bc0e97e3523fc337b95e12c708ba6629b60ec41b988aab6a2f"
   },
-  "ledger_event_hash": "63f34895f8c440469f860911d811352a8ef5cbada05a73e791420936cdcf70b0"
+  "ledger_event_hash": "1cf767cc20e7b6bc0e97e3523fc337b95e12c708ba6629b60ec41b988aab6a2f"
 }

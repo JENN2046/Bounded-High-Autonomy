@@ -546,6 +546,36 @@
       },
       {
         "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "evidence-ux-status",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json",
+          "--allow-validation-in-progress"
+        ],
+        "reason": "read-only evidence freshness and fast-repair UX status"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "repair-evidence",
+          "--fast",
+          "--remote",
+          "origin",
+          "--branch",
+          "master",
+          "--format",
+          "json"
+        ],
+        "reason": "fast local evidence repair reusing fresh validation"
+      },
+      {
+        "command": "node",
         "args_prefix": [
           "scripts/bha-run.js",
           "verify-signed-capability",

@@ -1063,6 +1063,41 @@
       }
     },
     {
+      "id": "evidence_ux_status_readonly",
+      "argv": [
+        "node",
+        "scripts/bha-run.js",
+        "evidence-ux-status",
+        "--remote",
+        "origin",
+        "--branch",
+        "master",
+        "--format",
+        "json",
+        "--allow-validation-in-progress"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "recorded": false,
+        "read_only": true,
+        "json_paths": {
+          "validation_in_progress_allowed": true,
+          "recommendation.full_repair_commands.0": "node scripts/bha-run.js validate",
+          "tracked_git_reality.proof_boundary": "Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding."
+        },
+        "has_keys": [
+          "schema",
+          "validation_reuse",
+          "git_status",
+          "tracked_git_reality",
+          "evidence_gates",
+          "verifier",
+          "recommendation",
+          "proof_boundary"
+        ]
+      }
+    },
+    {
       "id": "verify_signed_reject_nested_envelope",
       "argv": [
         "node",

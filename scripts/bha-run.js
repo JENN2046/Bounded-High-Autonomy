@@ -3524,6 +3524,24 @@ function authorizedRuntimeDirty(stdout) {
   });
 }
 
+function validatedOrRuntimeDirty(stdout) {
+  const allowed = new Set(validationInputsForRoot(ROOT).map((file) => rel(file)));
+  [
+    '.bha/capabilities.jsonl',
+    '.bha/checkpoint.json',
+    '.bha/ledger.jsonl',
+    '.bha/state.json'
+  ].forEach((file) => allowed.add(file));
+  const lines = String(stdout || '').split(/\r?\n/).filter((line) => line.trim() !== '');
+  if (lines.length === 0) {
+    return true;
+  }
+  return lines.every((line) => {
+    const touched = line.slice(3).trim().replace(/.* -> /, '').replace(/\\/g, '/');
+    return allowed.has(touched);
+  });
+}
+
 function gitStatusAllowedForLocalTrustRepair(status) {
   return status && status.ok === true &&
     (status.clean === true || authorizedRuntimeDirty(status.stdout));
@@ -3842,6 +3860,265 @@ function trackedGitRealityBinding(currentHeadValue, checkpoint, closeoutEvent) {
   const checkpointHead = checkpoint && checkpoint.head ? checkpoint.head : null;
   const closeoutHead = closeoutGitReality && closeoutGitReality.head ? closeoutGitReality.head : null;
   return trackedGitRealityBindingFromHeads(currentHeadValue, checkpointHead, closeoutHead);
+}
+
+function validationFreshEvidence(state, ledger) {
+  const validation = state && state.validation ? state.validation : null;
+  const currentInputsHash = validationInputsHash();
+  const checks = {
+    validation_recorded: Boolean(validation),
+    validation_pass: Boolean(validation && validation.status === 'PASS'),
+    inputs_hash_current: Boolean(validation && validation.inputs_hash === currentInputsHash),
+    policy_hash_current: Boolean(validation && validation.policy_hash === policyHash()),
+    mission_hash_current: Boolean(validation && validation.mission_hash === missionHash()),
+    ledger_event_present: Boolean(validation &&
+      ledgerEventByHash(ledger || [], validation.ledger_event_hash, 'validation_completed'))
+  };
+  return {
+    ok: Object.values(checks).every(Boolean),
+    checks,
+    current_inputs_hash: currentInputsHash,
+    recorded_inputs_hash: validation ? validation.inputs_hash || null : null,
+    validation_ledger_event_hash: validation ? validation.ledger_event_hash || null : null,
+    completed_at: validation ? validation.completed_at || null : null
+  };
+}
+
+function evidenceUxRecommendation(validationFresh, gitStatus, gitRealityBinding, evidence) {
+  const worktreeAllowed = gitStatusAllowedForLocalTrustRepair(gitStatus) ||
+    (validationFresh.ok === true && gitStatus && gitStatus.ok === true && validatedOrRuntimeDirty(gitStatus.stdout));
+  if (!worktreeAllowed) {
+    return {
+      action: 'COMMIT_OR_RESOLVE_UNVERIFIED_WORKTREE_CHANGES',
+      full_validation_required: !validationFresh.ok,
+      fast_repair_available: false
+    };
+  }
+  if (!validationFresh.ok) {
+    return {
+      action: 'RUN_FULL_VALIDATE_CHECKPOINT_CLOSEOUT',
+      full_validation_required: true,
+      fast_repair_available: false
+    };
+  }
+  const headOnlyMismatch = Boolean(gitRealityBinding &&
+    ((gitRealityBinding.checkpoint_head !== 'NOT_RECORDED' && !gitRealityBinding.checkpoint_matches_current_head) ||
+      (gitRealityBinding.closeout_git_reality_head !== 'NOT_RECORDED' && !gitRealityBinding.closeout_matches_current_head)));
+  const needsFastRepair = headOnlyMismatch ||
+    !evidence.gates.checkpoint_recorded ||
+    !evidence.gates.closeout_current ||
+    !evidence.gates.verifier_no_warnings;
+  return {
+    action: needsFastRepair ? 'RUN_FAST_EVIDENCE_REPAIR' : 'NO_EVIDENCE_REPAIR_REQUIRED',
+    full_validation_required: false,
+    fast_repair_available: needsFastRepair,
+    head_only_mismatch: headOnlyMismatch
+  };
+}
+
+async function evidenceUxStatus(remote, branch) {
+  const targetRemote = remote || 'origin';
+  const targetBranch = branch || await currentBranch();
+  const head = await currentHead();
+  const gitStatus = await gitStatusShort();
+  const verify = await verifierResult();
+  const state = loadState();
+  const ledger = readJsonl(LEDGER_PATH);
+  const checkpoint = readCheckpointFile();
+  const closeoutEvent = state && state.closeout ? ledgerEventByHash(ledger, state.closeout.ledger_event_hash, 'closeout_completed') : null;
+  const gitRealityBinding = trackedGitRealityBinding(head, checkpoint, closeoutEvent);
+  const evidence = prepushEvidenceGates(state, ledger, verify);
+  const validationFresh = validationFreshEvidence(state, ledger);
+  const recommendation = evidenceUxRecommendation(validationFresh, gitStatus, gitRealityBinding, evidence);
+  return {
+    schema: 'bha.evidence_ux_status.v1',
+    ok: recommendation.full_validation_required !== true,
+    status: recommendation.full_validation_required ? 'FULL_VALIDATION_REQUIRED' : 'FAST_PATH_AVAILABLE',
+    recorded: false,
+    read_only: true,
+    remote: targetRemote,
+    branch: targetBranch || 'UNKNOWN',
+    head: head || 'UNKNOWN',
+    validation_fresh: validationFresh.ok,
+    validation_reuse: {
+      allowed: validationFresh.ok,
+      reason: validationFresh.ok
+        ? 'Validation evidence binds to current validation inputs, policy, mission, and ledger event; a Git commit alone does not require rerunning every validation command.'
+        : 'Validation evidence is missing or stale; full validation is required before fast evidence repair.',
+      checks: validationFresh.checks,
+      completed_at: validationFresh.completed_at,
+      validation_ledger_event_hash: validationFresh.validation_ledger_event_hash
+    },
+    git_status: {
+      ok: gitStatus.ok,
+      clean: gitStatus.clean,
+      authorized_runtime_evidence_dirty: gitStatus.ok === true && gitStatus.clean !== true ? authorizedRuntimeDirty(gitStatus.stdout) : false,
+      validated_or_runtime_dirty: gitStatus.ok === true && gitStatus.clean !== true ? validatedOrRuntimeDirty(gitStatus.stdout) : false,
+      short: gitStatus.stdout.trim() || 'CLEAN'
+    },
+    tracked_git_reality: gitRealityBinding,
+    evidence_gates: evidence.gates,
+    verifier: verify.parsed ? {
+      ok: verify.parsed.ok === true,
+      status: verify.parsed.status || 'UNKNOWN',
+      warnings: Array.isArray(verify.parsed.warnings) ? verify.parsed.warnings.length : 0,
+      issues: Array.isArray(verify.parsed.issues) ? verify.parsed.issues.length : 0,
+      ledger_head_hash: verify.parsed.ledger_head_hash || null
+    } : {
+      ok: false,
+      status: 'UNKNOWN',
+      warnings: 0,
+      issues: 1,
+      ledger_head_hash: null
+    },
+    recommendation: Object.assign({
+      fast_repair_command: `node scripts/bha-run.js repair-evidence --fast --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --format json`,
+      full_repair_commands: [
+        'node scripts/bha-run.js validate',
+        'node scripts/bha-run.js checkpoint --format json',
+        'node scripts/bha-run.js closeout --record --format json',
+        'node scripts/bha-verify.js'
+      ]
+    }, recommendation),
+    proof_boundary: 'evidence-ux-status is read-only. It separates validation freshness from Git HEAD binding so ordinary commits do not force full validation when tracked validation inputs are unchanged.'
+  };
+}
+
+async function handleEvidenceUxStatus(args) {
+  const format = getOption(args, '--format') || 'json';
+  const allowValidationInProgress = args.includes('--allow-validation-in-progress');
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  const remote = getOption(args, '--remote') || 'origin';
+  const branch = getOption(args, '--branch') || await currentBranch();
+  const status = await evidenceUxStatus(remote, branch);
+  status.validation_in_progress_allowed = allowValidationInProgress;
+  if (allowValidationInProgress && status.ok !== true && status.status === 'FULL_VALIDATION_REQUIRED') {
+    status.ok = true;
+    status.status = 'VALIDATION_IN_PROGRESS';
+    status.recommendation.validation_in_progress_override = true;
+  }
+  console.log(JSON.stringify(status));
+  if (status.ok !== true) {
+    process.exitCode = 1;
+  }
+}
+
+async function handleRepairEvidence(args) {
+  const format = getOption(args, '--format') || 'json';
+  const fast = args.includes('--fast');
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  if (!fast) {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'repair-evidence currently requires --fast' }));
+    process.exitCode = 2;
+    return;
+  }
+  const remote = getOption(args, '--remote') || 'origin';
+  const branch = getOption(args, '--branch') || await currentBranch();
+  const before = await evidenceUxStatus(remote, branch);
+  if (!before.validation_reuse || before.validation_reuse.allowed !== true) {
+    console.log(JSON.stringify({
+      schema: 'bha.repair_evidence.v1',
+      ok: false,
+      status: 'BLOCKED_FULL_VALIDATION_REQUIRED',
+      mode: 'fast',
+      recorded: false,
+      read_only: false,
+      before,
+      next_commands: before.recommendation ? before.recommendation.full_repair_commands : ['node scripts/bha-run.js validate']
+    }));
+    process.exitCode = 3;
+    return;
+  }
+  if (!(before.git_status &&
+      before.git_status.ok === true &&
+      (before.git_status.clean === true ||
+        before.git_status.authorized_runtime_evidence_dirty === true ||
+        before.git_status.validated_or_runtime_dirty === true))) {
+    console.log(JSON.stringify({
+      schema: 'bha.repair_evidence.v1',
+      ok: false,
+      status: 'BLOCKED_UNVERIFIED_WORKTREE_CHANGES',
+      mode: 'fast',
+      recorded: false,
+      read_only: false,
+      before,
+      next_commands: ['git status --short']
+    }));
+    process.exitCode = 3;
+    return;
+  }
+  const checkpoint = await readOnlyJsonCommand(['node', 'scripts/bha-run.js', 'checkpoint', '--format', 'json']);
+  if (checkpoint.exit_code !== 0 || checkpoint.ok !== true) {
+    console.log(JSON.stringify({
+      schema: 'bha.repair_evidence.v1',
+      ok: false,
+      status: 'CHECKPOINT_FAILED',
+      mode: 'fast',
+      recorded: true,
+      read_only: false,
+      before,
+      checkpoint
+    }));
+    process.exitCode = checkpoint.exit_code || 1;
+    return;
+  }
+  const closeout = await readOnlyJsonCommand(['node', 'scripts/bha-run.js', 'closeout', '--record', '--format', 'json']);
+  if (closeout.exit_code !== 0 || closeout.ok !== true) {
+    console.log(JSON.stringify({
+      schema: 'bha.repair_evidence.v1',
+      ok: false,
+      status: 'CLOSEOUT_FAILED',
+      mode: 'fast',
+      recorded: true,
+      read_only: false,
+      before,
+      checkpoint,
+      closeout
+    }));
+    process.exitCode = closeout.exit_code || 1;
+    return;
+  }
+  const after = await evidenceUxStatus(remote, branch);
+  console.log(JSON.stringify({
+    schema: 'bha.repair_evidence.v1',
+    ok: after.validation_reuse && after.validation_reuse.allowed === true,
+    status: 'FAST_REPAIR_RECORDED',
+    mode: 'fast',
+    recorded: true,
+    read_only: false,
+    validation_reused: true,
+    validation_commands_rerun: false,
+    before: {
+      status: before.status,
+      recommendation: before.recommendation,
+      tracked_git_reality: before.tracked_git_reality
+    },
+    checkpoint: {
+      ok: checkpoint.ok,
+      status: checkpoint.status,
+      event_hash: checkpoint.parsed && checkpoint.parsed.event ? checkpoint.parsed.event.event_hash : null
+    },
+    closeout: {
+      ok: closeout.ok,
+      status: closeout.status,
+      event_hash: closeout.parsed && closeout.parsed.closeout_event ? closeout.parsed.closeout_event.event_hash : null
+    },
+    after: {
+      status: after.status,
+      recommendation: after.recommendation,
+      tracked_git_reality: after.tracked_git_reality,
+      evidence_gates: after.evidence_gates
+    },
+    proof_boundary: 'Fast repair reuses fresh validation evidence and records only checkpoint/closeout binding. It must not be used when validation inputs, policy, mission, or validation.yaml changed.'
+  }));
 }
 
 function firstFailedGate(checks) {
@@ -4961,6 +5238,41 @@ async function handleProofNegativeMatrixStatus(args) {
   console.log(JSON.stringify(proofNegativeMatrixStatus()));
 }
 
+function stableExitNextCommands(evidenceUx, blockingChecks) {
+  if (Array.isArray(blockingChecks) && blockingChecks.includes('clean_worktree')) {
+    return [
+      'git status --short',
+      'commit or resolve validated worktree changes',
+      'node scripts/bha-run.js evidence-ux-status --remote origin --branch master --format json',
+      'node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json'
+    ];
+  }
+  const recommendation = evidenceUx && evidenceUx.recommendation ? evidenceUx.recommendation : null;
+  if (recommendation && recommendation.action === 'RUN_FAST_EVIDENCE_REPAIR') {
+    return [
+      'node scripts/bha-run.js evidence-ux-status --remote origin --branch master --format json',
+      'node scripts/bha-run.js repair-evidence --fast --remote origin --branch master --format json',
+      'node scripts/bha-verify.js',
+      'node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json'
+    ];
+  }
+  if (recommendation && recommendation.action === 'COMMIT_OR_RESOLVE_UNVERIFIED_WORKTREE_CHANGES') {
+    return [
+      'git status --short',
+      'commit or resolve validated worktree changes',
+      'node scripts/bha-run.js evidence-ux-status --remote origin --branch master --format json'
+    ];
+  }
+  return [
+    'node scripts/bha-run.js evidence-ux-status --remote origin --branch master --format json',
+    'node scripts/bha-run.js validate',
+    'node scripts/bha-run.js checkpoint --format json',
+    'node scripts/bha-run.js closeout --record --format json',
+    'node scripts/bha-verify.js',
+    'node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json'
+  ];
+}
+
 async function handleStableExitStatus(args) {
   const format = getOption(args, '--format') || 'json';
   if (format !== 'json') {
@@ -4984,6 +5296,7 @@ async function handleStableExitStatus(args) {
   const gitStatus = await gitStatusShort();
   const gate = await gateStatus(remote, branch);
   const recover = await recoverStatus(remote, branch);
+  const evidenceUx = await evidenceUxStatus(remote, branch);
   const authorizedRuntimeEvidenceDirty = gitStatus.ok === true &&
     gitStatus.clean !== true &&
     authorizedRuntimeDirty(gitStatus.stdout);
@@ -5126,16 +5439,15 @@ async function handleStableExitStatus(args) {
       provider_calls_allowed: council.provider_calls_allowed,
       memory_writes_allowed: council.memory_writes_allowed
     },
+    evidence_ux: {
+      status: evidenceUx.status,
+      validation_reuse_allowed: evidenceUx.validation_reuse && evidenceUx.validation_reuse.allowed === true,
+      recommendation: evidenceUx.recommendation
+    },
     next_commands: ok ? [
       'node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json',
       'node scripts/bha-run.js gate-status --remote origin --branch master --format json'
-    ] : [
-      'node scripts/bha-run.js validate',
-      'node scripts/bha-run.js checkpoint --format json',
-      'node scripts/bha-run.js closeout --record --format json',
-      'node scripts/bha-verify.js',
-      'node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json'
-    ],
+    ] : stableExitNextCommands(evidenceUx, blockingChecks),
     proof_boundary: 'stable-exit-status is read-only phase-readiness reporting. It does not push, issue or consume capability, read private keys, call providers, write memory, deploy, release, tag, publish packages, or turn prose into proof.'
   }));
   if (!ok) {
@@ -10641,6 +10953,10 @@ async function main() {
       await handleOperatorSignerPreflight(args);
     } else if (command === 'recover-status') {
       await handleRecoverStatus(args);
+    } else if (command === 'evidence-ux-status') {
+      await handleEvidenceUxStatus(args);
+    } else if (command === 'repair-evidence') {
+      await handleRepairEvidence(args);
     } else if (command === 'git-push-capability-flow') {
       await handleGitPushCapabilityFlow(args);
     } else if (command === 'rollback-drill') {
