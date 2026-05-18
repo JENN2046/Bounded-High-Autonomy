@@ -39,6 +39,10 @@ Current runtime reality addendum:
   `validation_completed` event. When those inputs are unchanged, BHA should use
   `evidence-ux-status` and `repair-evidence --fast` to rebind checkpoint/closeout evidence instead
   of rerunning the full validation matrix.
+- An evidence-only commit that changes only `.bha/checkpoint.json`, `.bha/ledger.jsonl`, and
+  `.bha/state.json` is an evidence carrier commit when its parent is the subject HEAD referenced by
+  checkpoint and closeout. Carrier commits do not recursively require new evidence for themselves;
+  the subject evidence remains the proof target and the carrier only transports tracked evidence.
 - After a real push succeeds, the one-use `git_push` capability must become USED and replay-blocked.
   `gate-status` should report that as a successful post-push state for that capability, not as a
   reusable authorization.
@@ -3924,6 +3928,16 @@ node scripts/bha-run.js repair-evidence --fast --remote origin --branch master -
 The fast path must fail closed when validation evidence is missing, failed, or stale. It may record
 checkpoint and closeout evidence, but it must not hide validation drift or claim that validation
 commands were rerun.
+
+When the fast repair output is committed, the resulting commit should be treated as an evidence
+carrier if it changes only tracked runtime evidence files and its parent is the subject commit named
+by checkpoint/closeout. `evidence-ux-status`, `gate-status`, and `prepush-check` should expose this
+as `EVIDENCE_CARRIER_COMMIT` and must not ask for another fast repair solely because the carrier
+HEAD differs from the subject HEAD.
+
+`repair-evidence --fast` must respect that same decision. If `evidence-ux-status` does not report
+`fast_repair_available:true`, fast repair is a read-only no-op and must not write another
+checkpoint/closeout pair for an accepted evidence carrier commit.
 
 Validation failure should not automatically trigger broad repair. BHA should mark validation failed,
 record evidence, and let the agent decide whether a narrow local fix is safe.

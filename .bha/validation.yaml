@@ -1090,6 +1090,7 @@
           "validation_reuse",
           "git_status",
           "tracked_git_reality",
+          "evidence_carrier_commit",
           "evidence_gates",
           "verifier",
           "recommendation",

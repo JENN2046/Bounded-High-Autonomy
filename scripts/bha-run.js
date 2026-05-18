@@ -3046,6 +3046,25 @@ async function currentHead() {
   return result.stdout.trim();
 }
 
+async function currentParentHead() {
+  const result = await runCommand(['git', 'rev-parse', 'HEAD^'], {});
+  if (result.exit_code !== 0 || result.error) {
+    return null;
+  }
+  return result.stdout.trim();
+}
+
+async function currentHeadChangedFiles() {
+  const result = await runCommand(['git', 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], {});
+  if (result.exit_code !== 0 || result.error) {
+    return { ok: false, files: [], error: result.error || truncate(result.stderr) || 'git diff-tree unavailable' };
+  }
+  return {
+    ok: true,
+    files: result.stdout.split(/\r?\n/).map((line) => line.trim().replace(/\\/g, '/')).filter(Boolean)
+  };
+}
+
 async function buildPushPayload(remote, branch, keyId, expiresMinutes) {
   if (!remote || !branch || !keyId || !Number.isFinite(expiresMinutes) || expiresMinutes <= 0) {
     return { ok: false, error: 'missing --remote, --branch, --expires-minutes, or --key-id' };
@@ -3862,6 +3881,51 @@ function trackedGitRealityBinding(currentHeadValue, checkpoint, closeoutEvent) {
   return trackedGitRealityBindingFromHeads(currentHeadValue, checkpointHead, closeoutHead);
 }
 
+async function evidenceCarrierCommitStatus(currentHeadValue, gitRealityBinding) {
+  const allowedFiles = new Set([
+    '.bha/checkpoint.json',
+    '.bha/ledger.jsonl',
+    '.bha/state.json'
+  ]);
+  const parentHead = await currentParentHead();
+  const changed = await currentHeadChangedFiles();
+  const changedFiles = changed.files || [];
+  const subjectHead = gitRealityBinding && gitRealityBinding.checkpoint_head !== 'NOT_RECORDED'
+    ? gitRealityBinding.checkpoint_head
+    : null;
+  const closeoutHead = gitRealityBinding && gitRealityBinding.closeout_git_reality_head !== 'NOT_RECORDED'
+    ? gitRealityBinding.closeout_git_reality_head
+    : null;
+  const filesAllowed = changed.ok === true &&
+    changedFiles.length > 0 &&
+    changedFiles.every((file) => allowedFiles.has(file));
+  const subjectMatchesParent = Boolean(parentHead &&
+    subjectHead &&
+    closeoutHead &&
+    subjectHead === parentHead &&
+    closeoutHead === parentHead);
+  const currentDiffersFromSubject = Boolean(currentHeadValue && subjectHead && currentHeadValue !== subjectHead);
+  const active = Boolean(filesAllowed && subjectMatchesParent && currentDiffersFromSubject);
+  return {
+    active,
+    mode: active ? 'EVIDENCE_CARRIER_COMMIT' : 'DIRECT_HEAD_BINDING',
+    current_head: currentHeadValue || 'UNKNOWN',
+    subject_head: subjectHead || 'UNKNOWN',
+    carrier_head: active ? currentHeadValue || 'UNKNOWN' : null,
+    parent_head: parentHead || 'UNKNOWN',
+    changed_files: changedFiles,
+    allowed_files: Array.from(allowedFiles),
+    checks: {
+      diff_tree_available: changed.ok === true,
+      files_allowed: filesAllowed,
+      subject_matches_parent: subjectMatchesParent,
+      current_differs_from_subject: currentDiffersFromSubject
+    },
+    error: changed.error || null,
+    proof_boundary: 'An evidence carrier commit may carry tracked BHA evidence for its parent subject commit only when the carrier changes allowed evidence files and checkpoint/closeout bind to the parent head.'
+  };
+}
+
 function validationFreshEvidence(state, ledger) {
   const validation = state && state.validation ? state.validation : null;
   const currentInputsHash = validationInputsHash();
@@ -3884,7 +3948,7 @@ function validationFreshEvidence(state, ledger) {
   };
 }
 
-function evidenceUxRecommendation(validationFresh, gitStatus, gitRealityBinding, evidence) {
+function evidenceUxRecommendation(validationFresh, gitStatus, gitRealityBinding, evidence, carrier) {
   const worktreeAllowed = gitStatusAllowedForLocalTrustRepair(gitStatus) ||
     (validationFresh.ok === true && gitStatus && gitStatus.ok === true && validatedOrRuntimeDirty(gitStatus.stdout));
   if (!worktreeAllowed) {
@@ -3899,6 +3963,15 @@ function evidenceUxRecommendation(validationFresh, gitStatus, gitRealityBinding,
       action: 'RUN_FULL_VALIDATE_CHECKPOINT_CLOSEOUT',
       full_validation_required: true,
       fast_repair_available: false
+    };
+  }
+  if (carrier && carrier.active === true) {
+    return {
+      action: 'NO_EVIDENCE_REPAIR_REQUIRED',
+      full_validation_required: false,
+      fast_repair_available: false,
+      head_only_mismatch: true,
+      carrier_commit_accepted: true
     };
   }
   const headOnlyMismatch = Boolean(gitRealityBinding &&
@@ -3927,13 +4000,16 @@ async function evidenceUxStatus(remote, branch) {
   const checkpoint = readCheckpointFile();
   const closeoutEvent = state && state.closeout ? ledgerEventByHash(ledger, state.closeout.ledger_event_hash, 'closeout_completed') : null;
   const gitRealityBinding = trackedGitRealityBinding(head, checkpoint, closeoutEvent);
+  const carrier = await evidenceCarrierCommitStatus(head, gitRealityBinding);
   const evidence = prepushEvidenceGates(state, ledger, verify);
   const validationFresh = validationFreshEvidence(state, ledger);
-  const recommendation = evidenceUxRecommendation(validationFresh, gitStatus, gitRealityBinding, evidence);
+  const recommendation = evidenceUxRecommendation(validationFresh, gitStatus, gitRealityBinding, evidence, carrier);
   return {
     schema: 'bha.evidence_ux_status.v1',
     ok: recommendation.full_validation_required !== true,
-    status: recommendation.full_validation_required ? 'FULL_VALIDATION_REQUIRED' : 'FAST_PATH_AVAILABLE',
+    status: recommendation.full_validation_required
+      ? 'FULL_VALIDATION_REQUIRED'
+      : (recommendation.fast_repair_available === true ? 'FAST_PATH_AVAILABLE' : 'NO_REPAIR_REQUIRED'),
     recorded: false,
     read_only: true,
     remote: targetRemote,
@@ -3957,6 +4033,7 @@ async function evidenceUxStatus(remote, branch) {
       short: gitStatus.stdout.trim() || 'CLEAN'
     },
     tracked_git_reality: gitRealityBinding,
+    evidence_carrier_commit: carrier,
     evidence_gates: evidence.gates,
     verifier: verify.parsed ? {
       ok: verify.parsed.ok === true,
@@ -3972,7 +4049,9 @@ async function evidenceUxStatus(remote, branch) {
       ledger_head_hash: null
     },
     recommendation: Object.assign({
-      fast_repair_command: `node scripts/bha-run.js repair-evidence --fast --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --format json`,
+      fast_repair_command: recommendation.fast_repair_available === true
+        ? `node scripts/bha-run.js repair-evidence --fast --remote ${powerShellSingleQuote(targetRemote)} --branch ${powerShellSingleQuote(targetBranch || 'master')} --format json`
+        : null,
       full_repair_commands: [
         'node scripts/bha-run.js validate',
         'node scripts/bha-run.js checkpoint --format json',
@@ -4053,6 +4132,26 @@ async function handleRepairEvidence(args) {
       next_commands: ['git status --short']
     }));
     process.exitCode = 3;
+    return;
+  }
+  if (!before.recommendation || before.recommendation.fast_repair_available !== true) {
+    console.log(JSON.stringify({
+      schema: 'bha.repair_evidence.v1',
+      ok: true,
+      status: 'NO_REPAIR_REQUIRED',
+      mode: 'fast',
+      recorded: false,
+      read_only: true,
+      validation_reused: true,
+      validation_commands_rerun: false,
+      before: {
+        status: before.status,
+        recommendation: before.recommendation,
+        tracked_git_reality: before.tracked_git_reality,
+        evidence_carrier_commit: before.evidence_carrier_commit
+      },
+      proof_boundary: 'repair-evidence --fast is a no-op unless evidence-ux-status explicitly reports fast_repair_available:true; accepted evidence carrier commits must not create recursive evidence commits.'
+    }));
     return;
   }
   const checkpoint = await readOnlyJsonCommand(['node', 'scripts/bha-run.js', 'checkpoint', '--format', 'json']);
@@ -4153,6 +4252,10 @@ async function handlePrepushCheck(args) {
   const state = loadState();
   const ledger = readJsonl(LEDGER_PATH);
   const evidence = prepushEvidenceGates(state, ledger, verify);
+  const checkpoint = readCheckpointFile();
+  const closeoutEvent = state && state.closeout ? ledgerEventByHash(ledger, state.closeout.ledger_event_hash, 'closeout_completed') : null;
+  const gitRealityBinding = trackedGitRealityBinding(head, checkpoint, closeoutEvent);
+  const carrier = await evidenceCarrierCommitStatus(head, gitRealityBinding);
   let capability = remote && branch && head ? await matchingConsumedCapability(remote, branch, head, { reserve: false }) : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
   const checks = {
     verifier_pass: evidence.gates.verifier_pass,
@@ -4180,6 +4283,8 @@ async function handlePrepushCheck(args) {
       branch: branch || 'UNKNOWN',
       head: head || 'UNKNOWN',
       checks,
+      tracked_git_reality: gitRealityBinding,
+      evidence_carrier_commit: carrier,
       reason: ok ? 'ALLOW' : (capability.reason || firstFailedGate(checks) || 'PREPUSH_GATE_FAILED'),
       capability: {
         ok: capability.ok === true,
@@ -4201,6 +4306,8 @@ async function handlePrepushCheck(args) {
     head: head || 'UNKNOWN',
     checks,
     evidence_gates: evidence.gates,
+    tracked_git_reality: gitRealityBinding,
+    evidence_carrier_commit: carrier,
     capability,
     git_status: {
       ok: status.ok,
@@ -4920,6 +5027,7 @@ async function gateStatus(remote, branch) {
   const checkpoint = readCheckpointFile();
   const closeoutEvent = state && state.closeout ? ledgerEventByHash(ledger, state.closeout.ledger_event_hash, 'closeout_completed') : null;
   const gitRealityBinding = trackedGitRealityBinding(head, checkpoint, closeoutEvent);
+  const carrier = await evidenceCarrierCommitStatus(head, gitRealityBinding);
   const capability = remote && branch && head
     ? await matchingConsumedCapability(remote, branch, head, { reserve: false })
     : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
@@ -4979,6 +5087,7 @@ async function gateStatus(remote, branch) {
       bha_handles_only: ['unsigned payload file under .bha/local/', 'signed payload file under .bha/local/']
     },
     tracked_git_reality: gitRealityBinding,
+    evidence_carrier_commit: carrier,
     next_action: action,
     next_action_required_now: actionContext.next_action_required_now,
     next_action_condition: actionContext.next_action_condition,
@@ -8775,6 +8884,30 @@ async function handleRegressionSelftest(args) {
     countSubstring(readText(RUN_SCRIPT), 'clean_git_status: gitStatusAllowedForLocalTrustRepair(status)') >= 2, {
     shared_gate_function_present: fileContains(RUN_SCRIPT, 'function gitStatusAllowedForLocalTrustRepair(status)'),
     gate_and_prepush_use_shared_function: countSubstring(readText(RUN_SCRIPT), 'clean_git_status: gitStatusAllowedForLocalTrustRepair(status)')
+  }));
+  checks.push(regressionCheck('fast_repair_noops_when_evidence_ux_says_unavailable',
+    fileContains(RUN_SCRIPT, "status: 'NO_REPAIR_REQUIRED'") &&
+    fileContains(RUN_SCRIPT, 'before.recommendation.fast_repair_available !== true') &&
+    fileContains(RUN_SCRIPT, 'accepted evidence carrier commits must not create recursive evidence commits'), {
+    no_repair_status_present: fileContains(RUN_SCRIPT, "status: 'NO_REPAIR_REQUIRED'"),
+    fast_repair_availability_gate_present: fileContains(RUN_SCRIPT, 'before.recommendation.fast_repair_available !== true'),
+    recursive_carrier_boundary_present: fileContains(RUN_SCRIPT, 'accepted evidence carrier commits must not create recursive evidence commits')
+  }));
+  checks.push(regressionCheck('evidence_ux_hides_fast_repair_command_when_unavailable',
+    fileContains(RUN_SCRIPT, 'fast_repair_command: recommendation.fast_repair_available === true') &&
+    fileContains(RUN_SCRIPT, ': null') &&
+    fileContains(RUN_SCRIPT, "(recommendation.fast_repair_available === true ? 'FAST_PATH_AVAILABLE' : 'NO_REPAIR_REQUIRED')"), {
+    conditional_fast_repair_command_present: fileContains(RUN_SCRIPT, 'fast_repair_command: recommendation.fast_repair_available === true'),
+    unavailable_command_is_null: fileContains(RUN_SCRIPT, ': null'),
+    no_repair_status_present: fileContains(RUN_SCRIPT, "(recommendation.fast_repair_available === true ? 'FAST_PATH_AVAILABLE' : 'NO_REPAIR_REQUIRED')")
+  }));
+  checks.push(regressionCheck('evidence_carrier_commit_contract_present',
+    fileContains(RUN_SCRIPT, "mode: active ? 'EVIDENCE_CARRIER_COMMIT' : 'DIRECT_HEAD_BINDING'") &&
+    fileContains(RUN_SCRIPT, 'subjectHead === parentHead') &&
+    fileContains(RUN_SCRIPT, 'carrier_commit_accepted: true'), {
+    carrier_mode_present: fileContains(RUN_SCRIPT, "mode: active ? 'EVIDENCE_CARRIER_COMMIT' : 'DIRECT_HEAD_BINDING'"),
+    subject_parent_binding_present: fileContains(RUN_SCRIPT, 'subjectHead === parentHead'),
+    accepted_recommendation_present: fileContains(RUN_SCRIPT, 'carrier_commit_accepted: true')
   }));
   checks.push(regressionCheck('roadmap_current_state_is_procedural_not_snapshot',
     fileContains(ROADMAP_PATH, 'Current repository state is intentionally not embedded') &&
