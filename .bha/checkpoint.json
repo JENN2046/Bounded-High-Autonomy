@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-18T03-57-18-320Z",
-  "created_at": "2026-05-18T03:57:18.449Z",
+  "checkpoint_id": "checkpoint-2026-05-18T04-00-29-022Z",
+  "created_at": "2026-05-18T04:00:29.181Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,8 +13,8 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "master",
-  "head": "d7f7bfedfad1752c2c2ecfae520769cd9073e3ec",
-  "ledger_head_hash": "6eefd54d8ab6f080a0697e152acc28c20d698dfd46cb1c1a3e9e8e4dd0560e4b",
+  "head": "5eb917f4eda845c3645017cd34aec3a107abceb0",
+  "ledger_head_hash": "68a40fe0121e15ba5a60c68aafe8e7308f5805cd396565598da31f195f16eb37",
   "policy_hash": "ed7a4037021d9b2c91c5c9dbc1b35af3b5442645dd6fe64769ca07a326673a02",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
@@ -68,50 +68,17 @@
     "prepush_check_fail_closed_readonly",
     "prepush_check_preflight_fail_closed_readonly"
   ],
-  "changed_files": [
-    {
-      "status": "M",
-      "path": ".bha/ledger.jsonl"
-    },
-    {
-      "status": "M",
-      "path": ".bha/policy.yaml"
-    },
-    {
-      "status": "M",
-      "path": ".bha/state.json"
-    },
-    {
-      "status": "M",
-      "path": "scripts/bha-run.js"
-    },
-    {
-      "status": "M",
-      "path": "scripts/bha-verify.js"
-    },
-    {
-      "status": "??",
-      "path": ".github/"
-    }
-  ],
+  "changed_files": [],
   "validation_run": {
     "status": "PASS",
-    "completed_at": "2026-05-18T03:30:53.443Z",
-    "ledger_event_hash": "c16d90dd88a0e9b4a4ba1aa37ef84d5d3aaee31c265d0cd14725cf2638bf205f",
+    "completed_at": "2026-05-18T03:57:35.278Z",
+    "ledger_event_hash": "8b75639f27daa97154ed4b5270956acec4896c531022ab4bffcae0c2d0a5bcb4",
     "command_count": 49
   },
   "validation_not_run": [],
-  "verifier_status": "FAIL",
-  "verifier_ledger_head_hash": "6eefd54d8ab6f080a0697e152acc28c20d698dfd46cb1c1a3e9e8e4dd0560e4b",
-  "blockers": [
-    "VALIDATION_STALE_INPUTS",
-    "VALIDATION_POLICY_HASH_MISMATCH",
-    "CHECKPOINT_POLICY_HASH_MISMATCH",
-    "UNVERIFIED_WORKTREE_CHANGE",
-    "UNVERIFIED_WORKTREE_CHANGE",
-    "UNVERIFIED_WORKTREE_CHANGE",
-    "UNVERIFIED_WORKTREE_CHANGE"
-  ],
+  "verifier_status": "PASS",
+  "verifier_ledger_head_hash": "68a40fe0121e15ba5a60c68aafe8e7308f5805cd396565598da31f195f16eb37",
+  "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
     "real git push remains blocked without signed consumed git_push capability",
@@ -145,9 +112,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "6eefd54d8ab6f080a0697e152acc28c20d698dfd46cb1c1a3e9e8e4dd0560e4b",
-    "checkpoint_event_hash": "aa61b07378eb83e92726c4086c72940dc87c9aa02914d9ab06bc2891ce2501e4",
-    "final_ledger_head_hash": "aa61b07378eb83e92726c4086c72940dc87c9aa02914d9ab06bc2891ce2501e4"
+    "verified_ledger_head_hash": "68a40fe0121e15ba5a60c68aafe8e7308f5805cd396565598da31f195f16eb37",
+    "checkpoint_event_hash": "ea51e342e61ab3553707f84505b6e946a3c7d702eb93ce9c7ac182174fafe786",
+    "final_ledger_head_hash": "ea51e342e61ab3553707f84505b6e946a3c7d702eb93ce9c7ac182174fafe786"
   },
-  "ledger_event_hash": "aa61b07378eb83e92726c4086c72940dc87c9aa02914d9ab06bc2891ce2501e4"
+  "ledger_event_hash": "ea51e342e61ab3553707f84505b6e946a3c7d702eb93ce9c7ac182174fafe786"
 }
