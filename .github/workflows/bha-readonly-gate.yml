@@ -1,0 +1,85 @@
+name: bha-readonly-gate
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readonly-gate:
+    name: BHA read-only gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Prepare artifact directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bha-artifacts"
+
+      - name: Syntax checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/bha-run.js
+          node --check scripts/bha-verify.js
+
+      - name: Verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bha-verify.js | tee "$RUNNER_TEMP/bha-artifacts/verifier.json"
+
+      - name: V1.2 audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bha-run.js audit-v12 --format json | tee "$RUNNER_TEMP/bha-artifacts/audit-v12.json"
+
+      - name: V1 stable audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bha-run.js audit-v1-stable --format json | tee "$RUNNER_TEMP/bha-artifacts/audit-v1-stable.json"
+
+      - name: Stable exit status
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json | tee "$RUNNER_TEMP/bha-artifacts/stable-exit-status.json"
+
+      - name: Fresh clone replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          fresh="$RUNNER_TEMP/bha-fresh-clone"
+          git clone --no-local "$GITHUB_WORKSPACE" "$fresh"
+          (
+            cd "$fresh"
+            node scripts/bha-verify.js | tee "$RUNNER_TEMP/bha-artifacts/fresh-clone-verifier.json"
+            node scripts/bha-run.js recover-status --remote origin --branch master --format json | tee "$RUNNER_TEMP/bha-artifacts/fresh-clone-recover-status.json"
+            node scripts/bha-run.js gate-status --remote origin --branch master --format json | tee "$RUNNER_TEMP/bha-artifacts/fresh-clone-gate-status.json"
+            node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json | tee "$RUNNER_TEMP/bha-artifacts/fresh-clone-stable-exit-status.json"
+          )
+
+      - name: Upload JSON artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bha-readonly-gate-json
+          path: ${{ runner.temp }}/bha-artifacts/*.json
+          if-no-files-found: error

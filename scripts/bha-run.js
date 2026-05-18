@@ -35,6 +35,7 @@ const CAPABILITY_FRAMEWORK_PATH = path.join(ROOT, 'BHA_V2_CAPABILITY_FRAMEWORK.m
 const COUNCIL_RUNTIME_PATH = path.join(ROOT, 'BHA_V2_COUNCIL_RUNTIME.md');
 const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
 const GITIGNORE_PATH = path.join(ROOT, '.gitignore');
+const CI_READONLY_GATE_PATH = path.join(ROOT, '.github', 'workflows', 'bha-readonly-gate.yml');
 
 const VALIDATION_INPUTS = [
   DESIGN_PATH,
@@ -51,7 +52,8 @@ const VALIDATION_INPUTS = [
   ROADMAP_PATH,
   RUN_SCRIPT,
   VERIFY_SCRIPT,
-  PRE_PUSH_PATH
+  PRE_PUSH_PATH,
+  CI_READONLY_GATE_PATH
 ];
 
 function rel(file) {
@@ -78,7 +80,8 @@ function validationInputsForRoot(root) {
     path.join(root, '.bha', 'roadmap.md'),
     path.join(root, 'scripts', 'bha-run.js'),
     path.join(root, 'scripts', 'bha-verify.js'),
-    path.join(root, '.githooks', 'pre-push')
+    path.join(root, '.githooks', 'pre-push'),
+    path.join(root, '.github', 'workflows', 'bha-readonly-gate.yml')
   ];
 }
 
@@ -8137,7 +8140,8 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
         '.bha/roadmap.md',
         'scripts/bha-run.js',
         'scripts/bha-verify.js',
-        '.githooks/pre-push'
+        '.githooks/pre-push',
+        '.github/workflows/bha-readonly-gate.yml'
       ],
       denied: ['coverage'],
       protected: ['.git', '.codex', '.agents']
@@ -8522,6 +8526,8 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
   writeTextFile(path.join(fixtureRoot, '.bha', 'roadmap.md'), '# Regression Fixture Roadmap\n\nKeep proof local and deterministic.\n');
   writeTextFile(path.join(fixtureRoot, '.bha', 'rollback.md'), regressionRollbackText());
   writeTextFile(path.join(fixtureRoot, '.githooks', 'pre-push'), '#!/bin/sh\nnode scripts/bha-run.js prepush-check --internal-git-hook "$@"\n');
+  fs.mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
+  fs.copyFileSync(CI_READONLY_GATE_PATH, path.join(fixtureRoot, '.github', 'workflows', 'bha-readonly-gate.yml'));
   fs.mkdirSync(path.join(fixtureRoot, 'scripts'), { recursive: true });
   fs.copyFileSync(RUN_SCRIPT, path.join(fixtureRoot, 'scripts', 'bha-run.js'));
   fs.copyFileSync(VERIFY_SCRIPT, path.join(fixtureRoot, 'scripts', 'bha-verify.js'));

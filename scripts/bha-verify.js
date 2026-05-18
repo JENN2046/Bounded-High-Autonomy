@@ -28,6 +28,7 @@ const CAPABILITY_FRAMEWORK_PATH = path.join(ROOT, 'BHA_V2_CAPABILITY_FRAMEWORK.m
 const COUNCIL_RUNTIME_PATH = path.join(ROOT, 'BHA_V2_COUNCIL_RUNTIME.md');
 const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
 const GITIGNORE_PATH = path.join(ROOT, '.gitignore');
+const CI_READONLY_GATE_PATH = path.join(ROOT, '.github', 'workflows', 'bha-readonly-gate.yml');
 const ROOT_REAL = fs.realpathSync.native(ROOT);
 
 const VALIDATION_INPUTS = [
@@ -45,7 +46,8 @@ const VALIDATION_INPUTS = [
   ROADMAP_PATH,
   RUN_SCRIPT,
   VERIFY_SCRIPT,
-  PRE_PUSH_PATH
+  PRE_PUSH_PATH,
+  CI_READONLY_GATE_PATH
 ];
 
 function rel(file) {
