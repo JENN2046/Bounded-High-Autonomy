@@ -750,6 +750,10 @@ function splitAfterDashDash(args) {
   return marker === -1 ? args : args.slice(marker + 1);
 }
 
+function benignStdinCloseError(error) {
+  return error && ['EPIPE', 'EOF', 'ECONNRESET'].includes(error.code);
+}
+
 function runCommand(argv, options) {
   const opts = options || {};
   return new Promise((resolve) => {
@@ -778,6 +782,7 @@ function runCommand(argv, options) {
 
     let stdout = '';
     let stderr = '';
+    let stdinError = null;
     if (!opts.inherit) {
       child.stdout.on('data', (chunk) => {
         stdout += chunk.toString();
@@ -785,7 +790,16 @@ function runCommand(argv, options) {
       child.stderr.on('data', (chunk) => {
         stderr += chunk.toString();
       });
-      child.stdin.end(opts.input || '');
+      if (child.stdin) {
+        child.stdin.on('error', (error) => {
+          stdinError = error;
+        });
+        try {
+          child.stdin.end(opts.input || '');
+        } catch (error) {
+          stdinError = error;
+        }
+      }
     }
     child.on('error', (error) => {
       resolve({
@@ -808,7 +822,7 @@ function runCommand(argv, options) {
         signal,
         stdout,
         stderr,
-        error: null
+        error: stdinError && !benignStdinCloseError(stdinError) ? stdinError.message : null
       });
     });
   });
@@ -8784,6 +8798,14 @@ async function handleRegressionSelftest(args) {
     dependencyFixtureArtifactPaths.some((item) => item.endsWith('/nested/node_modules')), {
     artifacts: dependencyFixtureArtifactPaths,
     skipped: dependencyFixtureAudit.skipped
+  }));
+  const stdinEpipeProbe = await runCommand([process.execPath, '-e', 'process.stdin.destroy(); process.exit(0)'], {
+    input: 'bha-stdin-epipe-probe'.repeat(4096)
+  });
+  checks.push(regressionCheck('run_command_ignores_child_stdin_epipe', stdinEpipeProbe.exit_code === 0 &&
+    !stdinEpipeProbe.error, {
+    exit_code: stdinEpipeProbe.exit_code,
+    error: stdinEpipeProbe.error
   }));
 
   const gitInit = await runCommand(['git', 'init'], { cwd: fixtureRoot });
