@@ -3098,6 +3098,9 @@ async function currentHeadChangedFiles() {
 }
 
 async function buildPushPayload(remote, branch, keyId, expiresMinutes) {
+  if (branch === 'CURRENT' || branch === 'CURRENT_BRANCH') {
+    branch = await currentBranch();
+  }
   if (!remote || !branch || !keyId || !Number.isFinite(expiresMinutes) || expiresMinutes <= 0) {
     return { ok: false, error: 'missing --remote, --branch, --expires-minutes, or --key-id' };
   }
@@ -3287,7 +3290,10 @@ async function handlePushPrep(args) {
     return;
   }
   const remote = getOption(args, '--remote');
-  const branch = getOption(args, '--branch');
+  let branch = getOption(args, '--branch');
+  if (branch === 'CURRENT' || branch === 'CURRENT_BRANCH') {
+    branch = await currentBranch();
+  }
   const keyId = getOption(args, '--key-id');
   const expiresMinutesRaw = getOption(args, '--expires-minutes');
   const expiresMinutes = Number(expiresMinutesRaw);
@@ -3386,7 +3392,10 @@ async function handleGitPushCapabilityFlow(args) {
     return;
   }
   const remote = getOption(args, '--remote');
-  const branch = getOption(args, '--branch');
+  let branch = getOption(args, '--branch');
+  if (branch === 'CURRENT' || branch === 'CURRENT_BRANCH') {
+    branch = await currentBranch();
+  }
   const keyId = getOption(args, '--key-id');
   const expiresMinutesRaw = getOption(args, '--expires-minutes');
   const expiresMinutes = Number(expiresMinutesRaw);
