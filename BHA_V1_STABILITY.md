@@ -154,8 +154,9 @@ Freeze completion requires all of these facts at the same repository `HEAD`:
 - verified: checkpoint and closeout bind to the current git `HEAD`
 - verified: `stable-exit-status` reports `PASS`
 - verified: `gate-status` fails closed unless a current one-use local `git_push` capability is present
-- proposed: remote CI and branch protection can be designed from the local evidence model
-- unknown until remote work begins: GitHub settings, required check names as observed by GitHub, and admin bypass configuration
+- verified: remote CI and `master` branch protection are applied from the local evidence model
+- verified: required check name observed by GitHub is `BHA read-only gate`
+- unknown until separately enabled: signed commits, CODEOWNERS enforcement, and narrowed push restrictions
 
 Rollback path:
 
@@ -164,6 +165,7 @@ If a freeze check fails after a local change, stop expansion work, inspect verif
 Residual risk:
 
 V1 remains tamper-evident rather than tamper-proof. It cannot by itself stop GitHub UI edits, token pushes, branch protection bypasses, malicious workflow changes, or OS/network side effects outside the runtime policy layer.
+Protected `master` mitigates the normal remote merge path through PR review and the required `BHA read-only gate`, but direct `master` pushes remain emergency-only rather than the standard workflow.
 
 ## Ledger/State Replay Minimum
 

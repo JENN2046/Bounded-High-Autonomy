@@ -286,22 +286,30 @@ Verified:
 - local one-use `git_push` capability is replay-blocked after push, as expected
 - CI workflow is read-only and does not write ledger, state, checkpoint, closeout, local capability files, tags, releases, packages, deployments, or remote branches
 
-Inferred:
+Verified:
 
-- V1 local trust kernel is ready for remote branch protection preparation.
+- V1 local trust kernel reached remote branch protection readiness and `master` protection is now applied.
 - Fresh-clone tracked trust is represented in CI through verifier, recover-status, gate-status, and stable-exit-status.
+- GitHub `master` branch protection is enabled.
+- Required check for `master`: `BHA read-only gate`.
+- Require branch up to date before merge: enabled.
+- Require pull request review before merge: enabled with 1 approval.
+- Dismiss stale approvals: enabled.
+- Require conversation resolution: enabled.
+- Require linear history: enabled.
+- Include/enforce administrators: enabled.
+- Force pushes and branch deletion: disabled.
 
 Proposed:
 
-- Make `BHA read-only gate` a required status check for `master`.
-- Treat direct owner push as emergency-only after branch protection is enforced.
 - Keep future split checks optional until the workflow is intentionally decomposed into multiple jobs.
+- Add CODEOWNERS before claiming code-owner review enforcement.
+- Document any emergency direct-push bypass after it happens, then repair through the normal protected PR path.
 
 Unknown:
 
-- Current GitHub branch protection settings. A read-only unauthenticated REST request to branch protection returned `401 Unauthorized`, so repository settings must be checked through an authenticated owner UI/API session before enforcement.
 - Whether signed commits are operationally available for the repository owner.
-- Whether admin bypass should be fully disabled or documented as a break-glass path.
+- Whether push restrictions should be narrowed to an explicit maintainer set beyond the current protection rules.
 
 P1 findings: none.
 
@@ -314,53 +322,66 @@ P3 findings:
 Residual risks:
 
 - Local hooks remain bypassable by `--no-verify`, missing hooksPath, or direct shell use.
-- GitHub UI, token pushes, workflow edits, and admin bypass remain remote risks until branch protection is applied.
+- GitHub UI edits, workflow edits, admin emergency actions, and tokens with sufficient authority remain remote risks even after branch protection.
 - V1 is tamper-evident, not OS-level tamper-proof.
 
 Stop gate:
 
-Do not claim remote enforcement until branch protection is applied, verified, and its bypass policy is explicitly documented.
+Do not claim complete remote enforcement beyond the verified `master` protection settings. Any emergency bypass must be explicitly recorded afterward.
 
 ### Branch Protection Enforcement
 
-Claim status: proposed GitHub configuration checklist, not applied.
+Claim status: verified applied for `master` on GitHub.
 
-Required settings before claiming remote gate:
+Verified applied settings:
 
 - required status checks before merge
 - fixed required check name for the current workflow: `BHA read-only gate`
-- future split-check names, only after workflow decomposition: `bha/syntax`, `bha/verifier-self-test`, `bha/verifier`, `bha/audit-v12`, `bha/audit-v1-stable`, `bha/fresh-clone-readonly`, and `bha/bypass-matrix-readonly`
-- require branch up to date before merge, unless explicitly waived
+- require branch up to date before merge
 - block force pushes
 - block branch deletion
-- require PR before merging to `master`; direct owner push is an emergency path only if explicitly documented
-- require at least one approving review for changes to `.bha/**`, `scripts/bha-*.js`, `.githooks/**`, `.github/workflows/**`, and `AGENTS.md`
+- require PR before merging to `master`; direct owner push is emergency-only
+- require at least one approving review
 - require conversation resolution before merge
-- do not allow administrators to bypass unless an emergency record is written afterward
-- restrict push access where supported
-- document emergency bypass and cleanup path
-- require signed commits only if the repository owner can support that operationally; otherwise do not claim signed-commit protection
+- enforce administrators
+- require linear history
+
+Not enabled / not claimed:
+
+- Future split-check names, only after workflow decomposition: `bha/syntax`, `bha/verifier-self-test`, `bha/verifier`, `bha/audit-v12`, `bha/audit-v1-stable`, `bha/fresh-clone-readonly`, and `bha/bypass-matrix-readonly`.
+- Code-owner reviews are not claimed until CODEOWNERS exists and is enabled.
+- Push restrictions are not claimed beyond the configured branch protection.
+- Signed commits are not claimed until the repository owner can support them operationally.
 - protect workflow changes with review and required checks
 
-Exact proposed configuration for `master`:
+Current verified configuration for `master`:
 
 - Require a pull request before merging: enabled.
 - Required approvals: 1 minimum.
 - Dismiss stale approvals when new commits are pushed: enabled.
-- Require review from Code Owners: enabled if CODEOWNERS is added; otherwise proposed for a later local commit.
+- Require review from Code Owners: not enabled / not claimed.
 - Require conversation resolution before merge: enabled.
 - Require status checks to pass before merging: enabled.
 - Required status check: `BHA read-only gate`.
-- Require branches to be up to date before merging: enabled unless it creates unacceptable single-maintainer friction; any waiver must be documented.
+- Require branches to be up to date before merging: enabled.
 - Require deployments before merging: disabled for V1.
-- Require signed commits: optional; enable only if the owner can reliably sign commits.
-- Require linear history: enabled if compatible with the preferred merge style.
-- Include administrators: enabled by default; if disabled, document admin bypass as residual risk.
-- Restrict who can push to matching branches: enabled where supported; allow only the repository owner or a small maintainer set.
+- Require signed commits: not enabled / not claimed.
+- Require linear history: enabled.
+- Include administrators: enabled.
+- Restrict who can push to matching branches: not enabled / not claimed.
 - Allow force pushes: disabled.
 - Allow deletions: disabled.
 - Lock branch: disabled unless the repository is intentionally frozen.
 - Ruleset target: branch `master`.
+
+Standard remote update flow after enforcement:
+
+1. Complete local evidence work and keep `stable-exit-status` passing.
+2. Create a topic branch for the next change.
+3. Push the topic branch only after local BHA gate/capability checks that apply to that branch.
+4. Open a pull request targeting `master`.
+5. Wait for `BHA read-only gate` and required review before merge.
+6. Treat direct `git push origin master` as emergency-only, even if a local `git_push` capability can be generated.
 
 Recommended protected path review focus:
 
@@ -374,7 +395,7 @@ Recommended protected path review focus:
 
 Stop gate:
 
-No claim of remote enforcement until the protection rules are actually applied and verified from GitHub repository settings.
+No claim of broader remote enforcement until any additional protection, CODEOWNERS, signed-commit, or push-restriction settings are actually applied and verified from GitHub repository settings.
 
 Emergency bypass path:
 

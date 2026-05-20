@@ -106,8 +106,8 @@ Minimal local loop:
 3. Run `node scripts/bha-verify.js` and require `PASS` before trusting state.
 4. Run `node scripts/bha-run.js checkpoint --format json` when work should be resumable from files.
 5. Run `node scripts/bha-run.js closeout --format json --record` to record final evidence.
-6. Only if the operator separately chooses a real push, run `node scripts/bha-run.js push-prep --remote 'origin' --branch 'master' --expires-minutes 20 --key-id owner-main-pkcs8 --format json`, sign the flat JSON outside BHA, write the signed JSON under `.bha/local/`, then run `verify-signed-capability --file`, `issue-capability --file`, and `consume-capability`. For `git_push`, issue/consume evidence is local-only.
-7. Only before an operator-authorized real push, run `node scripts/bha-run.js prepush-check --preflight --internal-git-hook 'origin'`; the actual `git push origin master` remains outside BHA and requires separate operator intent.
+6. For normal remote updates after protected `master`, create a topic branch, push that branch only after any applicable local BHA gate/capability checks, open a pull request targeting `master`, and wait for the required `BHA read-only gate`.
+7. Only for an explicitly authorized emergency direct push to protected `master`, run `node scripts/bha-run.js push-prep --remote 'origin' --branch 'master' --expires-minutes 20 --key-id owner-main-pkcs8 --format json`, sign the flat JSON outside BHA, write the signed JSON under `.bha/local/`, then run `verify-signed-capability --file`, `issue-capability --file`, `consume-capability`, and `prepush-check --preflight`. For `git_push`, issue/consume evidence is local-only.
 
 Fresh clone note:
 - A fresh clone of the current remote can restore verifier trust by running `validate`, `checkpoint`, `closeout --record`, and `verify`.
@@ -138,11 +138,11 @@ Stage transition rule:
 
 Current next safe task:
 
-- Prepare Branch Protection Enforcement from the implemented read-only CI gate.
+- Adapt local docs and operator guidance to the enforced protected-`master` workflow.
 - Current required check name: `BHA read-only gate`.
-- Current remote enforcement status: not applied by BHA in this repository session.
-- GitHub branch protection settings are unknown until inspected through an authenticated owner UI/API session.
-- Do not modify GitHub settings without explicit operator authorization.
+- Current remote enforcement status: GitHub `master` protection is verified applied.
+- Standard remote flow: topic branch, pull request to `master`, required check `BHA read-only gate`, and required review.
+- Direct `git push origin master` is emergency-only and still requires explicit operator authorization, a fresh local `git_push` capability, and GitHub protection allowing the action.
 
 ## Next Stage Stop-Gate Queue
 

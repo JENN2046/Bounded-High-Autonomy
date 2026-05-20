@@ -8,8 +8,9 @@ Document status:
 - Implementation status: the V1 local runtime is implemented enough to run validation, verifier,
   checkpoint, closeout, signed `git_push` capability flow, local pre-push gate, and real `git push`
   through the gate. Repository reality and verifier output outrank this design text.
-- Remote status: GitHub branch protection and CI required checks are planned but not yet enforced by
-  this document. Local BHA evidence is not a remote attestation by itself.
+- Remote status: GitHub `master` branch protection is verified applied for this repository with the
+  required check `BHA read-only gate`. Local BHA evidence is not a remote attestation by itself, and
+  repository settings must still be read back from GitHub before making remote enforcement claims.
 - Design posture: freeze and harden the small verifiable V1 before expanding V2 capability or council
   runtime work.
 
@@ -46,6 +47,10 @@ Current runtime reality addendum:
 - After a real push succeeds, the one-use `git_push` capability must become USED and replay-blocked.
   `gate-status` should report that as a successful post-push state for that capability, not as a
   reusable authorization.
+- With protected `master`, the standard remote update path is topic branch, pull request targeting
+  `master`, and required check `BHA read-only gate`. A direct `git push origin master` is
+  emergency-only and requires explicit operator authorization, a fresh local `git_push` capability,
+  and GitHub protection allowing the action.
 - Remote tracking refs are local Git observations after fetch or push; they are useful evidence, but
   they are not remote proof by themselves.
 - Validation input hashes normalize text line endings to LF before hashing so trust recovery does not
@@ -4522,7 +4527,7 @@ Out of scope:
 - dependency changes
 - general task scheduling
 - CI or GitHub automation as a required dependency for local V1
-- remote branch protection as already-enforced proof
+- remote branch protection as a required dependency for local V1 verification
 
 This boundary is important. BHA earns more autonomy by proving the small loop first.
 
@@ -4532,7 +4537,8 @@ The V1 local implementation is ready for freeze review, but these risks remain:
 
 - YAML support must be deliberately limited or replaced with JSON-compatible parsing.
 - Ledger history should not be rewritten casually.
-- Local hooks remain bypassable without remote branch protection and required checks.
+- Local hooks remain bypassable locally; protected `master` plus required checks mitigate the remote
+  merge path but do not remove admin, token, workflow, or UI bypass risks.
 - V2 preview artifacts must not be treated as runtime authority.
 - `bha-run.js` has accumulated many responsibilities and should be modularized only after V1 freeze.
 - Policy hash rules must be implemented before capability signing UX expands.
