@@ -3769,6 +3769,7 @@ async function postPushStatus(remote, branch, head, capability, checks) {
   const remoteTracking = await remoteTrackingStatus(remote, branch, head);
   const replayBlocked = capability && capability.reason === 'CAPABILITY_REPLAY_DETECTED';
   const prePushReady = checks && Object.values(checks).every(Boolean);
+  const protectedBranch = protectedBaseBranch(branch);
   let phase = 'NEEDS_GIT_PUSH_CAPABILITY';
   if (prePushReady) {
     phase = 'PRE_PUSH_READY';
@@ -3787,9 +3788,15 @@ async function postPushStatus(remote, branch, head, capability, checks) {
     capability_id: capability && capability.capability_id ? capability.capability_id : null,
     used_session_event_hash: usedSession ? usedSession.event_hash : null,
     remote_tracking: remoteTracking,
-    next_operator_meaning: replayBlocked
-      ? 'The previous one-use git_push capability has been used; if the operator chooses another real push, generate and sign a new capability first.'
-      : (prePushReady ? 'A valid consumed git_push capability is ready if the operator chooses to push once.' : 'No push is required now; if the operator chooses a real push, generate, sign, issue, and consume a git_push capability first.')
+    next_operator_meaning: protectedBranch
+      ? (replayBlocked
+        ? 'The previous one-use git_push capability has been used. Protected master standard flow is topic branch, PR, and BHA read-only gate; generate a fresh master capability only for an explicitly authorized emergency direct push.'
+        : (prePushReady
+          ? 'A valid consumed git_push capability is ready for emergency direct push to protected master. Standard remote flow is topic branch, PR, and BHA read-only gate.'
+          : 'No push to protected master is required now. Standard remote flow is topic branch, PR, and BHA read-only gate; generate a master capability only for an explicitly authorized emergency direct push.'))
+      : (replayBlocked
+        ? 'The previous one-use git_push capability has been used; if the operator chooses another real push, generate and sign a new capability first.'
+        : (prePushReady ? 'A valid consumed git_push capability is ready if the operator chooses to push once.' : 'No push is required now; if the operator chooses a real push, generate, sign, issue, and consume a git_push capability first.'))
   };
 }
 
@@ -4423,6 +4430,24 @@ function nextGateAction(checks, capability) {
   return 'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH';
 }
 
+function protectedBaseBranch(branch) {
+  return String(branch || '') === 'master';
+}
+
+function standardProtectedBranchFlow(remote, branch) {
+  const targetRemote = remote || 'origin';
+  const targetBranch = branch || 'master';
+  const remoteArg = powerShellSingleQuote(targetRemote);
+  const branchArg = powerShellSingleQuote(targetBranch);
+  return [
+    'git switch -c codex/<topic-branch>',
+    `node scripts/bha-run.js gate-status --remote ${remoteArg} --branch 'codex/<topic-branch>' --format json`,
+    "generate, sign, issue, and consume a git_push capability for 'codex/<topic-branch>' if the operator chooses to push that topic branch",
+    `git push ${remoteArg} HEAD`,
+    `open a pull request targeting ${branchArg} and wait for required check: BHA read-only gate`
+  ];
+}
+
 function nextGateCommands(action, remote, branch) {
   const targetRemote = remote || 'origin';
   const targetBranch = branch || 'master';
@@ -4461,19 +4486,31 @@ function nextGateCommands(action, remote, branch) {
     ],
     READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH: [
       `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${remoteArg}`,
-      `git push ${remoteArg} ${branchArg}`
+      ...(protectedBaseBranch(targetBranch)
+        ? [
+          `protected ${branchArg} standard flow: push a topic branch, open a PR to ${branchArg}, and wait for BHA read-only gate`,
+          `emergency-only direct push, if explicitly authorized and permitted by GitHub protection: git push ${remoteArg} ${branchArg}`
+        ]
+        : [`git push ${remoteArg} ${branchArg}`])
     ]
   };
   return commands[action] || [];
 }
 
-function gateNextActionContext(action) {
+function gateNextActionContext(action, branch) {
   const conditionalPushActions = new Set([
     'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY',
     'ISSUE_AND_CONSUME_A_NEW_SIGNED_GIT_PUSH_CAPABILITY',
     'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH'
   ]);
   if (conditionalPushActions.has(action)) {
+    if (protectedBaseBranch(branch)) {
+      return {
+        next_action_required_now: false,
+        next_action_condition: 'Only required if the operator chooses an emergency direct push to protected master. The standard remote flow is topic branch, pull request to master, and required check: BHA read-only gate.',
+        next_action_scope: 'emergency_direct_push_to_protected_branch'
+      };
+    }
     return {
       next_action_required_now: false,
       next_action_condition: 'Only required if the operator chooses to perform a real git push.',
@@ -4983,6 +5020,7 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
   const remoteArg = powerShellSingleQuote(remote || 'origin');
   const branchArg = powerShellSingleQuote(branch || 'master');
   const payloadArg = powerShellSingleQuote(payloadPath);
+  const protectedBranch = protectedBaseBranch(branch);
   const currentContext = context || currentPayloadContext(remote, branch, head, null);
   const unsigned = capabilityFileSummary(payloadPath, remote, branch, head, false, currentContext);
   const signed = await signedCapabilityFileSummary(signedPath, remote, branch, head, currentContext);
@@ -5017,10 +5055,14 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
   const blockedBeforeCapability = !capabilityActions.has(action);
   const singleLineCommands = blockedBeforeCapability ? immediateCommands : capabilityCommands;
   return {
-    purpose: 'Prepare a git_push capability without BHA reading private key material.',
+    purpose: protectedBranch
+      ? 'Prepare an emergency direct git_push capability for protected master without BHA reading private key material. Standard remote work should use a topic branch and PR.'
+      : 'Prepare a git_push capability without BHA reading private key material.',
     action,
     capability_flow_required_now: false,
-    capability_flow_condition: 'Only required if the operator chooses to perform a real git push.',
+    capability_flow_condition: protectedBranch
+      ? 'Only required if the operator chooses an emergency direct push to protected master; normal updates should use a topic branch, pull request, and BHA read-only gate.'
+      : 'Only required if the operator chooses to perform a real git push.',
     blocked_before_capability: blockedBeforeCapability,
     signer_boundary: {
       operator_controls_signer: true,
@@ -5040,11 +5082,21 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
     next_powershell_command: postSignerPowerShellCommand(capabilityId, remote, branch, signedPath),
     single_line_commands: singleLineCommands,
     capability_commands_when_unblocked: capabilityCommands,
+    standard_remote_flow: protectedBranch ? standardProtectedBranchFlow(remote, branch) : null,
+    protected_branch_policy: protectedBranch ? {
+      branch: branch || 'master',
+      standard_flow: 'topic branch -> pull request -> required check: BHA read-only gate',
+      direct_push: 'emergency_only',
+      local_capability_meaning: 'local gate for an explicitly authorized emergency direct push, not the normal protected-branch workflow'
+    } : null,
     notes: [
       'Do not paste private key material into BHA commands.',
       'The signed capability file may contain a signature, but gate-status never prints the signature value.',
       'Existing .bha/local payload files are local-only and may be stale; regenerate before signing when matches_current_context is false.',
-      'A capability already marked USED must not be replayed; generate and sign a fresh payload for the next push.'
+      'A capability already marked USED must not be replayed; generate and sign a fresh payload for the next push.',
+      protectedBranch
+        ? 'Protected master uses PR plus BHA read-only gate as the standard remote flow; direct master push is emergency-only.'
+        : 'For protected base branches, prefer topic branch plus PR over direct branch push.'
     ]
   };
 }
@@ -5076,7 +5128,7 @@ async function gateStatus(remote, branch) {
     clean_git_status: gitStatusAllowedForLocalTrustRepair(status)
   };
   const action = nextGateAction(checks, capability);
-  const actionContext = gateNextActionContext(action);
+  const actionContext = gateNextActionContext(action, branch);
   const immediateCommands = nextGateCommands(action, remote, branch);
   const currentContext = currentPayloadContext(remote, branch, head, verify.parsed ? verify.parsed.ledger_head_hash : null);
   const operatorHandoff = await operatorPushHandoff(action, remote, branch, head, capability, immediateCommands, currentContext);
@@ -5109,9 +5161,24 @@ async function gateStatus(remote, branch) {
     push_requirement: {
       required_now: false,
       operator_controlled: true,
-      reason: 'BHA never requires an immediate git push; generate and consume a git_push capability only when the operator chooses to perform a real push.',
+      reason: protectedBaseBranch(branch)
+        ? 'BHA never requires an immediate push to protected master. Standard remote work uses a topic branch, pull request, and required check: BHA read-only gate; a master git_push capability is emergency-only.'
+        : 'BHA never requires an immediate git push; generate and consume a git_push capability only when the operator chooses to perform a real push.',
       capability_required_for_real_push: true,
       current_gate_action_if_operator_pushes: action
+    },
+    remote_branch_policy: protectedBaseBranch(branch) ? {
+      branch: branch || 'master',
+      protected: true,
+      standard_flow: 'topic branch -> pull request -> required check: BHA read-only gate',
+      direct_push: 'emergency_only',
+      required_check: 'BHA read-only gate',
+      proof_boundary: 'This field documents the configured protected master workflow; current GitHub settings must be verified from GitHub for remote enforcement claims.'
+    } : {
+      branch: branch || 'UNKNOWN',
+      protected: false,
+      standard_flow: 'operator-authorized branch push after local BHA gate',
+      direct_push: 'operator_controlled'
     },
     signer_boundary: {
       operator_controls_signer: true,
@@ -7098,11 +7165,12 @@ async function handleAuditV1Stable(args) {
       fileContains(ROADMAP_PATH, '`next-local-plan-status` reports `NEXT_LOCAL_PLAN_READY`') &&
       fileContains(ROADMAP_PATH, '`push_required_now=false`') &&
       fileContains(ROADMAP_PATH, 'does not authorize push, complete the long-term goal, or enable V2 capability/council runtime work') &&
-      fileContains(ROADMAP_PATH, 'Only if the operator separately chooses a real push') &&
+      fileContains(ROADMAP_PATH, 'For normal remote updates after protected `master`') &&
+      fileContains(ROADMAP_PATH, 'Direct `git push origin master` is emergency-only') &&
       fileContains(ROADMAP_PATH, "push-prep --remote 'origin' --branch 'master'") &&
       fileContains(ROADMAP_PATH, "gate-status --remote 'origin' --branch 'master'") &&
       fileContains(ROADMAP_PATH, "recover-status --remote 'origin' --branch 'master'") &&
-      fileContains(ROADMAP_PATH, 'requires separate operator intent'),
+      fileContains(ROADMAP_PATH, 'requires explicit operator authorization'),
     { path: rel(ROADMAP_PATH) },
     ['.bha/roadmap.md']
   ));
@@ -9351,8 +9419,12 @@ async function handleRegressionSelftest(args) {
   checks.push(regressionCheck('gate_status_operator_meaning_is_conditional', missingPayloadGateStatus.exit_code === 0 &&
     missingPayloadGateStatus.parsed &&
     missingPayloadGateStatus.parsed.post_push_status &&
-    String(missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning || '').includes('No push is required now') &&
-    String(missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning || '').includes('if the operator chooses a real push'), {
+    (protectedBaseBranch(branch)
+      ? String(missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning || '').includes('No push to protected master is required now')
+      : String(missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning || '').includes('No push is required now')) &&
+    (protectedBaseBranch(branch)
+      ? String(missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning || '').includes('BHA read-only gate')
+      : String(missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning || '').includes('if the operator chooses a real push')), {
     next_operator_meaning: missingPayloadGateStatus.parsed && missingPayloadGateStatus.parsed.post_push_status
       ? missingPayloadGateStatus.parsed.post_push_status.next_operator_meaning
       : 'NO_JSON'
@@ -9373,11 +9445,25 @@ async function handleRegressionSelftest(args) {
     missingPayloadGateStatus.parsed &&
     missingPayloadGateStatus.parsed.next_action === 'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY' &&
     missingPayloadGateStatus.parsed.next_action_required_now === false &&
-    missingPayloadGateStatus.parsed.next_action_scope === 'operator_chosen_git_push' &&
+    missingPayloadGateStatus.parsed.next_action_scope === (protectedBaseBranch(branch) ? 'emergency_direct_push_to_protected_branch' : 'operator_chosen_git_push') &&
     String(missingPayloadGateStatus.parsed.next_action_condition || '').includes('operator chooses'), {
     next_action: missingPayloadGateStatus.parsed ? missingPayloadGateStatus.parsed.next_action : 'NO_JSON',
     next_action_required_now: missingPayloadGateStatus.parsed ? missingPayloadGateStatus.parsed.next_action_required_now : 'NO_JSON',
     next_action_scope: missingPayloadGateStatus.parsed ? missingPayloadGateStatus.parsed.next_action_scope : 'NO_JSON'
+  }));
+  checks.push(regressionCheck('gate_status_protected_master_guides_pr_flow', missingPayloadGateStatus.exit_code === 0 &&
+    missingPayloadGateStatus.parsed &&
+    (!protectedBaseBranch(branch) || (
+      missingPayloadGateStatus.parsed.remote_branch_policy &&
+      missingPayloadGateStatus.parsed.remote_branch_policy.direct_push === 'emergency_only' &&
+      missingPayloadGateStatus.parsed.remote_branch_policy.required_check === 'BHA read-only gate' &&
+      missingPayloadGateStatus.parsed.operator_handoff &&
+      missingPayloadGateStatus.parsed.operator_handoff.protected_branch_policy &&
+      Array.isArray(missingPayloadGateStatus.parsed.operator_handoff.standard_remote_flow) &&
+      missingPayloadGateStatus.parsed.operator_handoff.standard_remote_flow.some((commandText) => String(commandText).includes('pull request'))
+    )), {
+    branch,
+    remote_branch_policy: missingPayloadGateStatus.parsed ? missingPayloadGateStatus.parsed.remote_branch_policy : 'NO_JSON'
   }));
   const gateNextCommands = missingPayloadGateStatus.parsed && Array.isArray(missingPayloadGateStatus.parsed.next_commands)
     ? missingPayloadGateStatus.parsed.next_commands
