@@ -198,7 +198,22 @@ function readJsonStrict(file) {
 }
 
 function writeJson(file, value) {
-  fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n', 'utf8');
+  const text = JSON.stringify(value, null, 2) + '\n';
+  let lastError = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      fs.writeFileSync(file, text, 'utf8');
+      return;
+    } catch (error) {
+      lastError = error;
+      const code = error && error.code ? error.code : 'UNKNOWN';
+      if (!['UNKNOWN', 'EBUSY', 'EPERM', 'EACCES'].includes(code)) {
+        throw error;
+      }
+      syncSleep(25 * (attempt + 1));
+    }
+  }
+  throw lastError;
 }
 
 function readJsonl(file) {

@@ -67,9 +67,10 @@ jobs:
         run: |
           set -euo pipefail
           fresh="$RUNNER_TEMP/bha-fresh-clone"
-          git clone --no-local "$GITHUB_WORKSPACE" "$fresh"
+          git clone --depth 1 --branch master "https://github.com/${GITHUB_REPOSITORY}.git" "$fresh"
           (
             cd "$fresh"
+            git status --short --branch
             node scripts/bha-verify.js | tee "$RUNNER_TEMP/bha-artifacts/fresh-clone-verifier.json"
             node scripts/bha-run.js recover-status --remote origin --branch master --format json | tee "$RUNNER_TEMP/bha-artifacts/fresh-clone-recover-status.json"
             node scripts/bha-run.js gate-status --remote origin --branch master --format json | tee "$RUNNER_TEMP/bha-artifacts/fresh-clone-gate-status.json"
