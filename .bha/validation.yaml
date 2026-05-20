@@ -564,7 +564,7 @@
         "--remote",
         "origin",
         "--branch",
-        "master",
+        "CURRENT",
         "--format",
         "json",
         "--allow-validation-in-progress"
@@ -612,7 +612,7 @@
         "--remote",
         "origin",
         "--branch",
-        "master",
+        "CURRENT",
         "--format",
         "json",
         "--allow-validation-in-progress"
@@ -882,10 +882,8 @@
           "schema": "bha.capability.v1",
           "type": "git_push",
           "remote": "origin",
-          "branch": "master",
           "one_use": true,
-          "signing_key_id": "owner-main-pkcs8",
-          "command": "git push origin master"
+          "signing_key_id": "owner-main-pkcs8"
         },
         "has_keys": [
           "head",
@@ -911,7 +909,7 @@
         "--remote",
         "origin",
         "--branch",
-        "master",
+        "CURRENT",
         "--expires-minutes",
         "20",
         "--key-id",

@@ -214,7 +214,7 @@
           "--remote",
           "origin",
           "--branch",
-          "master",
+          "CURRENT",
           "--format",
           "json"
         ],
@@ -228,7 +228,7 @@
           "--remote",
           "origin",
           "--branch",
-          "master",
+          "CURRENT",
           "--format",
           "json",
           "--allow-validation-in-progress"
@@ -243,7 +243,7 @@
           "--remote",
           "origin",
           "--branch",
-          "master",
+          "CURRENT",
           "--format",
           "json"
         ],
@@ -257,7 +257,7 @@
           "--remote",
           "origin",
           "--branch",
-          "master",
+          "CURRENT",
           "--format",
           "json",
           "--allow-validation-in-progress"
