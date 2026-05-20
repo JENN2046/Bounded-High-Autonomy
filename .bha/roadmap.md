@@ -136,6 +136,14 @@ Stage transition rule:
 - Enter the next local planning stage only when `stable-exit-review` reports `PASS`, `next-local-plan-status` reports `NEXT_LOCAL_PLAN_READY`, the worktree is clean, and `push_required_now=false`.
 - Treat that transition as local planning readiness only. It does not authorize push, complete the long-term goal, or enable V2 capability/council runtime work.
 
+Current next safe task:
+
+- Prepare Branch Protection Enforcement from the implemented read-only CI gate.
+- Current required check name: `BHA read-only gate`.
+- Current remote enforcement status: not applied by BHA in this repository session.
+- GitHub branch protection settings are unknown until inspected through an authenticated owner UI/API session.
+- Do not modify GitHub settings without explicit operator authorization.
+
 ## Next Stage Stop-Gate Queue
 
 Claim status: proposed next-stage execution order. Current repository state is intentionally not embedded here because git `HEAD`, worktree cleanliness, and verifier status change after commits and evidence repair.
@@ -181,9 +189,9 @@ Stop-gate order:
    - Recovery: add a small operator-facing procedure for the blocked gate before turning on remote enforcement.
 
 6. CI Read-only JSON Strict Gate
-   - Artifact: future `.github/workflows/bha-gate.yml` design, not implemented in this queue.
-   - Validation: CI uses read-only repository permissions, no secrets, no write token, no tracked evidence writes, and stable JSON output.
-   - Stop gate: do not set required checks until CI is stable as a dry run.
+   - Artifact: `.github/workflows/bha-readonly-gate.yml`.
+   - Validation: CI uses read-only repository permissions, no secrets, no write token, no tracked evidence writes, fresh clone replay, and stable JSON output.
+   - Stop gate: do not set required checks until the latest `master` run is green and the exact check name is confirmed.
    - Recovery: keep CI non-required while fixing workflow differences.
 
 7. Branch Protection Enforcement
@@ -244,7 +252,6 @@ Stop-gate order:
 
 ## Deferred
 
-- CI integration.
 - Remote attestation.
 - Provider governance.
 - Memory governance.

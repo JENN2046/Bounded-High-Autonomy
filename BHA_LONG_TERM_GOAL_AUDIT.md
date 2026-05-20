@@ -162,7 +162,19 @@ Rollback path:
 
 ### CI Read-Only JSON Strict Gate
 
-Claim status: proposed remote gate design, not implemented.
+Claim status: implemented read-only gate, verified on `master` at `8a8b869bc501c03177c4a9e606aa2dda14f7e6b1`.
+
+Observed workflow:
+
+- `.github/workflows/bha-readonly-gate.yml`
+- workflow name: `bha-readonly-gate`
+- job/check name: `BHA read-only gate`
+- latest observed run: `https://github.com/JENN2046/Bounded-High-Autonomy/actions/runs/26160950357`
+- latest observed result: success
+- permissions observed from workflow file: `contents: read`
+- checkout setting observed from workflow file: `persist-credentials: false`
+- tracked evidence writes: none in CI
+- JSON artifacts: uploaded as `bha-readonly-gate-json`
 
 CI requirements:
 
@@ -177,18 +189,27 @@ CI requirements:
 - no writes to `.bha/ledger.jsonl`, `.bha/state.json`, or `.bha/checkpoint.json`
 - JSON artifact is an observation report, not ledger evidence
 
-Proposed checks:
+Implemented checks:
 
 ```powershell
 node --check scripts/bha-run.js
 node --check scripts/bha-verify.js
-node scripts/bha-verify.js --self-test
 node scripts/bha-verify.js
 node scripts/bha-run.js audit-v12 --format json
 node scripts/bha-run.js audit-v1-stable --format json
+node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json
+git clone --depth 1 --branch master https://github.com/${GITHUB_REPOSITORY}.git "$fresh"
+node scripts/bha-verify.js
+node scripts/bha-run.js recover-status --remote origin --branch master --format json
+node scripts/bha-run.js gate-status --remote origin --branch master --format json
+node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json
 ```
 
-Proposed required check names:
+Required check name for current branch protection:
+
+- `BHA read-only gate`
+
+Future granular required check names, if the workflow is later split into multiple jobs:
 
 - `bha/syntax`
 - `bha/verifier-self-test`
@@ -246,7 +267,59 @@ node scripts/bha-verify.js --format json --strict
 
 Stop gate:
 
-Do not make CI required until it is stable as a dry-run check and does not depend on `.bha/local`.
+Do not make CI required until the latest `master` run is green and the exact GitHub check name is confirmed from the repository UI or API. The currently observed check name is `BHA read-only gate`.
+
+### V1 Stable Exit Review
+
+Claim status: verified local review complete at `8a8b869bc501c03177c4a9e606aa2dda14f7e6b1`; no P1/P2 found in this review.
+
+Verified:
+
+- worktree clean on `master`
+- local `master` aligned with `origin/master`
+- `node scripts/bha-verify.js` reports `PASS` with no issues or warnings
+- `node scripts/bha-run.js stable-exit-status --remote origin --branch master --format json` reports `PASS`
+- `node scripts/bha-run.js audit-v1-stable --format json` reports `PASS`
+- `node scripts/bha-run.js audit-v12 --format json` reports `PASS`
+- `node scripts/bha-run.js stable-exit-review --remote origin --branch master --format json` reports `PASS`
+- GitHub Actions run `26160950357` reports success for head `8a8b869bc501c03177c4a9e606aa2dda14f7e6b1`
+- local one-use `git_push` capability is replay-blocked after push, as expected
+- CI workflow is read-only and does not write ledger, state, checkpoint, closeout, local capability files, tags, releases, packages, deployments, or remote branches
+
+Inferred:
+
+- V1 local trust kernel is ready for remote branch protection preparation.
+- Fresh-clone tracked trust is represented in CI through verifier, recover-status, gate-status, and stable-exit-status.
+
+Proposed:
+
+- Make `BHA read-only gate` a required status check for `master`.
+- Treat direct owner push as emergency-only after branch protection is enforced.
+- Keep future split checks optional until the workflow is intentionally decomposed into multiple jobs.
+
+Unknown:
+
+- Current GitHub branch protection settings. A read-only unauthenticated REST request to branch protection returned `401 Unauthorized`, so repository settings must be checked through an authenticated owner UI/API session before enforcement.
+- Whether signed commits are operationally available for the repository owner.
+- Whether admin bypass should be fully disabled or documented as a break-glass path.
+
+P1 findings: none.
+
+P2 findings: none.
+
+P3 findings:
+
+- Documentation previously described the read-only CI gate as proposed and named future granular checks instead of the currently implemented required check name. The plan now distinguishes the implemented `BHA read-only gate` from future split checks.
+
+Residual risks:
+
+- Local hooks remain bypassable by `--no-verify`, missing hooksPath, or direct shell use.
+- GitHub UI, token pushes, workflow edits, and admin bypass remain remote risks until branch protection is applied.
+- V1 is tamper-evident, not OS-level tamper-proof.
+
+Stop gate:
+
+Do not claim remote enforcement until branch protection is applied, verified, and its bypass policy is explicitly documented.
 
 ### Branch Protection Enforcement
 
@@ -255,7 +328,8 @@ Claim status: proposed GitHub configuration checklist, not applied.
 Required settings before claiming remote gate:
 
 - required status checks before merge
-- fixed required check names: `bha/syntax`, `bha/verifier-self-test`, `bha/verifier`, `bha/audit-v12`, `bha/audit-v1-stable`, `bha/fresh-clone-readonly`, and `bha/bypass-matrix-readonly`
+- fixed required check name for the current workflow: `BHA read-only gate`
+- future split-check names, only after workflow decomposition: `bha/syntax`, `bha/verifier-self-test`, `bha/verifier`, `bha/audit-v12`, `bha/audit-v1-stable`, `bha/fresh-clone-readonly`, and `bha/bypass-matrix-readonly`
 - require branch up to date before merge, unless explicitly waived
 - block force pushes
 - block branch deletion
@@ -267,6 +341,36 @@ Required settings before claiming remote gate:
 - document emergency bypass and cleanup path
 - require signed commits only if the repository owner can support that operationally; otherwise do not claim signed-commit protection
 - protect workflow changes with review and required checks
+
+Exact proposed configuration for `master`:
+
+- Require a pull request before merging: enabled.
+- Required approvals: 1 minimum.
+- Dismiss stale approvals when new commits are pushed: enabled.
+- Require review from Code Owners: enabled if CODEOWNERS is added; otherwise proposed for a later local commit.
+- Require conversation resolution before merge: enabled.
+- Require status checks to pass before merging: enabled.
+- Required status check: `BHA read-only gate`.
+- Require branches to be up to date before merging: enabled unless it creates unacceptable single-maintainer friction; any waiver must be documented.
+- Require deployments before merging: disabled for V1.
+- Require signed commits: optional; enable only if the owner can reliably sign commits.
+- Require linear history: enabled if compatible with the preferred merge style.
+- Include administrators: enabled by default; if disabled, document admin bypass as residual risk.
+- Restrict who can push to matching branches: enabled where supported; allow only the repository owner or a small maintainer set.
+- Allow force pushes: disabled.
+- Allow deletions: disabled.
+- Lock branch: disabled unless the repository is intentionally frozen.
+- Ruleset target: branch `master`.
+
+Recommended protected path review focus:
+
+- `.bha/**`
+- `scripts/bha-run.js`
+- `scripts/bha-verify.js`
+- `.githooks/**`
+- `.github/workflows/**`
+- `AGENTS.md`
+- `BHA_*.md`
 
 Stop gate:
 
