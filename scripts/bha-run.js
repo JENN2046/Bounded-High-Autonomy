@@ -9183,6 +9183,21 @@ async function handleRegressionSelftest(args) {
     reason: topicNoCapabilityPreflight.parsed ? topicNoCapabilityPreflight.parsed.reason : 'NO_JSON',
     return_checkout_exit_code: returnToProtectedBranch.exit_code
   }));
+  const postPushBlocked = shipBlocked('BLOCKED_PR_CREATE_FAILED', {
+    remote: 'origin',
+    base: branch,
+    branch: 'codex/example',
+    pushed: true,
+    steps: [{ id: 'git_push_topic_branch', ok: true }]
+  });
+  checks.push(regressionCheck('ship_pr_create_failure_after_push_is_writeful',
+    postPushBlocked.status === 'BLOCKED_PR_CREATE_FAILED' &&
+    postPushBlocked.read_only === false &&
+    postPushBlocked.pushed === true, {
+    status: postPushBlocked.status,
+    read_only: postPushBlocked.read_only,
+    pushed: postPushBlocked.pushed
+  }));
   const missingPayloadGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
   const missingSignedPayloadStatus = await runFixtureBha(fixtureRoot, ['signed-payload-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
   const originalPrivateKeyPath = process.env.BHA_PRIVATE_KEY_PATH;
@@ -11046,14 +11061,22 @@ function shipStep(id, result) {
   }, result && result.parsed ? { parsed: result.parsed } : {});
 }
 
+function shipStepsIncludeSuccessfulRemotePush(steps) {
+  return Array.isArray(steps) && steps.some((step) => step && step.id === 'git_push_topic_branch' && step.ok === true);
+}
+
 function shipBlocked(status, fields) {
-  return Object.assign({
+  const report = Object.assign({
     schema: 'bha.ship.v1',
     ok: false,
     status,
     read_only: true,
     recorded: false
   }, fields || {});
+  if (!Object.prototype.hasOwnProperty.call(fields || {}, 'read_only') && shipStepsIncludeSuccessfulRemotePush(report.steps)) {
+    report.read_only = false;
+  }
+  return report;
 }
 
 function gitShipAliasCommand() {
@@ -11462,7 +11485,17 @@ async function handleShip(args) {
       error: created.error
     });
     if (created.exit_code !== 0 || created.error) {
-      console.log(JSON.stringify(shipBlocked('BLOCKED_PR_CREATE_FAILED', { remote, base, branch, head, steps })));
+      console.log(JSON.stringify(shipBlocked('BLOCKED_PR_CREATE_FAILED', {
+        read_only: false,
+        remote,
+        base,
+        branch,
+        head,
+        pushed: true,
+        pr: null,
+        steps,
+        proof_boundary: 'The topic branch push already completed before PR creation failed; this blocked result is writeful and requires operator follow-up or cleanup.'
+      })));
       process.exitCode = created.exit_code || 3;
       return;
     }
