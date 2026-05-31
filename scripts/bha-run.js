@@ -8590,6 +8590,7 @@ async function handleRegressionSelftest(args) {
     recovery_commands_module: fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function recoveryGitPushNextCommands'),
     local_payload_status_module: fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function localPayloadStatus')
   }));
+  checks.push(callerProvidedInputBoundaryCheck('local_payload_status_has_only_caller_provided_inputs', LOCAL_PAYLOAD_STATUS_SCRIPT));
   checks.push(regressionCheck('payload_summary_pure_logic_extracted',
     fileContains(PAYLOAD_SUMMARY_SCRIPT, 'function currentPayloadContext') &&
     fileContains(PAYLOAD_SUMMARY_SCRIPT, 'function capabilityFileSummary') &&

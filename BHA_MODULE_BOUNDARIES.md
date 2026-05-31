@@ -108,6 +108,9 @@ Forbidden:
 
 Purpose: convert local unsigned/signed payload summaries into reason codes,
 human messages, and next local recovery commands.
+Boundary drift is covered by regression-selftest check
+`local_payload_status_has_only_caller_provided_inputs`; this is a guardrail, not
+a proof source above repository reality.
 
 Allowed:
 - Pure status/reason construction from caller-provided summaries.
