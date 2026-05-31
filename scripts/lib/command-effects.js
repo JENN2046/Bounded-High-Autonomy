@@ -100,6 +100,9 @@ function commandEffect(command, args) {
     return hasOption(args, '--out') ? EFFECT_LOCAL_ONLY_WRITE : EFFECT_READ_ONLY;
   }
   if (normalized === 'prepush-check') {
+    if (hasFlag(args, '--record') || hasFlag(args, '--no-write-guard')) {
+      return EFFECT_LEDGER_WRITE;
+    }
     return hasFlag(args, '--preflight') ? EFFECT_READ_ONLY : EFFECT_EXTERNAL_GUARDED;
   }
   if (normalized === 'issue-capability') {

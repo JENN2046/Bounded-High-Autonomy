@@ -3904,7 +3904,8 @@ function firstFailedGate(checks) {
 async function handlePrepushCheck(args) {
   const record = args.includes('--record');
   const preflight = args.includes('--preflight');
-  const hookArgs = args.filter((arg) => arg !== '--record' && arg !== '--preflight');
+  const noWriteGuard = args.includes('--no-write-guard');
+  const hookArgs = args.filter((arg) => arg !== '--record' && arg !== '--preflight' && arg !== '--no-write-guard');
   if (hookArgs[0] !== '--internal-git-hook') {
     console.log(JSON.stringify({
       schema: 'bha.prepush_check.v1',
@@ -3973,6 +3974,7 @@ async function handlePrepushCheck(args) {
     read_only: !record && (preflight || !ok),
     recorded: record,
     preflight,
+    no_write_guard: noWriteGuard,
     remote: remote || 'UNKNOWN',
     branch: branch || 'UNKNOWN',
     head: head || 'UNKNOWN',
@@ -8395,6 +8397,39 @@ async function handleRegressionSelftest(args) {
     effect: checkAfterStaleLock.parsed ? checkAfterStaleLock.parsed.effect : 'NO_JSON',
     read_only: checkAfterStaleLock.parsed ? checkAfterStaleLock.parsed.read_only : 'NO_JSON',
     recorded: checkAfterStaleLock.parsed ? checkAfterStaleLock.parsed.recorded : 'NO_JSON'
+  }));
+  const prepushRecordFixtureRoot = path.join(scratchParent, `prepush-record-${crypto.randomUUID()}`);
+  fs.mkdirSync(prepushRecordFixtureRoot, { recursive: true });
+  writeRegressionFixtureEvidence(prepushRecordFixtureRoot, keyId, publicKeyPem, []);
+  await runCommand(['git', 'init'], { cwd: prepushRecordFixtureRoot });
+  await runCommand(['git', 'config', 'user.email', 'bha-regression@example.invalid'], { cwd: prepushRecordFixtureRoot });
+  await runCommand(['git', 'config', 'user.name', 'BHA Regression'], { cwd: prepushRecordFixtureRoot });
+  await runCommand(['git', 'add', '.'], { cwd: prepushRecordFixtureRoot });
+  await runCommand(['git', 'commit', '-m', 'prepush record regression fixture'], { cwd: prepushRecordFixtureRoot });
+  const prepushRecordLedgerBefore = readJsonl(path.join(prepushRecordFixtureRoot, '.bha', 'ledger.jsonl')).length;
+  const prepushRecordNoWriteGuard = await runFixtureBha(prepushRecordFixtureRoot, [
+    'prepush-check',
+    '--record',
+    '--no-write-guard',
+    '--internal-git-hook',
+    'origin'
+  ]);
+  const prepushRecordLedgerAfter = readJsonl(path.join(prepushRecordFixtureRoot, '.bha', 'ledger.jsonl'));
+  const prepushRecordEvent = prepushRecordLedgerAfter.slice(prepushRecordLedgerBefore).find((event) => event.type === 'prepush_check');
+  checks.push(regressionCheck('prepush_record_no_write_guard_declares_ledger_write_effect',
+    commandEffect('prepush-check', ['--record', '--no-write-guard', '--internal-git-hook', 'origin']) === 'ledger_write' &&
+    prepushRecordNoWriteGuard.exit_code === 1 &&
+    prepushRecordNoWriteGuard.parsed &&
+    prepushRecordNoWriteGuard.parsed.recorded === true &&
+    prepushRecordNoWriteGuard.parsed.no_write_guard === true &&
+    prepushRecordEvent &&
+    prepushRecordEvent.type === 'prepush_check', {
+    command_effect: commandEffect('prepush-check', ['--record', '--no-write-guard', '--internal-git-hook', 'origin']),
+    exit_code: prepushRecordNoWriteGuard.exit_code,
+    recorded: prepushRecordNoWriteGuard.parsed ? prepushRecordNoWriteGuard.parsed.recorded : 'NO_JSON',
+    no_write_guard: prepushRecordNoWriteGuard.parsed ? prepushRecordNoWriteGuard.parsed.no_write_guard : 'NO_JSON',
+    event_type: prepushRecordEvent ? prepushRecordEvent.type : null,
+    error: prepushRecordNoWriteGuard.parsed ? prepushRecordNoWriteGuard.parsed.error : truncate(prepushRecordNoWriteGuard.stderr)
   }));
   const policyForPathCheck = loadPolicy();
   checks.push(regressionCheck('command_effect_model_and_readonly_write_guard_present',
