@@ -26,6 +26,15 @@
       ".bha/roadmap.md",
       "scripts/bha-run.js",
       "scripts/bha-verify.js",
+      "scripts/lib/command-effects.js",
+      "scripts/lib/policy-check.js",
+      "scripts/lib/validation-runner.js",
+      "scripts/lib/capability-store.js",
+      "scripts/lib/push-gate.js",
+      "scripts/lib/git-reality.js",
+      "scripts/lib/local-payload-status.js",
+      "scripts/lib/payload-summary.js",
+      "scripts/lib/capability-verifier.js",
       ".githooks/pre-push",
       ".github/workflows/bha-readonly-gate.yml"
     ],
@@ -147,6 +156,78 @@
         "args": [
           "--check",
           "scripts/bha-verify.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/lib/command-effects.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/lib/policy-check.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/lib/validation-runner.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/lib/capability-store.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/lib/push-gate.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/lib/git-reality.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/lib/local-payload-status.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/lib/payload-summary.js"
+        ],
+        "reason": "local syntax validation"
+      },
+      {
+        "command": "node",
+        "args": [
+          "--check",
+          "scripts/lib/capability-verifier.js"
         ],
         "reason": "local syntax validation"
       },

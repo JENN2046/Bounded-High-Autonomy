@@ -5,6 +5,20 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
+const {
+  commandEffect,
+  effectAllowsTrackedWrite,
+  effectAllowsLocalWrite,
+  effectIsReadOnly
+} = require('./lib/command-effects');
+const policyCheck = require('./lib/policy-check');
+const validationRunner = require('./lib/validation-runner');
+const { createCapabilityStore } = require('./lib/capability-store');
+const pushGate = require('./lib/push-gate');
+const gitReality = require('./lib/git-reality');
+const localPayloadStatusLib = require('./lib/local-payload-status');
+const payloadSummary = require('./lib/payload-summary');
+const capabilityVerifier = require('./lib/capability-verifier');
 
 const ROOT = path.resolve(__dirname, '..');
 const BHA_DIR = path.join(ROOT, '.bha');
@@ -27,6 +41,15 @@ const ROADMAP_PATH = path.join(BHA_DIR, 'roadmap.md');
 const CHECKPOINT_PATH = path.join(BHA_DIR, 'checkpoint.json');
 const RUN_SCRIPT = path.join(ROOT, 'scripts', 'bha-run.js');
 const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
+const COMMAND_EFFECTS_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'command-effects.js');
+const POLICY_CHECK_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'policy-check.js');
+const VALIDATION_RUNNER_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'validation-runner.js');
+const CAPABILITY_STORE_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'capability-store.js');
+const PUSH_GATE_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'push-gate.js');
+const GIT_REALITY_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'git-reality.js');
+const LOCAL_PAYLOAD_STATUS_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'local-payload-status.js');
+const PAYLOAD_SUMMARY_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'payload-summary.js');
+const CAPABILITY_VERIFIER_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'capability-verifier.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
 const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
 const LONG_TERM_GOAL_AUDIT_PATH = path.join(ROOT, 'BHA_LONG_TERM_GOAL_AUDIT.md');
@@ -52,9 +75,23 @@ const VALIDATION_INPUTS = [
   ROADMAP_PATH,
   RUN_SCRIPT,
   VERIFY_SCRIPT,
+  COMMAND_EFFECTS_SCRIPT,
+  POLICY_CHECK_SCRIPT,
+  VALIDATION_RUNNER_SCRIPT,
+  CAPABILITY_STORE_SCRIPT,
+  PUSH_GATE_SCRIPT,
+  GIT_REALITY_SCRIPT,
+  LOCAL_PAYLOAD_STATUS_SCRIPT,
+  PAYLOAD_SUMMARY_SCRIPT,
+  CAPABILITY_VERIFIER_SCRIPT,
   PRE_PUSH_PATH,
   CI_READONLY_GATE_PATH
 ];
+
+let CURRENT_COMMAND_EFFECT = {
+  command: 'startup',
+  effect: 'read_only'
+};
 
 function rel(file) {
   return path.relative(ROOT, file).replace(/\\/g, '/');
@@ -62,6 +99,42 @@ function rel(file) {
 
 function relFromRoot(root, file) {
   return path.relative(root, file).replace(/\\/g, '/');
+}
+
+function setCurrentCommandEffect(command, args) {
+  CURRENT_COMMAND_EFFECT = {
+    command: String(command || 'NONE'),
+    effect: commandEffect(command, args || [])
+  };
+  return CURRENT_COMMAND_EFFECT;
+}
+
+function currentCommandEffectFields() {
+  return {
+    effect: CURRENT_COMMAND_EFFECT.effect,
+    command_effect: CURRENT_COMMAND_EFFECT.effect,
+    effect_read_only: effectIsReadOnly(CURRENT_COMMAND_EFFECT.effect)
+  };
+}
+
+function ensureTrackedWriteAllowed(operation) {
+  if (!effectAllowsTrackedWrite(CURRENT_COMMAND_EFFECT.effect)) {
+    throw new Error(`READ_ONLY_COMMAND_WRITE_DENIED: ${CURRENT_COMMAND_EFFECT.command} attempted ${operation}`);
+  }
+}
+
+function ensureLocalWriteAllowed(operation) {
+  if (!effectAllowsLocalWrite(CURRENT_COMMAND_EFFECT.effect)) {
+    throw new Error(`READ_ONLY_COMMAND_WRITE_DENIED: ${CURRENT_COMMAND_EFFECT.command} attempted ${operation}`);
+  }
+}
+
+function trackedJsonWriteOperation(file) {
+  const resolved = path.resolve(file);
+  if (resolved === STATE_PATH || resolved === POLICY_PATH || resolved === CHECKPOINT_PATH) {
+    return `write ${rel(resolved)}`;
+  }
+  return null;
 }
 
 function validationInputsForRoot(root) {
@@ -80,6 +153,15 @@ function validationInputsForRoot(root) {
     path.join(root, '.bha', 'roadmap.md'),
     path.join(root, 'scripts', 'bha-run.js'),
     path.join(root, 'scripts', 'bha-verify.js'),
+    path.join(root, 'scripts', 'lib', 'command-effects.js'),
+    path.join(root, 'scripts', 'lib', 'policy-check.js'),
+    path.join(root, 'scripts', 'lib', 'validation-runner.js'),
+    path.join(root, 'scripts', 'lib', 'capability-store.js'),
+    path.join(root, 'scripts', 'lib', 'push-gate.js'),
+    path.join(root, 'scripts', 'lib', 'git-reality.js'),
+    path.join(root, 'scripts', 'lib', 'local-payload-status.js'),
+    path.join(root, 'scripts', 'lib', 'payload-summary.js'),
+    path.join(root, 'scripts', 'lib', 'capability-verifier.js'),
     path.join(root, '.githooks', 'pre-push'),
     path.join(root, '.github', 'workflows', 'bha-readonly-gate.yml')
   ];
@@ -198,6 +280,10 @@ function readJsonStrict(file) {
 }
 
 function writeJson(file, value) {
+  const trackedOperation = trackedJsonWriteOperation(file);
+  if (trackedOperation) {
+    ensureTrackedWriteAllowed(trackedOperation);
+  }
   const text = JSON.stringify(value, null, 2) + '\n';
   let lastError = null;
   for (let attempt = 0; attempt < 6; attempt += 1) {
@@ -447,6 +533,7 @@ function withCapabilityLock(callback) {
 }
 
 function appendLedgerEventUnlocked(type, payload, mission, policy, state, head) {
+  ensureTrackedWriteAllowed(`append ledger event ${type}`);
   const event = {
     schema: 'bha.ledger.event.v1',
     run_id: state.run_id || mission.run_id,
@@ -471,6 +558,7 @@ function appendLedgerEventUnlocked(type, payload, mission, policy, state, head) 
 }
 
 function appendLedger(type, payload, mutateState) {
+  ensureTrackedWriteAllowed(`append ledger event ${type}`);
   return withLedgerLock((lockContext) => {
     fs.mkdirSync(BHA_DIR, { recursive: true });
     const mission = loadMission();
@@ -494,67 +582,25 @@ function appendLedger(type, payload, mutateState) {
 }
 
 function commandName(command) {
-  return path.basename(String(command || '')).replace(/\.(exe|cmd|bat)$/i, '').toLowerCase();
+  return policyCheck.commandName(command);
 }
 
 function normalizeRepoPath(value) {
-  let text = String(value || '').trim().replace(/^"|"$/g, '').replace(/\\/g, '/');
-  while (text.startsWith('./')) {
-    text = text.slice(2);
-  }
-  const parentEscape = text === '..' || text.startsWith('../') || text.includes('/../') || text.endsWith('/..');
-  if (process.platform === 'win32') {
-    text = text.toLowerCase();
-  }
-  return { path: text, parentEscape };
+  return policyCheck.normalizeRepoPath(value);
 }
 
 function deniedPathPatterns(mission, policy) {
-  const missionPatterns = Array.isArray(mission.denied_paths) ? mission.denied_paths : [];
-  const policyPatterns = policy.paths && Array.isArray(policy.paths.denied) ? policy.paths.denied : [];
+  const missionPatterns = Array.isArray((mission || {}).denied_paths) ? mission.denied_paths : [];
+  const policyPatterns = policy && policy.paths && Array.isArray(policy.paths.denied) ? policy.paths.denied : [];
   return missionPatterns.concat(policyPatterns);
 }
 
 function deniedPathMatch(pathText, mission, policy) {
-  const normalized = normalizeRepoPath(pathText);
-  if (normalized.parentEscape) {
-    return { denied: true, pattern: '..', code: 'PATH_PARENT_ESCAPE', path: normalized.path };
-  }
-  for (const pattern of deniedPathPatterns(mission, policy)) {
-    const normalizedPattern = normalizeRepoPath(pattern);
-    let item = normalizedPattern.path;
-    if (item.endsWith('/**')) {
-      item = item.slice(0, -3);
-    }
-    if (item.endsWith('.*')) {
-      const prefix = item.slice(0, -2);
-      if (normalized.path === prefix || normalized.path.startsWith(prefix + '.')) {
-        return { denied: true, pattern: normalizedPattern.path, code: 'DENY_PATH', path: normalized.path };
-      }
-    } else if (normalized.path === item || normalized.path.startsWith(item + '/')) {
-      return { denied: true, pattern: normalizedPattern.path, code: 'DENY_PATH', path: normalized.path };
-    }
-  }
-  return { denied: false, path: normalized.path };
+  return policyCheck.deniedPathMatch(pathText, mission, policy);
 }
 
 function classifyDeniedPathArgs(argv, mission, policy) {
-  for (const arg of argv.slice(1)) {
-    if (String(arg).startsWith('-')) {
-      continue;
-    }
-    const match = deniedPathMatch(arg, mission, policy);
-    if (match.denied) {
-      return {
-        category: 'denied_path',
-        rule: match.code,
-        reason: match.code === 'PATH_PARENT_ESCAPE' ? 'parent path escapes are forbidden' : 'denied path argument is forbidden',
-        path: match.path,
-        pattern: match.pattern
-      };
-    }
-  }
-  return null;
+  return policyCheck.classifyDeniedPathArgs(argv, mission, policy);
 }
 
 function scrubArg(value) {
@@ -599,150 +645,44 @@ function scrubbedEnv() {
 }
 
 function listFromPolicy(policy, section, fallback) {
-  const denyCommands = policy.action_rules && policy.action_rules.deny_commands;
+  const denyCommands = policy && policy.action_rules && policy.action_rules.deny_commands;
   return (denyCommands && Array.isArray(denyCommands[section])) ? denyCommands[section] : fallback;
 }
 
 function argvMatchesPattern(argv, pattern) {
-  const expected = String(pattern || '').trim().split(/\s+/).filter(Boolean).map((part, index) => {
-    return index === 0 ? commandName(part) : part.toLowerCase();
-  });
-  if (expected.length === 0 || !Array.isArray(argv) || argv.length < expected.length) {
-    return false;
-  }
-  const actual = [commandName(argv[0])].concat(argv.slice(1).map((arg) => String(arg).toLowerCase()));
-  return expected.every((part, index) => actual[index] === part);
+  return policyCheck.argvMatchesPattern(argv, pattern);
 }
 
 function argvMatchesAnyPattern(argv, patterns) {
-  return patterns.some((pattern) => argvMatchesPattern(argv, pattern));
+  return policyCheck.argvMatchesAnyPattern(argv, patterns);
 }
 
 function classifyForbidden(argv, policy) {
-  const cmd = commandName(argv[0]);
-  const args = argv.slice(1).map(String);
-  const first = (args[0] || '').toLowerCase();
-  const network = listFromPolicy(policy, 'network_commands', ['curl', 'wget']);
-  const providers = listFromPolicy(policy, 'provider_commands', ['openai', 'anthropic', 'gemini']);
-  const memory = listFromPolicy(policy, 'memory_commands', ['codex-memory', 'dailynote']);
-  const gitRemote = listFromPolicy(policy, 'git_remote_subcommands', ['push', 'pull', 'fetch', 'clone', 'ls-remote', 'submodule']);
-  const destructive = listFromPolicy(policy, 'destructive_commands', ['rm', 'rmdir', 'del']);
-  const packageInstall = listFromPolicy(policy, 'package_install_commands', ['npm install', 'npm ci', 'pnpm install', 'yarn install']);
-  const packagePublish = listFromPolicy(policy, 'package_publish_commands', ['npm publish', 'pnpm publish']);
-  const release = listFromPolicy(policy, 'release_commands', ['gh release', 'git tag', 'npm version']);
-  const ssh = listFromPolicy(policy, 'ssh_commands', ['ssh', 'scp', 'rsync']);
-  const deploy = listFromPolicy(policy, 'deploy_commands', ['vercel', 'netlify', 'firebase', 'kubectl', 'docker push']);
-
-  if (network.map(commandName).includes(cmd)) {
-    return { category: 'network', rule: 'DENY_NETWORK_COMMAND', reason: 'network commands are forbidden in dry-run' };
-  }
-  if (providers.map(commandName).includes(cmd)) {
-    return { category: 'provider_call', rule: 'DENY_PROVIDER_COMMAND', reason: 'provider API commands are forbidden' };
-  }
-  if (memory.map(commandName).includes(cmd)) {
-    return { category: 'memory_write', rule: 'DENY_MEMORY_COMMAND', reason: 'memory writes are forbidden' };
-  }
-  if (destructive.map(commandName).includes(cmd)) {
-    return { category: 'destructive', rule: 'DENY_DESTRUCTIVE_COMMAND', reason: 'destructive commands are forbidden' };
-  }
-  if (argvMatchesAnyPattern(argv, packageInstall)) {
-    return { category: 'package_install', rule: 'DENY_PACKAGE_INSTALL', reason: 'package installation commands are forbidden' };
-  }
-  if (argvMatchesAnyPattern(argv, packagePublish)) {
-    return { category: 'package_publish', rule: 'DENY_PACKAGE_PUBLISH', reason: 'package publishing commands are forbidden' };
-  }
-  if (argvMatchesAnyPattern(argv, release)) {
-    return { category: 'release', rule: 'DENY_RELEASE_COMMAND', reason: 'release and tag commands are forbidden' };
-  }
-  if (argvMatchesAnyPattern(argv, ssh)) {
-    return { category: 'ssh', rule: 'DENY_SSH_COMMAND', reason: 'ssh/scp/rsync commands are forbidden' };
-  }
-  if (argvMatchesAnyPattern(argv, deploy)) {
-    return { category: 'deploy', rule: 'DENY_DEPLOY_COMMAND', reason: 'deploy commands are forbidden' };
-  }
-  if (cmd === 'git' && gitRemote.map((item) => String(item).toLowerCase()).includes(first)) {
-    if (first === 'push' && args.some((arg) => /^--force($|-|=)/.test(arg))) {
-      return { category: 'force_push', rule: 'DENY_FORCE_PUSH', reason: 'force push is forbidden' };
-    }
-    return { category: 'git_remote', rule: 'DENY_GIT_REMOTE', reason: 'git remote operations are forbidden in dry-run' };
-  }
-  return null;
+  return policyCheck.classifyForbidden(argv, policy);
 }
 
 function argsMatch(actual, expected) {
-  if (!Array.isArray(expected) || actual.length !== expected.length) {
-    return false;
-  }
-  return expected.every((value, index) => String(actual[index]) === String(value));
+  return policyCheck.argsMatch(actual, expected);
 }
 
 function argsPrefixMatch(actual, expected) {
-  if (!Array.isArray(expected) || actual.length < expected.length) {
-    return false;
-  }
-  return expected.every((value, index) => String(actual[index]) === String(value));
+  return policyCheck.argsPrefixMatch(actual, expected);
 }
 
 function classifyAllowed(argv, policy) {
-  const cmd = commandName(argv[0]);
-  const args = argv.slice(1).map(String);
-  const allowRules = policy.action_rules && Array.isArray(policy.action_rules.allow) ? policy.action_rules.allow : [];
-  for (const rule of allowRules) {
-    if (commandName(rule.command) !== cmd) {
-      continue;
-    }
-    if (rule.args && argsMatch(args, rule.args)) {
-      return { rule: 'ALLOW_EXACT', reason: rule.reason || 'allow rule matched' };
-    }
-    if (rule.args_prefix && argsPrefixMatch(args, rule.args_prefix)) {
-      return { rule: 'ALLOW_PREFIX', reason: rule.reason || 'allow prefix matched' };
-    }
-  }
-  return null;
+  return policyCheck.classifyAllowed(argv, policy);
 }
 
 function evaluatePolicy(argv) {
   const policy = loadPolicy();
   const mission = loadMission();
-  if (!Array.isArray(argv) || argv.length === 0) {
-    return {
-      decision: 'DENY',
-      allowed: false,
-      rule: 'DENY_EMPTY_COMMAND',
-      reason: 'no command was provided',
-      category: 'invalid'
-    };
-  }
-  const deniedPath = classifyDeniedPathArgs(argv, mission, policy);
-  if (deniedPath) {
-    return Object.assign({ decision: 'DENY', allowed: false }, deniedPath);
-  }
-  const denied = classifyForbidden(argv, policy);
-  if (denied) {
-    return Object.assign({ decision: 'DENY', allowed: false }, denied);
-  }
-  const allowed = classifyAllowed(argv, policy);
-  if (allowed) {
-    return Object.assign({ decision: 'ALLOW', allowed: true, category: 'local' }, allowed);
-  }
-  return {
-    decision: 'DENY',
-    allowed: false,
-    rule: 'DENY_NOT_ALLOWLISTED',
-    reason: 'command is not in the dry-run allowlist',
-    category: 'not_allowlisted'
-  };
+  return policyCheck.evaluatePolicy(argv, policy, mission);
 }
 
 function evaluateValidationCommandPolicy(argv) {
-  const args = Array.isArray(argv) ? argv.map(String) : [];
-  if (commandName(args[0]) === 'node' &&
-      args[1] === 'scripts/bha-run.js' &&
-      (args[2] === 'check' || args[2] === 'assert-deny') &&
-      args[3] === '--') {
-    return evaluatePolicy(args.slice(0, 4));
-  }
-  return evaluatePolicy(args);
+  const policy = loadPolicy();
+  const mission = loadMission();
+  return policyCheck.evaluateValidationCommandPolicy(argv, policy, mission);
 }
 
 function splitAfterDashDash(args) {
@@ -846,15 +786,7 @@ function parseJsonLine(stdout) {
 }
 
 function getJsonPathValue(object, dottedPath) {
-  const parts = String(dottedPath || '').split('.').filter(Boolean);
-  let current = object;
-  for (const part of parts) {
-    if (current === null || typeof current !== 'object' || !Object.prototype.hasOwnProperty.call(current, part)) {
-      return { found: false, value: undefined };
-    }
-    current = current[part];
-  }
-  return { found: true, value: current };
+  return validationRunner.getJsonPathValue(object, dottedPath);
 }
 
 function validationInputsHashForRoot(root) {
@@ -884,69 +816,35 @@ async function gitStatusPorcelainV2() {
 }
 
 function parsePorcelainPath(line) {
-  const parts = String(line || '').split(' ');
-  if (line.startsWith('1 ') && parts.length >= 9) {
-    return parts.slice(8).join(' ');
-  }
-  if (line.startsWith('2 ') && parts.length >= 10) {
-    return parts.slice(9).join(' ').split('\t')[0];
-  }
-  if (line.startsWith('u ') && parts.length >= 11) {
-    return parts.slice(10).join(' ');
-  }
-  if (line.startsWith('? ') || line.startsWith('! ')) {
-    return line.slice(2);
-  }
-  return '';
+  return gitReality.parsePorcelainPath(line);
 }
 
 function changedFilesFromPorcelainV2(stdout) {
-  return String(stdout || '').split(/\r?\n/).filter((line) => {
-    return line.trim() !== '' && !line.startsWith('# ');
-  }).map((line) => {
-    const status = line.startsWith('? ') || line.startsWith('! ')
-      ? line.slice(0, 1)
-      : line.slice(2, 4).trim() || 'UNKNOWN';
-    const filePath = parsePorcelainPath(line).replace(/\\/g, '/');
-    return { status, path: filePath };
-  }).filter((item) => item.path);
+  return gitReality.changedFilesFromPorcelainV2(stdout);
 }
 
 function normalizedAllowedPathPatterns(policy) {
-  return ((policy.paths || {}).allowed || []).map((item) => normalizeRepoPath(item).path);
+  return policyCheck.normalizedAllowedPathPatterns(policy);
 }
 
 function normalizedProtectedPathPatterns(policy) {
-  return ((policy.paths || {}).protected || []).map((item) => normalizeRepoPath(item).path);
+  return policyCheck.normalizedProtectedPathPatterns(policy);
 }
 
 function pathMatchesPolicyPattern(filePath, pattern, allowImplicitDescendants) {
-  const normalized = normalizeRepoPath(filePath).path;
-  let item = String(pattern || '');
-  const explicitDescendants = item.endsWith('/**') || item.endsWith('/');
-  if (item.endsWith('/**')) {
-    item = item.slice(0, -3);
-  }
-  if (item.endsWith('/')) {
-    item = item.slice(0, -1);
-  }
-  return normalized === item || ((explicitDescendants || allowImplicitDescendants) && normalized.startsWith(item + '/'));
+  return policyCheck.pathMatchesPolicyPattern(filePath, pattern, allowImplicitDescendants);
 }
 
 function fileAllowedByPolicy(filePath, policy) {
-  return normalizedAllowedPathPatterns(policy).some((pattern) => pathMatchesPolicyPattern(filePath, pattern, false));
+  return policyCheck.fileAllowedByPolicy(filePath, policy);
 }
 
 function fileProtectedByPolicy(filePath, policy) {
-  return normalizedProtectedPathPatterns(policy).some((pattern) => pathMatchesPolicyPattern(filePath, pattern, true));
+  return policyCheck.fileProtectedByPolicy(filePath, policy);
 }
 
 function statusFileMap(files) {
-  const map = new Map();
-  for (const file of files || []) {
-    map.set(file.path, file.status);
-  }
-  return map;
+  return gitReality.statusFileMap(files);
 }
 
 function fileChangesAfterExec(before, after, policy) {
@@ -979,7 +877,17 @@ async function handleCheck(args) {
   appendLedger('policy_check', payload, (state) => {
     state.last_policy_decision = payload;
   });
-  console.log(JSON.stringify({ ok: true, command: payload.command, decision: decision.decision, allowed: decision.allowed, spawned: false, reason: decision.reason, rule: decision.rule }));
+  console.log(JSON.stringify(Object.assign({
+    ok: true,
+    command: payload.command,
+    decision: decision.decision,
+    allowed: decision.allowed,
+    spawned: false,
+    recorded: true,
+    read_only: false,
+    reason: decision.reason,
+    rule: decision.rule
+  }, currentCommandEffectFields())));
   if (!decision.allowed) {
     process.exitCode = 2;
   }
@@ -1009,10 +917,14 @@ async function handleAssertDeny(args) {
     decision: decision.decision,
     allowed: decision.allowed,
     spawned: false,
+    recorded: true,
+    read_only: false,
     assertion: 'DENY',
     assertion_passed: assertionPassed,
     reason: decision.reason,
-    rule: decision.rule
+    rule: decision.rule,
+    effect: CURRENT_COMMAND_EFFECT.effect,
+    command_effect: CURRENT_COMMAND_EFFECT.effect
   }));
   if (!assertionPassed) {
     process.exitCode = 3;
@@ -1174,68 +1086,7 @@ async function handleExec(args) {
 }
 
 function commandExpectationPassed(result, expect) {
-  const problems = [];
-  if (Object.prototype.hasOwnProperty.call(expect, 'exit_code') && result.exit_code !== expect.exit_code) {
-    problems.push(`exit_code expected ${expect.exit_code} got ${result.exit_code}`);
-  }
-  const expectsJson = ['decision', 'spawned', 'read_only', 'recorded', 'ok', 'status', 'reason', 'json', 'json_paths', 'has_keys', 'missing_keys'].some((key) => {
-    return Object.prototype.hasOwnProperty.call(expect, key);
-  });
-  if (expectsJson) {
-    const parsed = parseJsonLine(result.stdout);
-    if (!parsed) {
-      problems.push('expected JSON output was not found');
-    } else {
-      if (Object.prototype.hasOwnProperty.call(expect, 'decision') && parsed.decision !== expect.decision) {
-        problems.push(`decision expected ${expect.decision} got ${parsed.decision}`);
-      }
-      if (Object.prototype.hasOwnProperty.call(expect, 'spawned') && parsed.spawned !== expect.spawned) {
-        problems.push(`spawned expected ${expect.spawned} got ${parsed.spawned}`);
-      }
-      if (Object.prototype.hasOwnProperty.call(expect, 'read_only') && parsed.read_only !== expect.read_only) {
-        problems.push(`read_only expected ${expect.read_only} got ${parsed.read_only}`);
-      }
-      if (Object.prototype.hasOwnProperty.call(expect, 'recorded') && parsed.recorded !== expect.recorded) {
-        problems.push(`recorded expected ${expect.recorded} got ${parsed.recorded}`);
-      }
-      if (Object.prototype.hasOwnProperty.call(expect, 'ok') && parsed.ok !== expect.ok) {
-        problems.push(`ok expected ${expect.ok} got ${parsed.ok}`);
-      }
-      if (Object.prototype.hasOwnProperty.call(expect, 'status') && parsed.status !== expect.status) {
-        problems.push(`status expected ${expect.status} got ${parsed.status}`);
-      }
-      if (Object.prototype.hasOwnProperty.call(expect, 'reason') && parsed.reason !== expect.reason) {
-        problems.push(`reason expected ${expect.reason} got ${parsed.reason}`);
-      }
-      for (const key of expect.has_keys || []) {
-        if (!Object.prototype.hasOwnProperty.call(parsed, key)) {
-          problems.push(`expected JSON key ${key} was missing`);
-        }
-      }
-      for (const key of expect.missing_keys || []) {
-        if (Object.prototype.hasOwnProperty.call(parsed, key)) {
-          problems.push(`unexpected JSON key ${key} was present`);
-        }
-      }
-      for (const [key, expectedValue] of Object.entries(expect.json || {})) {
-        if (parsed[key] !== expectedValue) {
-          problems.push(`${key} expected ${expectedValue} got ${parsed[key]}`);
-        }
-      }
-      for (const [jsonPath, expectedValue] of Object.entries(expect.json_paths || {})) {
-        const observed = getJsonPathValue(parsed, jsonPath);
-        if (!observed.found) {
-          problems.push(`expected JSON path ${jsonPath} was missing`);
-        } else if (observed.value !== expectedValue) {
-          problems.push(`${jsonPath} expected ${expectedValue} got ${observed.value}`);
-        }
-      }
-    }
-  }
-  if (result.error) {
-    problems.push(result.error);
-  }
-  return problems;
+  return validationRunner.commandExpectationPassed(result, expect, parseJsonLine);
 }
 
 function rollbackDrillChecks() {
@@ -1314,52 +1165,13 @@ async function handleValidate() {
     mission_hash: missionHash(mission)
   });
 
-  const commandResults = [];
-  for (const command of required) {
-    const decision = evaluateValidationCommandPolicy(command.argv);
-    let result;
-    let spawned = false;
-    let policyProblems = [];
-    if (decision.allowed) {
-      spawned = true;
-      result = await runCommand(command.argv, {});
-    } else {
-      result = {
-        argv: scrubArgv(command.argv),
-        started_at: new Date().toISOString(),
-        finished_at: new Date().toISOString(),
-        exit_code: null,
-        signal: null,
-        stdout: '',
-        stderr: '',
-        error: `policy denied validation command: ${decision.reason || decision.rule || 'DENY'}`
-      };
-      policyProblems = [result.error];
-    }
-    const problems = commandExpectationPassed(result, command.expect || {});
-    problems.push(...policyProblems);
-    const status = problems.length === 0 ? 'PASS' : 'FAIL';
-    const record = {
-      id: command.id,
-      argv: scrubArgv(command.argv),
-      expect: command.expect || {},
-      decision: decision.decision,
-      allowed: decision.allowed,
-      rule: decision.rule,
-      category: decision.category,
-      reason: decision.reason,
-      spawned,
-      status,
-      problems,
-      exit_code: result.exit_code,
-      signal: result.signal,
-      error: result.error,
-      stdout: truncate(result.stdout),
-      stderr: truncate(result.stderr),
-      started_at: result.started_at,
-      finished_at: result.finished_at
-    };
-    commandResults.push(record);
+  const commandResults = await validationRunner.runValidationCommands(required, {
+    evaluateValidationCommandPolicy,
+    runCommand,
+    scrubArgv,
+    truncate,
+    parseJsonLine,
+    appendValidationStep(record) {
     appendLedger('validation_step', {
       id: record.id,
       argv: record.argv,
@@ -1375,7 +1187,8 @@ async function handleValidate() {
       signal: record.signal,
       error: record.error
     });
-  }
+    }
+  });
 
   const status = commandResults.every((result) => result.status === 'PASS') ? 'PASS' : 'FAIL';
   const completedAt = new Date().toISOString();
@@ -1553,21 +1366,11 @@ async function handleInspect(args) {
 }
 
 function capabilityType(payload) {
-  return String(payload.type || payload.for || payload.capability || '').trim();
+  return capabilityVerifier.capabilityType(payload);
 }
 
 function capabilityTypePolicyFromLists(type, productionTypes, alwaysDenied) {
-  const normalized = String(type || '').trim();
-  if (!normalized) {
-    return { allowed: false, reason: 'CAPABILITY_TYPE_MISSING', type: normalized };
-  }
-  if ((alwaysDenied || []).includes(normalized)) {
-    return { allowed: false, reason: 'DISALLOWED_CAPABILITY_TYPE', type: normalized };
-  }
-  if (!(productionTypes || []).includes(normalized)) {
-    return { allowed: false, reason: 'CAPABILITY_TYPE_NOT_SUPPORTED', type: normalized };
-  }
-  return { allowed: true, reason: 'CAPABILITY_TYPE_SUPPORTED', type: normalized };
+  return capabilityVerifier.capabilityTypePolicyFromLists(type, productionTypes, alwaysDenied);
 }
 
 function evaluateV2PreviewDraftCapability(draft, options) {
@@ -2551,16 +2354,9 @@ function disallowedCapabilityType(type) {
 
 function trustedSigningKeys() {
   const policy = loadPolicy();
-  return ((policy.trusted_public_keys || [])).map((item) => {
-    if (item && typeof item === 'object') {
-      return {
-        id: String(item.id || item.key_id || ''),
-        purpose: item.purpose ? String(item.purpose) : null,
-        public_key_pem: item.public_key_pem || item.publicKeyPem || null
-      };
-    }
-    return { id: String(item), purpose: null, public_key_pem: null };
-  }).filter((item) => item.id);
+  return ((policy.trusted_public_keys || []))
+    .map((item) => capabilityVerifier.normalizeTrustedSigningKeyItem(item))
+    .filter((item) => item.id);
 }
 
 function findTrustedSigningKey(id) {
@@ -2568,44 +2364,34 @@ function findTrustedSigningKey(id) {
 }
 
 function signingKeyPurposeAllowedForCapability(key, type) {
-  if (!key) {
-    return false;
-  }
-  if (String(type) === 'git_push') {
-    return key.purpose === 'owner';
-  }
-  return false;
+  return capabilityVerifier.signingKeyPurposeAllowedForCapability(key, type);
 }
 
 function signingKeyPurposeResult(key, type) {
-  return {
-    key_purpose: key && key.purpose ? key.purpose : 'UNSPECIFIED',
-    required_key_purpose: String(type) === 'git_push' ? 'owner' : 'UNSUPPORTED_CAPABILITY_TYPE'
-  };
+  return capabilityVerifier.signingKeyPurposeResult(key, type);
 }
 
 function capabilityRequestPayload(payload) {
-  const copy = Object.assign({}, payload || {});
-  delete copy.signature;
-  delete copy.payload_hash;
-  return copy;
+  return capabilityVerifier.capabilityRequestPayload(payload);
 }
 
 function capabilityPayloadHash(payload) {
-  return sha256(stable(capabilityRequestPayload(payload)));
+  return capabilityVerifier.capabilityPayloadHash(payload);
 }
 
 function capabilitySignablePayload(payload) {
-  const copy = Object.assign({}, payload || {});
-  delete copy.signature;
-  return copy;
+  return capabilityVerifier.capabilitySignablePayload(payload);
+}
+
+function capabilitySignatureInput(payload) {
+  return capabilityVerifier.capabilitySignatureInput(payload);
 }
 
 function signCapabilityPayload(payload, privateKey) {
   payload.payload_hash = capabilityPayloadHash(payload);
   payload.signature = crypto.sign(
     null,
-    Buffer.from(stable(capabilitySignablePayload(payload))),
+    Buffer.from(capabilitySignatureInput(payload)),
     privateKey
   ).toString('base64');
   return payload;
@@ -2618,7 +2404,7 @@ function capabilitySignatureValid(payload, key) {
   try {
     return crypto.verify(
       null,
-      Buffer.from(stable(capabilitySignablePayload(payload))),
+      Buffer.from(capabilitySignatureInput(payload)),
       key.public_key_pem,
       Buffer.from(String(payload.signature), 'base64')
     );
@@ -2642,35 +2428,13 @@ function capabilityResult(payload, valid, reason, extra) {
 }
 
 function canonicalPayloadHashFormat(value) {
-  return /^[0-9a-f]{64}$/.test(String(value || ''));
+  return capabilityVerifier.canonicalPayloadHashFormat(value);
 }
 
 function validateCanonicalSignedCapability(payload) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return capabilityResult(payload, false, 'CAPABILITY_JSON_OBJECT_REQUIRED');
-  }
-  if ((payload.payload && typeof payload.payload === 'object') ||
-      (payload.signature && typeof payload.signature === 'object')) {
-    return capabilityResult(payload, false, 'CAPABILITY_ENVELOPE_UNSUPPORTED_EXPECT_FLAT');
-  }
-  if (Object.prototype.hasOwnProperty.call(payload, 'head_sha')) {
-    return capabilityResult(payload, false, 'CAPABILITY_FIELD_HEAD_REQUIRED_NOT_HEAD_SHA');
-  }
-  if (Object.prototype.hasOwnProperty.call(payload, 'payload_hash') &&
-      !canonicalPayloadHashFormat(payload.payload_hash)) {
-    return capabilityResult(payload, false, 'CAPABILITY_PAYLOAD_HASH_FORMAT_INVALID_EXPECT_RAW_HEX');
-  }
-  if (payload.algorithm !== 'ed25519') {
-    return capabilityResult(payload, false, 'CAPABILITY_ALGORITHM_UNSUPPORTED');
-  }
-  if (payload.signature_encoding !== 'base64') {
-    return capabilityResult(payload, false, 'CAPABILITY_SIGNATURE_ENCODING_UNSUPPORTED');
-  }
-  if (payload.payload_hash_format !== 'sha256-hex') {
-    return capabilityResult(payload, false, 'CAPABILITY_PAYLOAD_HASH_FORMAT_UNSUPPORTED');
-  }
-  if (!payload.signature || typeof payload.signature !== 'string' || !payload.signing_key_id) {
-    return capabilityResult(payload, false, 'UNSIGNED_CAPABILITY_INVALID');
+  const staticReason = capabilityVerifier.canonicalSignedCapabilityReason(payload);
+  if (staticReason) {
+    return capabilityResult(payload, false, staticReason);
   }
   const key = findTrustedSigningKey(payload.signing_key_id);
   if (!key) {
@@ -2711,27 +2475,29 @@ async function verifySignedCapability(payload) {
   }
   const state = loadState();
   const type = capabilityType(payload);
-  if (payload.schema !== 'bha.capability.v1') {
-    return capabilityResult(payload, false, 'CAPABILITY_SCHEMA_UNSUPPORTED');
+  const schemaReason = capabilityVerifier.capabilitySchemaReason(payload, 'bha.capability.v1');
+  if (schemaReason) {
+    return capabilityResult(payload, false, schemaReason);
   }
-  if (!payload.capability_id && !payload.id) {
-    return capabilityResult(payload, false, 'CAPABILITY_ID_MISSING');
+  const idReason = capabilityVerifier.capabilityIdReason(payload);
+  if (idReason) {
+    return capabilityResult(payload, false, idReason);
   }
   const typePolicy = capabilityTypePolicy(type);
   if (typePolicy.allowed !== true) {
     return capabilityResult(payload, false, typePolicy.reason);
   }
-  if (payload.run_id !== state.run_id) {
-    return capabilityResult(payload, false, 'CAPABILITY_RUN_ID_MISMATCH');
+  const runReason = capabilityVerifier.capabilityRunIdReason(payload, state.run_id);
+  if (runReason) {
+    return capabilityResult(payload, false, runReason);
   }
-  if (payload.policy_hash !== policyHash()) {
-    return capabilityResult(payload, false, 'CAPABILITY_POLICY_HASH_MISMATCH');
+  const hashReason = capabilityVerifier.capabilityPolicyMissionHashReason(payload, policyHash(), missionHash());
+  if (hashReason) {
+    return capabilityResult(payload, false, hashReason);
   }
-  if (payload.mission_hash !== missionHash()) {
-    return capabilityResult(payload, false, 'CAPABILITY_MISSION_HASH_MISMATCH');
-  }
-  if (!payload.remote || !payload.branch || !payload.head) {
-    return capabilityResult(payload, false, 'CAPABILITY_BINDING_MISSING');
+  const bindingReason = capabilityVerifier.capabilityBindingMissingReason(payload, ['remote', 'branch', 'head']);
+  if (bindingReason) {
+    return capabilityResult(payload, false, bindingReason);
   }
   if (!await remoteExists(String(payload.remote))) {
     return capabilityResult(payload, false, 'CAPABILITY_REMOTE_UNKNOWN');
@@ -2748,24 +2514,31 @@ async function verifySignedCapability(payload) {
   if (!verifier.ok || !verifier.parsed) {
     return capabilityResult(payload, false, 'CAPABILITY_VERIFIER_NOT_PASSING');
   }
-  if (payload.ledger_head_hash !== verifier.parsed.ledger_head_hash) {
-    return capabilityResult(payload, false, 'CAPABILITY_LEDGER_HEAD_MISMATCH');
+  const ledgerHeadReason = capabilityVerifier.capabilityLedgerHeadReason(payload, verifier.parsed.ledger_head_hash);
+  if (ledgerHeadReason) {
+    return capabilityResult(payload, false, ledgerHeadReason);
   }
-  if (payload.one_use !== true) {
-    return capabilityResult(payload, false, 'CAPABILITY_ONE_USE_REQUIRED');
+  const oneUseReason = capabilityVerifier.capabilityOneUseReason(payload);
+  if (oneUseReason) {
+    return capabilityResult(payload, false, oneUseReason);
   }
-  if (isExpired(payload.expires_at)) {
-    return capabilityResult(payload, false, 'CAPABILITY_EXPIRED');
+  const expirationReason = capabilityExpirationReason(payload.expires_at);
+  if (expirationReason) {
+    return capabilityResult(payload, false, expirationReason);
   }
-  if (payload.command !== `git push ${payload.remote} ${payload.branch}`) {
-    return capabilityResult(payload, false, 'CAPABILITY_COMMAND_MISMATCH');
+  const commandReason = capabilityVerifier.gitPushCommandReason(payload);
+  if (commandReason) {
+    return capabilityResult(payload, false, commandReason);
   }
   return capabilityResult(payload, true, 'CAPABILITY_SIGNATURE_VALID');
 }
 
 function isExpired(expiresAt, now) {
-  const millis = Date.parse(String(expiresAt || ''));
-  return Number.isNaN(millis) || millis <= (now || Date.now());
+  return capabilityVerifier.isExpired(expiresAt, Number.isFinite(now) ? now : Date.now());
+}
+
+function capabilityExpirationReason(expiresAt, now) {
+  return capabilityVerifier.capabilityExpirationReason(expiresAt, Number.isFinite(now) ? now : Date.now());
 }
 
 function capabilityRevoked(events, id) {
@@ -2780,8 +2553,9 @@ function capabilityRevoked(events, id) {
 function validateCapabilityRequest(payload, type, state, events, options) {
   const checkLedgerHead = !options || options.checkLedgerHead !== false;
   const id = String(payload.id || payload.capability_id || '');
-  if (!id) {
-    return { valid: false, reason: 'CAPABILITY_ID_MISSING' };
+  const idReason = capabilityVerifier.capabilityIdReason(payload);
+  if (idReason) {
+    return { valid: false, reason: idReason };
   }
   const canonical = validateCanonicalSignedCapability(payload);
   if (canonical.valid !== true) {
@@ -2791,26 +2565,31 @@ function validateCapabilityRequest(payload, type, state, events, options) {
   if (typePolicy.allowed !== true) {
     return { valid: false, reason: typePolicy.reason };
   }
-  if (payload.run_id !== state.run_id) {
-    return { valid: false, reason: 'CAPABILITY_RUN_ID_MISMATCH' };
+  const runReason = capabilityVerifier.capabilityRunIdReason(payload, state.run_id);
+  if (runReason) {
+    return { valid: false, reason: runReason };
   }
-  if (payload.policy_hash !== policyHash()) {
-    return { valid: false, reason: 'CAPABILITY_POLICY_HASH_MISMATCH' };
+  const hashReason = capabilityVerifier.capabilityPolicyMissionHashReason(payload, policyHash(), missionHash());
+  if (hashReason) {
+    return { valid: false, reason: hashReason };
   }
-  if (payload.mission_hash !== missionHash()) {
-    return { valid: false, reason: 'CAPABILITY_MISSION_HASH_MISMATCH' };
+  const bindingReason = capabilityVerifier.capabilityBindingMissingReason(payload, ['remote', 'branch', 'head']);
+  if (bindingReason) {
+    return { valid: false, reason: bindingReason };
   }
-  if (!payload.remote || !payload.branch || !payload.head) {
-    return { valid: false, reason: 'CAPABILITY_BINDING_MISSING' };
+  const ledgerHeadReason = checkLedgerHead
+    ? capabilityVerifier.capabilityLedgerHeadReason(payload, state.ledger_head_hash)
+    : null;
+  if (ledgerHeadReason) {
+    return { valid: false, reason: ledgerHeadReason };
   }
-  if (checkLedgerHead && payload.ledger_head_hash !== state.ledger_head_hash) {
-    return { valid: false, reason: 'CAPABILITY_LEDGER_HEAD_MISMATCH' };
+  const oneUseReason = capabilityVerifier.capabilityOneUseReason(payload);
+  if (oneUseReason) {
+    return { valid: false, reason: oneUseReason };
   }
-  if (payload.one_use !== true) {
-    return { valid: false, reason: 'CAPABILITY_ONE_USE_REQUIRED' };
-  }
-  if (isExpired(payload.expires_at)) {
-    return { valid: false, reason: 'CAPABILITY_EXPIRED' };
+  const expirationReason = capabilityExpirationReason(payload.expires_at);
+  if (expirationReason) {
+    return { valid: false, reason: expirationReason };
   }
   if (capabilityRevoked(events || [], id)) {
     return { valid: false, reason: 'CAPABILITY_REVOKED' };
@@ -2818,83 +2597,37 @@ function validateCapabilityRequest(payload, type, state, events, options) {
   return { valid: true, reason: 'CAPABILITY_SIGNATURE_VALID' };
 }
 
-function capabilityHash(event) {
-  const copy = Object.assign({}, event);
-  delete copy.event_hash;
-  return sha256(stable(copy));
-}
+const capabilityStore = createCapabilityStore({
+  capabilitiesPath: CAPABILITIES_PATH,
+  localCapabilitiesPath: LOCAL_CAPABILITIES_PATH,
+  localCapabilitySessionsPath: LOCAL_CAPABILITY_SESSIONS_PATH,
+  bhaLocalDir: BHA_LOCAL_DIR,
+  stable,
+  sha256,
+  loadMission,
+  loadPolicy,
+  loadState,
+  policyHash,
+  missionHash,
+  readJsonl,
+  resolveLocalFile,
+  withCapabilityLock,
+  ensureTrackedWriteAllowed,
+  ensureLocalWriteAllowed,
+  appendLedger
+});
 
-function buildCapabilityEvent(type, payload, localOnly) {
-  const mission = loadMission();
-  const policy = loadPolicy();
-  const event = {
-    schema: 'bha.capability.event.v1',
-    run_id: loadState().run_id,
-    mission_id: mission.mission_id || null,
-    policy_hash: policyHash(policy),
-    mission_hash: missionHash(mission),
-    event_id: crypto.randomUUID(),
-    ts: new Date().toISOString(),
-    type,
-    payload
-  };
-  if (localOnly) {
-    event.local_only = true;
-  }
-  event.event_hash = capabilityHash(event);
-  return event;
-}
-
-function appendCapabilityEvent(type, payload) {
-  const event = buildCapabilityEvent(type, payload, false);
-  fs.appendFileSync(CAPABILITIES_PATH, stable(event) + '\n', 'utf8');
-  appendLedger(`capability_${type}`, {
-    capability_event_hash: event.event_hash,
-    capability_id: payload.capability_id || payload.id || null,
-    status: payload.status,
-    valid: payload.valid === true,
-    reason: payload.reason || null
-  });
-  return event;
-}
-
-function appendLocalCapabilityEventUnlocked(type, payload) {
-  const event = buildCapabilityEvent(type, payload, true);
-  fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
-  fs.appendFileSync(resolveLocalFile(LOCAL_CAPABILITIES_PATH), stable(event) + '\n', 'utf8');
-  return event;
-}
-
-function appendLocalCapabilityEvent(type, payload) {
-  return withCapabilityLock(() => appendLocalCapabilityEventUnlocked(type, payload));
-}
-
-function appendLocalCapabilitySessionUnlocked(payload) {
-  const event = buildCapabilityEvent('capability_session', payload, true);
-  fs.mkdirSync(BHA_LOCAL_DIR, { recursive: true });
-  fs.appendFileSync(resolveLocalFile(LOCAL_CAPABILITY_SESSIONS_PATH), stable(event) + '\n', 'utf8');
-  return event;
-}
-
-function appendLocalCapabilitySession(payload) {
-  return withCapabilityLock(() => appendLocalCapabilitySessionUnlocked(payload));
-}
-
-function readCapabilityEvents() {
-  return readJsonl(CAPABILITIES_PATH);
-}
-
-function readLocalCapabilitySessions() {
-  return readJsonl(resolveLocalFile(LOCAL_CAPABILITY_SESSIONS_PATH));
-}
-
-function readLocalCapabilityEvents() {
-  return readJsonl(resolveLocalFile(LOCAL_CAPABILITIES_PATH));
-}
-
-function readCapabilityEventsWithLocalSessions() {
-  return readCapabilityEvents().concat(readLocalCapabilityEvents()).concat(readLocalCapabilitySessions());
-}
+const capabilityHash = capabilityStore.capabilityHash;
+const buildCapabilityEvent = capabilityStore.buildCapabilityEvent;
+const appendCapabilityEvent = capabilityStore.appendCapabilityEvent;
+const appendLocalCapabilityEventUnlocked = capabilityStore.appendLocalCapabilityEventUnlocked;
+const appendLocalCapabilityEvent = capabilityStore.appendLocalCapabilityEvent;
+const appendLocalCapabilitySessionUnlocked = capabilityStore.appendLocalCapabilitySessionUnlocked;
+const appendLocalCapabilitySession = capabilityStore.appendLocalCapabilitySession;
+const readCapabilityEvents = capabilityStore.readCapabilityEvents;
+const readLocalCapabilitySessions = capabilityStore.readLocalCapabilitySessions;
+const readLocalCapabilityEvents = capabilityStore.readLocalCapabilityEvents;
+const readCapabilityEventsWithLocalSessions = capabilityStore.readCapabilityEventsWithLocalSessions;
 
 function findCapabilityIssue(events, id) {
   return events.find((event) => event.type === 'capability_issue' &&
@@ -3193,6 +2926,7 @@ async function handleMakePushPayload(args) {
     return;
   }
   if (outPath) {
+    ensureLocalWriteAllowed('write push payload');
     let resolved;
     try {
       resolved = resolveLocalFile(outPath);
@@ -3219,7 +2953,7 @@ async function handleMakePushPayload(args) {
 }
 
 function powerShellSingleQuote(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
+  return pushGate.powerShellSingleQuote(value);
 }
 
 function postSignerPowerShellCommand(capabilityId, remote, branch, signedPath) {
@@ -3319,6 +3053,7 @@ async function handlePushPrep(args) {
   }
   let resolved;
   let resolvedHandoff = null;
+  ensureLocalWriteAllowed('write push prep payload and handoff');
   try {
     resolved = resolveLocalFile(payloadPath);
     if (handoffPath) {
@@ -3472,6 +3207,9 @@ async function handleConsumeCapability(args) {
   }
   const localOnly = forAction === 'git_push';
   const head = currentHeadSync();
+  if (localOnly) {
+    ensureLocalWriteAllowed('consume local capability');
+  }
   const result = localOnly
     ? withCapabilityLock(() => consumeCapabilityRecord(id, forAction, remote, branch, head, true))
     : consumeCapabilityRecord(id, forAction, remote, branch, head, false);
@@ -3568,43 +3306,15 @@ async function gitStatusShort() {
 }
 
 function authorizedRuntimeDirty(stdout) {
-  const allowed = new Set([
-    '.bha/capabilities.jsonl',
-    '.bha/checkpoint.json',
-    '.bha/ledger.jsonl',
-    '.bha/state.json'
-  ]);
-  const lines = String(stdout || '').split(/\r?\n/).filter((line) => line.trim() !== '');
-  if (lines.length === 0) {
-    return true;
-  }
-  return lines.every((line) => {
-    const touched = line.slice(3).trim().replace(/.* -> /, '').replace(/\\/g, '/');
-    return allowed.has(touched);
-  });
+  return pushGate.authorizedRuntimeDirty(stdout);
 }
 
 function validatedOrRuntimeDirty(stdout) {
-  const allowed = new Set(validationInputsForRoot(ROOT).map((file) => rel(file)));
-  [
-    '.bha/capabilities.jsonl',
-    '.bha/checkpoint.json',
-    '.bha/ledger.jsonl',
-    '.bha/state.json'
-  ].forEach((file) => allowed.add(file));
-  const lines = String(stdout || '').split(/\r?\n/).filter((line) => line.trim() !== '');
-  if (lines.length === 0) {
-    return true;
-  }
-  return lines.every((line) => {
-    const touched = line.slice(3).trim().replace(/.* -> /, '').replace(/\\/g, '/');
-    return allowed.has(touched);
-  });
+  return pushGate.validatedOrRuntimeDirty(stdout, validationInputsForRoot(ROOT).map((file) => rel(file)));
 }
 
 function gitStatusAllowedForLocalTrustRepair(status) {
-  return status && status.ok === true &&
-    (status.clean === true || authorizedRuntimeDirty(status.stdout));
+  return pushGate.gitStatusAllowedForLocalTrustRepair(status);
 }
 
 async function currentBranch() {
@@ -3645,6 +3355,7 @@ async function readOnlyJsonCommand(argv) {
 async function matchingConsumedCapability(remote, branch, head, options) {
   const reserve = options && options.reserve === true;
   if (reserve) {
+    ensureLocalWriteAllowed('reserve local capability session');
     return withCapabilityLock(() => matchingConsumedCapabilityCore(remote, branch, head, true));
   }
   return matchingConsumedCapabilityCore(remote, branch, head, false);
@@ -3776,37 +3487,7 @@ async function remoteTrackingStatus(remote, branch, head) {
 async function postPushStatus(remote, branch, head, capability, checks) {
   const usedSession = latestUsedGitPushSession(remote, branch, head, capability ? capability.capability_id : null);
   const remoteTracking = await remoteTrackingStatus(remote, branch, head);
-  const replayBlocked = capability && capability.reason === 'CAPABILITY_REPLAY_DETECTED';
-  const prePushReady = checks && Object.values(checks).every(Boolean);
-  const protectedBranch = protectedBaseBranch(branch);
-  let phase = 'NEEDS_GIT_PUSH_CAPABILITY';
-  if (prePushReady) {
-    phase = 'PRE_PUSH_READY';
-  } else if (replayBlocked && usedSession) {
-    phase = 'PUSHED_CAPABILITY_USED_REPLAY_BLOCKED';
-  } else if (replayBlocked) {
-    phase = 'REPLAY_BLOCKED';
-  }
-  return {
-    phase,
-    pre_push_ready: prePushReady,
-    pushed_capability_used: Boolean(usedSession),
-    replay_blocked: Boolean(replayBlocked),
-    remote_tracking_state_observed: remoteTracking.observed,
-    remote_tracking_matches_current_head: remoteTracking.matches_current_head,
-    capability_id: capability && capability.capability_id ? capability.capability_id : null,
-    used_session_event_hash: usedSession ? usedSession.event_hash : null,
-    remote_tracking: remoteTracking,
-    next_operator_meaning: protectedBranch
-      ? (replayBlocked
-        ? 'The previous one-use git_push capability has been used. Protected master standard flow is topic branch, PR, and BHA read-only gate; generate a fresh master capability only for an explicitly authorized emergency direct push.'
-        : (prePushReady
-          ? 'A valid consumed git_push capability is ready for emergency direct push to protected master. Standard remote flow is topic branch, PR, and BHA read-only gate.'
-          : 'No push to protected master is required now. Standard remote flow is topic branch, PR, and BHA read-only gate; generate a master capability only for an explicitly authorized emergency direct push.'))
-      : (replayBlocked
-        ? 'The previous one-use git_push capability has been used; if the operator chooses another real push, generate and sign a new capability first.'
-        : (prePushReady ? 'A valid consumed git_push capability is ready if the operator chooses to push once.' : 'No push is required now; if the operator chooses a real push, generate, sign, issue, and consume a git_push capability first.'))
-  };
+  return pushGate.postPushStatusSummary({ branch, capability, checks, usedSession, remoteTracking });
 }
 
 function readStdin() {
@@ -3834,10 +3515,7 @@ function branchFromPrepushInput(stdinText) {
 }
 
 function validationCommandPassed(state, id) {
-  const commands = state && state.validation && Array.isArray(state.validation.commands)
-    ? state.validation.commands
-    : [];
-  return commands.some((command) => command.id === id && command.status === 'PASS');
+  return pushGate.validationCommandPassed(state, id);
 }
 
 function readCheckpointFile() {
@@ -3861,72 +3539,23 @@ function newestLedgerEventOfType(events, type) {
 }
 
 function prepushEvidenceGates(state, ledger, verify) {
-  const head = ledger.length ? ledger[ledger.length - 1].event_hash : null;
-  const validation = state && state.validation ? state.validation : null;
-  const checkpoint = readCheckpointFile();
-  const checkpointEvent = checkpoint ? ledgerEventByHash(ledger, checkpoint.ledger_event_hash, 'checkpoint_written') : null;
-  const newestCheckpoint = newestLedgerEventOfType(ledger, 'checkpoint_written');
-  const closeoutEvent = state && state.closeout ? ledgerEventByHash(ledger, state.closeout.ledger_event_hash, 'closeout_completed') : null;
-  const newestCloseout = newestLedgerEventOfType(ledger, 'closeout_completed');
-  const rollbackChecks = rollbackDrillChecks();
-  const gates = {
-    verifier_pass: verify.ok === true && verify.parsed && verify.parsed.status === 'PASS',
-    verifier_no_warnings: verify.parsed && Array.isArray(verify.parsed.warnings) && verify.parsed.warnings.length === 0,
-    ledger_state_match: Boolean(state && head && state.ledger_head_hash === head && verify.parsed && verify.parsed.ledger_head_hash === head),
-    validation_fresh: Boolean(validation &&
-      validation.status === 'PASS' &&
-      validation.inputs_hash === validationInputsHash() &&
-      validation.policy_hash === policyHash() &&
-      validation.mission_hash === missionHash() &&
-      ledgerEventByHash(ledger, validation.ledger_event_hash, 'validation_completed')),
-    rollback_recorded: rollbackChecks.every((check) => check.status === 'PASS') && validationCommandPassed(state, 'rollback_drill_readonly'),
-    checkpoint_recorded: Boolean(checkpoint &&
-      state &&
-      state.last_checkpoint &&
-      checkpointEvent &&
-      newestCheckpoint &&
-      newestCheckpoint.event_hash === checkpointEvent.event_hash &&
-      state.last_checkpoint.ledger_event_hash === checkpointEvent.event_hash &&
-      state.last_checkpoint_id === checkpoint.checkpoint_id &&
-      checkpoint.verifier_status === 'PASS' &&
-      checkpoint.checkpoint_binding &&
-      checkpoint.checkpoint_binding.checkpoint_event_hash === checkpointEvent.event_hash),
-    closeout_current: Boolean(state &&
-      state.closeout &&
-      closeoutEvent &&
-      newestCloseout &&
-      newestCloseout.event_hash === closeoutEvent.event_hash &&
-      state.closeout.ledger_event_hash === closeoutEvent.event_hash &&
-      state.closeout.final_ledger_head_hash === head &&
-      closeoutEvent.event_hash === head)
-  };
-  return { gates, rollback_checks: rollbackChecks };
+  return pushGate.prepushEvidenceGates(state, ledger, verify, {
+    readCheckpointFile,
+    ledgerEventByHash,
+    newestLedgerEventOfType,
+    rollbackDrillChecks,
+    validationInputsHash,
+    policyHash,
+    missionHash
+  });
 }
 
 function trackedGitRealityBindingFromHeads(currentHeadValue, checkpointHeadValue, closeoutHeadValue) {
-  const checkpointHead = checkpointHeadValue ? String(checkpointHeadValue) : null;
-  const closeoutHead = closeoutHeadValue ? String(closeoutHeadValue) : null;
-  return {
-    current_head: currentHeadValue || 'UNKNOWN',
-    checkpoint_head: checkpointHead || 'NOT_RECORDED',
-    checkpoint_matches_current_head: Boolean(checkpointHead && currentHeadValue && checkpointHead === currentHeadValue),
-    closeout_git_reality_head: closeoutHead || 'NOT_RECORDED',
-    closeout_matches_current_head: Boolean(closeoutHead && currentHeadValue && closeoutHead === currentHeadValue),
-    proof_boundary: 'Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding.'
-  };
+  return gitReality.trackedGitRealityBindingFromHeads(currentHeadValue, checkpointHeadValue, closeoutHeadValue);
 }
 
 function trackedGitRealityBinding(currentHeadValue, checkpoint, closeoutEvent) {
-  const closeoutGitReality = closeoutEvent &&
-    closeoutEvent.payload &&
-    closeoutEvent.payload.fact_groups &&
-    closeoutEvent.payload.fact_groups.git_reality &&
-    typeof closeoutEvent.payload.fact_groups.git_reality === 'object'
-    ? closeoutEvent.payload.fact_groups.git_reality
-    : null;
-  const checkpointHead = checkpoint && checkpoint.head ? checkpoint.head : null;
-  const closeoutHead = closeoutGitReality && closeoutGitReality.head ? closeoutGitReality.head : null;
-  return trackedGitRealityBindingFromHeads(currentHeadValue, checkpointHead, closeoutHead);
+  return gitReality.trackedGitRealityBinding(currentHeadValue, checkpoint, closeoutEvent);
 }
 
 async function evidenceCarrierCommitStatus(currentHeadValue, gitRealityBinding) {
@@ -4269,12 +3898,7 @@ async function handleRepairEvidence(args) {
 }
 
 function firstFailedGate(checks) {
-  for (const [key, value] of Object.entries(checks)) {
-    if (value !== true) {
-      return key.toUpperCase();
-    }
-  }
-  return null;
+  return pushGate.firstFailedGate(checks);
 }
 
 async function handlePrepushCheck(args) {
@@ -4410,127 +4034,23 @@ async function handleHookStatus(args) {
 }
 
 function nextGateAction(checks, capability) {
-  if (!checks.verifier_pass) {
-    return 'RUN_VERIFIER_AND_FIX_ISSUES';
-  }
-  if (!checks.verifier_no_warnings) {
-    return 'RESOLVE_VERIFIER_WARNINGS_OR_RECORD_CLOSEOUT';
-  }
-  if (!checks.clean_ledger || !checks.validation_fresh) {
-    return 'RUN_VALIDATE_CHECKPOINT_CLOSEOUT';
-  }
-  if (!checks.rollback_recorded) {
-    return 'RUN_ROLLBACK_DRILL_OR_VALIDATE';
-  }
-  if (!checks.checkpoint_recorded) {
-    return 'RUN_CHECKPOINT';
-  }
-  if (!checks.closeout_current) {
-    return 'RUN_CLOSEOUT_RECORD';
-  }
-  if (!checks.clean_git_status) {
-    return 'COMMIT_OR_RESOLVE_UNVERIFIED_WORKTREE_CHANGES';
-  }
-  if (!checks.valid_consumed_capability || !checks.matching_run_id_remote_branch_head) {
-    return capability && capability.reason === 'CAPABILITY_REPLAY_DETECTED'
-      ? 'ISSUE_AND_CONSUME_A_NEW_SIGNED_GIT_PUSH_CAPABILITY'
-      : 'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY';
-  }
-  return 'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH';
+  return pushGate.nextGateAction(checks, capability);
 }
 
 function protectedBaseBranch(branch) {
-  return String(branch || '') === 'master';
+  return pushGate.protectedBaseBranch(branch);
 }
 
 function standardProtectedBranchFlow(remote, branch) {
-  const targetRemote = remote || 'origin';
-  const targetBranch = branch || 'master';
-  const remoteArg = powerShellSingleQuote(targetRemote);
-  const branchArg = powerShellSingleQuote(targetBranch);
-  return [
-    'git switch -c codex/<topic-branch>',
-    `node scripts/bha-run.js gate-status --remote ${remoteArg} --branch 'codex/<topic-branch>' --format json`,
-    "generate, sign, issue, and consume a git_push capability for 'codex/<topic-branch>' if the operator chooses to push that topic branch",
-    `git push ${remoteArg} HEAD`,
-    `open a pull request targeting ${branchArg} and wait for required check: BHA read-only gate`
-  ];
+  return pushGate.standardProtectedBranchFlow(remote, branch);
 }
 
 function nextGateCommands(action, remote, branch) {
-  const targetRemote = remote || 'origin';
-  const targetBranch = branch || 'master';
-  const payloadPath = '.bha/local/push-payload.json';
-  const signedPath = '.bha/local/signed-push-capability.json';
-  const remoteArg = powerShellSingleQuote(targetRemote);
-  const branchArg = powerShellSingleQuote(targetBranch);
-  const payloadArg = powerShellSingleQuote(payloadPath);
-  const signedArg = powerShellSingleQuote(signedPath);
-  const commands = {
-    RUN_VERIFIER_AND_FIX_ISSUES: ['node scripts/bha-verify.js'],
-    RESOLVE_VERIFIER_WARNINGS_OR_RECORD_CLOSEOUT: ['node scripts/bha-run.js closeout --record --format json'],
-    RUN_VALIDATE_CHECKPOINT_CLOSEOUT: [
-      'node scripts/bha-run.js validate',
-      'node scripts/bha-run.js checkpoint --format json',
-      'node scripts/bha-run.js closeout --record --format json'
-    ],
-    RUN_ROLLBACK_DRILL_OR_VALIDATE: ['node scripts/bha-run.js rollback-drill --format json', 'node scripts/bha-run.js validate'],
-    RUN_CHECKPOINT: ['node scripts/bha-run.js checkpoint --format json'],
-    RUN_CLOSEOUT_RECORD: ['node scripts/bha-run.js closeout --record --format json'],
-    COMMIT_OR_RESOLVE_UNVERIFIED_WORKTREE_CHANGES: ['git status --short'],
-    MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY: [
-      `node scripts/bha-run.js make-push-payload --remote ${remoteArg} --branch ${branchArg} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadArg}`,
-      `operator signs ${payloadPath} outside BHA and writes ${signedPath}`,
-      `node scripts/bha-run.js verify-signed-capability --file ${signedArg}`,
-      `node scripts/bha-run.js issue-capability --file ${signedArg}`,
-      `node scripts/bha-run.js consume-capability --id <capability_id> --for git_push --remote ${remoteArg} --branch ${branchArg}`,
-      `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${remoteArg}`
-    ],
-    ISSUE_AND_CONSUME_A_NEW_SIGNED_GIT_PUSH_CAPABILITY: [
-      `node scripts/bha-run.js make-push-payload --remote ${remoteArg} --branch ${branchArg} --expires-minutes 20 --key-id owner-main-pkcs8 --out ${payloadArg}`,
-      `operator signs ${payloadPath} outside BHA and writes ${signedPath}`,
-      `node scripts/bha-run.js verify-signed-capability --file ${signedArg}`,
-      `node scripts/bha-run.js issue-capability --file ${signedArg}`,
-      `node scripts/bha-run.js consume-capability --id <capability_id> --for git_push --remote ${remoteArg} --branch ${branchArg}`
-    ],
-    READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH: [
-      `node scripts/bha-run.js prepush-check --preflight --internal-git-hook ${remoteArg}`,
-      ...(protectedBaseBranch(targetBranch)
-        ? [
-          `protected ${branchArg} standard flow: push a topic branch, open a PR to ${branchArg}, and wait for BHA read-only gate`,
-          `emergency-only direct push, if explicitly authorized and permitted by GitHub protection: git push ${remoteArg} ${branchArg}`
-        ]
-        : [`git push ${remoteArg} ${branchArg}`])
-    ]
-  };
-  return commands[action] || [];
+  return pushGate.nextGateCommands(action, remote, branch);
 }
 
 function gateNextActionContext(action, branch) {
-  const conditionalPushActions = new Set([
-    'MAKE_SIGN_ISSUE_AND_CONSUME_GIT_PUSH_CAPABILITY',
-    'ISSUE_AND_CONSUME_A_NEW_SIGNED_GIT_PUSH_CAPABILITY',
-    'READY_FOR_PREPUSH_PREFLIGHT_OR_PUSH'
-  ]);
-  if (conditionalPushActions.has(action)) {
-    if (protectedBaseBranch(branch)) {
-      return {
-        next_action_required_now: false,
-        next_action_condition: 'Only required if the operator chooses an emergency direct push to protected master. The standard remote flow is topic branch, pull request to master, and required check: BHA read-only gate.',
-        next_action_scope: 'emergency_direct_push_to_protected_branch'
-      };
-    }
-    return {
-      next_action_required_now: false,
-      next_action_condition: 'Only required if the operator chooses to perform a real git push.',
-      next_action_scope: 'operator_chosen_git_push'
-    };
-  }
-  return {
-    next_action_required_now: true,
-    next_action_condition: 'Required to restore local BHA evidence or gate readiness before any real git push.',
-    next_action_scope: 'local_trust_repair'
-  };
+  return pushGate.gateNextActionContext(action, branch);
 }
 
 function readLocalJsonFileSummary(localPath) {
@@ -4570,107 +4090,24 @@ function readLocalJsonFileSummary(localPath) {
 }
 
 function currentPayloadContext(remote, branch, head, ledgerHeadHash) {
-  return {
-    remote,
-    branch,
-    head,
-    ledger_head_hash: ledgerHeadHash || null,
-    policy_hash: policyHash(),
-    mission_hash: missionHash()
-  };
+  return payloadSummary.currentPayloadContext(remote, branch, head, ledgerHeadHash, policyHash(), missionHash());
 }
 
 function capabilityFileSummary(localPath, remote, branch, head, signed, context) {
   const file = readLocalJsonFileSummary(localPath);
   const currentContext = context || currentPayloadContext(remote, branch, head, null);
-  const payload = file.value && typeof file.value === 'object' && !Array.isArray(file.value)
-    ? file.value
-    : null;
-  const summary = {
-    path: file.path,
-    exists: file.exists,
-    json_valid: file.json_valid
-  };
-  if (file.error) {
-    summary.error = file.error;
-  }
-  if (!payload) {
-    return summary;
-  }
-  summary.capability_id = payload.capability_id || payload.id || null;
-  summary.remote = payload.remote || null;
-  summary.branch = payload.branch || null;
-  summary.head = payload.head || null;
-  summary.ledger_head_hash = payload.ledger_head_hash || null;
-  summary.expires_at = payload.expires_at || null;
-  if (payload.expires_at) {
-    const expiresAtMs = Date.parse(payload.expires_at);
-    summary.expiry = Number.isFinite(expiresAtMs) ? {
-      valid: true,
-      expired: Date.now() >= expiresAtMs,
-      seconds_until_expiry: Math.floor((expiresAtMs - Date.now()) / 1000)
-    } : {
-      valid: false,
-      expired: null,
-      seconds_until_expiry: null
-    };
-  }
-  summary.signing_key_id = payload.signing_key_id || null;
-  summary.signature_present = Boolean(payload.signature);
-  summary.payload_hash_present = Boolean(payload.payload_hash);
-  const contextMismatchReasons = [];
-  if (payload.remote !== currentContext.remote) {
-    contextMismatchReasons.push('REMOTE_MISMATCH');
-  }
-  if (payload.branch !== currentContext.branch) {
-    contextMismatchReasons.push('BRANCH_MISMATCH');
-  }
-  if (payload.head !== currentContext.head) {
-    contextMismatchReasons.push('HEAD_MISMATCH');
-  }
-  if (currentContext.ledger_head_hash && payload.ledger_head_hash !== currentContext.ledger_head_hash) {
-    contextMismatchReasons.push('LEDGER_HEAD_MISMATCH');
-  }
-  if (currentContext.policy_hash && payload.policy_hash !== currentContext.policy_hash) {
-    contextMismatchReasons.push('POLICY_HASH_MISMATCH');
-  }
-  if (currentContext.mission_hash && payload.mission_hash !== currentContext.mission_hash) {
-    contextMismatchReasons.push('MISSION_HASH_MISMATCH');
-  }
-  summary.current_context = currentContext;
-  summary.matches_current_context = contextMismatchReasons.length === 0;
-  if (contextMismatchReasons.length) {
-    summary.context_mismatch_reasons = contextMismatchReasons;
-    summary.context_mismatch_details = reasonDetails(contextMismatchReasons);
-  }
-  if (signed === true) {
-    summary.safe_to_print = 'signature and private key material are not included in this summary';
-  }
-  return summary;
+  return payloadSummary.capabilityFileSummary(file, signed, currentContext, {
+    reasonDetails,
+    nowMs: Date.now()
+  });
 }
 
 function reasonMessage(code) {
-  const messages = {
-    REMOTE_MISMATCH: 'Payload is bound to a different git remote; regenerate it for the target remote before signing or using it.',
-    BRANCH_MISMATCH: 'Payload is bound to a different git branch; regenerate it for the target branch before signing or using it.',
-    HEAD_MISMATCH: 'Payload is bound to a different git HEAD; regenerate it for the current commit before signing or using it.',
-    LEDGER_HEAD_MISMATCH: 'Payload is bound to an older ledger head; regenerate it after current validation/checkpoint/closeout evidence is recorded.',
-    POLICY_HASH_MISMATCH: 'Payload is bound to a different policy hash; regenerate it under the current tracked policy.',
-    MISSION_HASH_MISMATCH: 'Payload is bound to a different mission hash; regenerate it under the current tracked mission.',
-    CAPABILITY_POLICY_HASH_MISMATCH: 'Signed capability verification failed because the payload policy hash does not match current policy.',
-    CAPABILITY_MISSION_HASH_MISMATCH: 'Signed capability verification failed because the payload mission hash does not match current mission.',
-    CAPABILITY_EXPIRED: 'Signed capability has expired; generate and sign a fresh payload if the operator chooses a real push.',
-    PAYLOAD_EXPIRED: 'Local payload has expired; generate a fresh unsigned payload if the operator chooses a real push.',
-    SIGNED_CAPABILITY_INVALID: 'Signed capability is not valid for the current gate context.'
-  };
-  return messages[code] || 'Payload is not usable for the current gate context; regenerate and sign a current payload if a real push is chosen.';
+  return localPayloadStatusLib.reasonMessage(code);
 }
 
 function reasonDetails(reasons) {
-  return Array.from(new Set(reasons || [])).map((code) => ({
-    code,
-    message: reasonMessage(code)
-  }));
+  return localPayloadStatusLib.reasonDetails(reasons);
 }
 
 async function handleSignedPayloadStatus(args) {
@@ -4890,23 +4327,7 @@ async function recoverStatus(remote, branch) {
 }
 
 function recoveryGitPushNextCommands(payloadStatus, targetRemote, targetBranch) {
-  const remoteArg = powerShellSingleQuote(targetRemote || 'origin');
-  const branchArg = powerShellSingleQuote(targetBranch || 'master');
-  const currentUnsignedReady = payloadStatus &&
-    payloadStatus.unsigned_matches_current_context === true &&
-    (payloadStatus.next_payload_action === 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA' ||
-      payloadStatus.next_payload_action === 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA_REPLACING_STALE_SIGNED_PAYLOAD');
-  return [
-    ...(currentUnsignedReady ? [] : [
-      `node scripts/bha-run.js push-prep --remote ${remoteArg} --branch ${branchArg} --expires-minutes 20 --key-id owner-main-pkcs8 --format json --write-handoff`
-    ]),
-    `node scripts/bha-run.js operator-signer-preflight --remote ${remoteArg} --branch ${branchArg} --format json`,
-    currentUnsignedReady
-      ? 'operator signs existing .bha/local/push-payload.json outside BHA and writes .bha/local/signed-push-capability.json'
-      : 'operator signs .bha/local/push-payload.json outside BHA and writes .bha/local/signed-push-capability.json',
-    `node scripts/bha-run.js signed-payload-status --remote ${remoteArg} --branch ${branchArg} --format json`,
-    `node scripts/bha-run.js gate-status --remote ${remoteArg} --branch ${branchArg} --format json`
-  ];
+  return localPayloadStatusLib.recoveryGitPushNextCommands(payloadStatus, targetRemote, targetBranch, powerShellSingleQuote);
 }
 
 async function handleRecoverStatus(args) {
@@ -4956,71 +4377,11 @@ async function signedCapabilityFileSummary(localPath, remote, branch, head, cont
 }
 
 function localPayloadIssue(kind, summary) {
-  if (!summary || summary.exists !== true || summary.json_valid !== true) {
-    return null;
-  }
-  const reasons = [];
-  if (Array.isArray(summary.context_mismatch_reasons)) {
-    reasons.push(...summary.context_mismatch_reasons);
-  }
-  if (summary.expiry && summary.expiry.expired === true) {
-    reasons.push('PAYLOAD_EXPIRED');
-  }
-  if (summary.verification && summary.verification.ok !== true) {
-    reasons.push(summary.verification.reason || 'SIGNED_CAPABILITY_INVALID');
-  }
-  if (!reasons.length) {
-    return null;
-  }
-  return {
-    kind,
-    path: summary.path,
-    capability_id: summary.capability_id || null,
-    reasons: Array.from(new Set(reasons)),
-    reason_details: reasonDetails(reasons),
-    action: 'regenerate payload for current head and sign outside BHA'
-  };
+  return localPayloadStatusLib.localPayloadIssue(kind, summary);
 }
 
 function localPayloadStatus(unsigned, signed) {
-  const issues = [
-    localPayloadIssue('unsigned_payload', unsigned),
-    localPayloadIssue('signed_payload', signed)
-  ].filter(Boolean);
-  const unsignedPresent = Boolean(unsigned && unsigned.exists === true && unsigned.json_valid === true);
-  const signedPresent = Boolean(signed && signed.exists === true && signed.json_valid === true);
-  let nextPayloadAction = 'GENERATE_UNSIGNED_PAYLOAD_FOR_CURRENT_CONTEXT';
-  if (issues.length) {
-    const unsignedHasIssue = issues.some((issue) => issue.kind === 'unsigned_payload');
-    nextPayloadAction = !unsignedHasIssue && unsignedPresent && unsigned.matches_current_context === true
-      ? 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA_REPLACING_STALE_SIGNED_PAYLOAD'
-      : 'REGENERATE_UNSIGNED_PAYLOAD_AND_SIGN_CURRENT_CONTEXT';
-  } else if (signedPresent && signed.verification && signed.verification.ok === true) {
-    nextPayloadAction = 'USE_CURRENT_SIGNED_PAYLOAD_IF_GATE_CHECKS_PASS';
-  } else if (unsignedPresent && unsigned.matches_current_context === true) {
-    nextPayloadAction = 'SIGN_CURRENT_UNSIGNED_PAYLOAD_OUTSIDE_BHA';
-  }
-  const reasonCodes = Array.from(new Set(issues.flatMap((issue) => issue.reasons || [])));
-  return {
-    unsigned_present: unsignedPresent,
-    signed_present: signedPresent,
-    unsigned_matches_current_context: unsignedPresent
-      ? unsigned.matches_current_context === true
-      : null,
-    signed_matches_current_context: signedPresent
-      ? signed.matches_current_context === true
-      : null,
-    signed_verification_ok: signed && signed.verification
-      ? signed.verification.ok === true
-      : null,
-    not_usable_local_files: issues,
-    reason_codes: reasonCodes,
-    reason_details: reasonDetails(reasonCodes),
-    human_summary: issues.length
-      ? 'One or more local payload files are stale, expired, mismatched, or invalid for the current gate context.'
-      : 'No stale, expired, mismatched, or invalid local payload files were detected.',
-    next_payload_action: nextPayloadAction
-  };
+  return localPayloadStatusLib.localPayloadStatus(unsigned, signed);
 }
 
 async function operatorPushHandoff(action, remote, branch, head, capability, immediateCommands, context) {
@@ -5092,12 +4453,7 @@ async function operatorPushHandoff(action, remote, branch, head, capability, imm
     single_line_commands: singleLineCommands,
     capability_commands_when_unblocked: capabilityCommands,
     standard_remote_flow: protectedBranch ? standardProtectedBranchFlow(remote, branch) : null,
-    protected_branch_policy: protectedBranch ? {
-      branch: branch || 'master',
-      standard_flow: 'topic branch -> pull request -> required check: BHA read-only gate',
-      direct_push: 'emergency_only',
-      local_capability_meaning: 'local gate for an explicitly authorized emergency direct push, not the normal protected-branch workflow'
-    } : null,
+    protected_branch_policy: pushGate.protectedBranchPolicy(branch),
     notes: [
       'Do not paste private key material into BHA commands.',
       'The signed capability file may contain a signature, but gate-status never prints the signature value.',
@@ -5167,28 +4523,8 @@ async function gateStatus(remote, branch) {
       local_only_evidence: ['.bha/local/capabilities.jsonl git_push issue/consume events', '.bha/local/capability-sessions.jsonl push hook USED sessions'],
       reason: 'git_push authorization is local-only so push does not create tracked evidence commits'
     },
-    push_requirement: {
-      required_now: false,
-      operator_controlled: true,
-      reason: protectedBaseBranch(branch)
-        ? 'BHA never requires an immediate push to protected master. Standard remote work uses a topic branch, pull request, and required check: BHA read-only gate; a master git_push capability is emergency-only.'
-        : 'BHA never requires an immediate git push; generate and consume a git_push capability only when the operator chooses to perform a real push.',
-      capability_required_for_real_push: true,
-      current_gate_action_if_operator_pushes: action
-    },
-    remote_branch_policy: protectedBaseBranch(branch) ? {
-      branch: branch || 'master',
-      protected: true,
-      standard_flow: 'topic branch -> pull request -> required check: BHA read-only gate',
-      direct_push: 'emergency_only',
-      required_check: 'BHA read-only gate',
-      proof_boundary: 'This field documents the configured protected master workflow; current GitHub settings must be verified from GitHub for remote enforcement claims.'
-    } : {
-      branch: branch || 'UNKNOWN',
-      protected: false,
-      standard_flow: 'operator-authorized branch push after local BHA gate',
-      direct_push: 'operator_controlled'
-    },
+    push_requirement: pushGate.pushRequirement(branch, action),
+    remote_branch_policy: pushGate.remoteBranchPolicy(branch),
     signer_boundary: {
       operator_controls_signer: true,
       bha_private_key_access: false,
@@ -5232,7 +4568,21 @@ function countSubstring(text, pattern) {
 }
 
 function requireModuleAudit(files) {
-  const allowedModules = new Set(['fs', 'path', 'crypto', 'child_process']);
+  const allowedModules = new Set([
+    'fs',
+    'path',
+    'crypto',
+    'child_process',
+    './lib/command-effects',
+    './lib/policy-check',
+    './lib/validation-runner',
+    './lib/capability-store',
+    './lib/push-gate',
+    './lib/git-reality',
+    './lib/local-payload-status',
+    './lib/payload-summary',
+    './lib/capability-verifier'
+  ]);
   const modules = [];
   const dynamicRequireFiles = [];
   for (const file of files) {
@@ -5378,15 +4728,7 @@ function recordedValidationCommand(state, id) {
 }
 
 function policyAllowsArgv(policy, argv) {
-  const allowRules = policy && policy.action_rules && Array.isArray(policy.action_rules.allow)
-    ? policy.action_rules.allow
-    : [];
-  const args = argv.slice(1);
-  return allowRules.some((rule) => {
-    return commandName(rule.command) === commandName(argv[0]) &&
-      ((rule.args && argsMatch(args, rule.args)) ||
-      (rule.args_prefix && argsPrefixMatch(args, rule.args_prefix)));
-  });
+  return policyCheck.policyAllowsArgv(policy, argv);
 }
 
 function auditCheck(id, requirement, pass, evidence, files) {
@@ -6391,7 +5733,19 @@ async function handleAuditV1Stable(args) {
   const longTermGoalCommand = validationCommandById(validation, 'long_term_goal_status_readonly');
   const regressionCommand = validationCommandById(validation, 'v12_regression_selftest');
   const verifierSelftestCommand = validationCommandById(validation, 'verifier_selftest_negative_matrix');
-  const requireAudit = requireModuleAudit([RUN_SCRIPT, VERIFY_SCRIPT]);
+  const requireAudit = requireModuleAudit([
+    RUN_SCRIPT,
+    VERIFY_SCRIPT,
+    COMMAND_EFFECTS_SCRIPT,
+    POLICY_CHECK_SCRIPT,
+    VALIDATION_RUNNER_SCRIPT,
+    CAPABILITY_STORE_SCRIPT,
+    PUSH_GATE_SCRIPT,
+    GIT_REALITY_SCRIPT,
+    LOCAL_PAYLOAD_STATUS_SCRIPT,
+    PAYLOAD_SUMMARY_SCRIPT,
+    CAPABILITY_VERIFIER_SCRIPT
+  ]);
   const dependencyAudit = dependencySurfaceAudit();
   const privateKeyAudit = operatorSignerPrivateKeyAudit();
   const evidenceTimeHeadProofBoundary = 'Checkpoint and closeout git heads are evidence-time facts; current commit identity must come from git reality and any signed capability head binding.';
@@ -6743,8 +6097,8 @@ async function handleAuditV1Stable(args) {
       fileContains(RUN_SCRIPT, 'function localPathSafetyIssue') &&
       fileContains(RUN_SCRIPT, '.bha/local must not be a symbolic link or junction') &&
       fileContains(RUN_SCRIPT, 'local capability paths must not traverse symbolic links or junctions') &&
-      fileContains(RUN_SCRIPT, 'resolveLocalFile(LOCAL_CAPABILITIES_PATH)') &&
-      fileContains(RUN_SCRIPT, 'resolveLocalFile(LOCAL_CAPABILITY_SESSIONS_PATH)') &&
+      fileContains(CAPABILITY_STORE_SCRIPT, 'resolveLocalFile(deps.localCapabilitiesPath)') &&
+      fileContains(CAPABILITY_STORE_SCRIPT, 'resolveLocalFile(deps.localCapabilitySessionsPath)') &&
       fileContains(RUN_SCRIPT, 'LOCAL_CAPABILITY_PATH_INVALID') &&
       fileContains(RUN_SCRIPT, 'push_prep_rejects_local_symlink_escape') &&
       fileContains(STABILITY_PATH, 'Symlink or junction traversal is rejected') &&
@@ -6755,7 +6109,7 @@ async function handleAuditV1Stable(args) {
       symlink_escape_regression_present: fileContains(RUN_SCRIPT, 'push_prep_rejects_local_symlink_escape'),
       invalid_path_reason_present: fileContains(RUN_SCRIPT, 'LOCAL_CAPABILITY_PATH_INVALID')
     },
-    ['scripts/bha-run.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md', '.bha/roadmap.md']
+    ['scripts/bha-run.js', 'scripts/lib/capability-store.js', '.bha/validation.yaml', 'BHA_V1_STABILITY.md', '.bha/roadmap.md']
   ));
   checks.push(auditCheck(
     'audit_v1_stable_wired',
@@ -8246,6 +7600,15 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
         '.bha/roadmap.md',
         'scripts/bha-run.js',
         'scripts/bha-verify.js',
+        'scripts/lib/command-effects.js',
+        'scripts/lib/policy-check.js',
+        'scripts/lib/validation-runner.js',
+        'scripts/lib/capability-store.js',
+        'scripts/lib/push-gate.js',
+        'scripts/lib/git-reality.js',
+        'scripts/lib/local-payload-status.js',
+        'scripts/lib/payload-summary.js',
+        'scripts/lib/capability-verifier.js',
         '.githooks/pre-push',
         '.github/workflows/bha-readonly-gate.yml'
       ],
@@ -8274,6 +7637,15 @@ function regressionPolicy(keyId, publicKeyPem, extraTrustedKeys) {
       allow: [
         { command: 'git', args: ['diff', '--check'], reason: 'local whitespace validation' },
         { command: 'git', args: ['status'], reason: 'local repository status inspection' },
+        { command: 'node', args: ['--check', 'scripts/lib/command-effects.js'], reason: 'local syntax validation' },
+        { command: 'node', args: ['--check', 'scripts/lib/policy-check.js'], reason: 'local syntax validation' },
+        { command: 'node', args: ['--check', 'scripts/lib/validation-runner.js'], reason: 'local syntax validation' },
+        { command: 'node', args: ['--check', 'scripts/lib/capability-store.js'], reason: 'local syntax validation' },
+        { command: 'node', args: ['--check', 'scripts/lib/push-gate.js'], reason: 'local syntax validation' },
+        { command: 'node', args: ['--check', 'scripts/lib/git-reality.js'], reason: 'local syntax validation' },
+        { command: 'node', args: ['--check', 'scripts/lib/local-payload-status.js'], reason: 'local syntax validation' },
+        { command: 'node', args: ['--check', 'scripts/lib/payload-summary.js'], reason: 'local syntax validation' },
+        { command: 'node', args: ['--check', 'scripts/lib/capability-verifier.js'], reason: 'local syntax validation' },
         { command: 'node', args: ['scripts/bha-run.js', 'rollback-drill', '--format', 'json'], reason: 'read-only rollback drill' },
         { command: 'node', args: ['scripts/bha-run.js', 'proof-vocabulary-status', '--format', 'json'], reason: 'read-only V2 proof vocabulary status' },
         { command: 'node', args: ['scripts/bha-run.js', 'bootstrap-status', '--format', 'json'], reason: 'read-only V2 bootstrap and fresh-clone replay status' },
@@ -8635,8 +8007,18 @@ function writeRegressionFixtureEvidence(fixtureRoot, keyId, publicKeyPem, extraT
   fs.mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
   fs.copyFileSync(CI_READONLY_GATE_PATH, path.join(fixtureRoot, '.github', 'workflows', 'bha-readonly-gate.yml'));
   fs.mkdirSync(path.join(fixtureRoot, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(fixtureRoot, 'scripts', 'lib'), { recursive: true });
   fs.copyFileSync(RUN_SCRIPT, path.join(fixtureRoot, 'scripts', 'bha-run.js'));
   fs.copyFileSync(VERIFY_SCRIPT, path.join(fixtureRoot, 'scripts', 'bha-verify.js'));
+  fs.copyFileSync(COMMAND_EFFECTS_SCRIPT, path.join(fixtureRoot, 'scripts', 'lib', 'command-effects.js'));
+  fs.copyFileSync(POLICY_CHECK_SCRIPT, path.join(fixtureRoot, 'scripts', 'lib', 'policy-check.js'));
+  fs.copyFileSync(VALIDATION_RUNNER_SCRIPT, path.join(fixtureRoot, 'scripts', 'lib', 'validation-runner.js'));
+  fs.copyFileSync(CAPABILITY_STORE_SCRIPT, path.join(fixtureRoot, 'scripts', 'lib', 'capability-store.js'));
+  fs.copyFileSync(PUSH_GATE_SCRIPT, path.join(fixtureRoot, 'scripts', 'lib', 'push-gate.js'));
+  fs.copyFileSync(GIT_REALITY_SCRIPT, path.join(fixtureRoot, 'scripts', 'lib', 'git-reality.js'));
+  fs.copyFileSync(LOCAL_PAYLOAD_STATUS_SCRIPT, path.join(fixtureRoot, 'scripts', 'lib', 'local-payload-status.js'));
+  fs.copyFileSync(PAYLOAD_SUMMARY_SCRIPT, path.join(fixtureRoot, 'scripts', 'lib', 'payload-summary.js'));
+  fs.copyFileSync(CAPABILITY_VERIFIER_SCRIPT, path.join(fixtureRoot, 'scripts', 'lib', 'capability-verifier.js'));
   writeJson(path.join(fixtureRoot, '.bha', 'mission.yaml'), mission);
   writeJson(path.join(fixtureRoot, '.bha', 'policy.yaml'), policy);
   writeJson(path.join(fixtureRoot, '.bha', 'validation.yaml'), validation);
@@ -8834,6 +8216,64 @@ function regressionCheck(id, pass, evidence) {
   };
 }
 
+function runtimeStateOrIoBoundaryEvidence(file) {
+  return {
+    no_date_now: !fileContains(file, 'Date.now'),
+    no_process_access: !fileContains(file, /\bprocess\./),
+    no_fs_import_or_use: !fileContains(file, "require('fs')") &&
+      !fileContains(file, /\bfs\./),
+    no_ledger_writes: !fileContains(file, /\bappendLedger\b/) &&
+      !fileContains(file, /\bappendFileSync\b/) &&
+      !fileContains(file, /\bwriteFileSync\b/) &&
+      !fileContains(file, /\bcreateWriteStream\b/)
+  };
+}
+
+function runtimeStateOrIoBoundaryCheck(id, file) {
+  const evidence = runtimeStateOrIoBoundaryEvidence(file);
+  return regressionCheck(id, Object.values(evidence).every((value) => value === true), evidence);
+}
+
+function callerProvidedInputBoundaryEvidence(file, options) {
+  const opts = options || {};
+  const text = fs.existsSync(file) ? readText(file) : '';
+  const allowedRequires = new Set(opts.allowedRequires || []);
+  const allowedProcess = new Set(opts.allowedProcess || []);
+  const requireMatches = Array.from(text.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g))
+    .map((match) => match[1]);
+  const processMatches = Array.from(text.matchAll(/\bprocess\.[A-Za-z_$][A-Za-z0-9_$]*/g))
+    .map((match) => match[0]);
+  const disallowedRequires = requireMatches.filter((item) => !allowedRequires.has(item));
+  const disallowedProcess = processMatches.filter((item) => !allowedProcess.has(item));
+  return {
+    module_exists: fs.existsSync(file),
+    no_disallowed_requires: disallowedRequires.length === 0,
+    allowed_requires: requireMatches.filter((item) => allowedRequires.has(item)),
+    no_disallowed_process_access: disallowedProcess.length === 0,
+    allowed_process_access: processMatches.filter((item) => allowedProcess.has(item)),
+    no_date_now: !/Date\.now/.test(text),
+    no_fs_import_or_use: !/\brequire\s*\(\s*['"]fs['"]\s*\)/.test(text) && !/\bfs\./.test(text),
+    no_file_reads: !/\breadFile(?:Sync)?\b/.test(text) && !/\bcreateReadStream\b/.test(text),
+    no_file_writes: !/\bwriteFile(?:Sync)?\b/.test(text) &&
+      !/\bappendFile(?:Sync)?\b/.test(text) &&
+      !/\bcreateWriteStream\b/.test(text),
+    no_command_execution: !/\bchild_process\b/.test(text) &&
+      !/\bspawn(?:Sync)?\b/.test(text) &&
+      !/\bexec(?:File|FileSync|Sync)?\b/.test(text) &&
+      !/\brunCommand\b/.test(text),
+    no_ledger_writes: !/\bappendLedger\b/.test(text),
+    no_policy_state_load: !/\bload(?:Policy|Mission|State)\b/.test(text)
+  };
+}
+
+function callerProvidedInputBoundaryCheck(id, file, options) {
+  const evidence = callerProvidedInputBoundaryEvidence(file, options);
+  const booleanValues = Object.entries(evidence)
+    .filter((entry) => typeof entry[1] === 'boolean')
+    .map((entry) => entry[1]);
+  return regressionCheck(id, booleanValues.every((value) => value === true), evidence);
+}
+
 async function handleRegressionSelftest(args) {
   const format = getOption(args, '--format') || 'json';
   if (format !== 'json') {
@@ -8946,7 +8386,162 @@ async function handleRegressionSelftest(args) {
     decision: checkAfterStaleLock.parsed ? checkAfterStaleLock.parsed.decision : 'NO_JSON',
     stale_recovery_event_hash: staleRecoveryEvent ? staleRecoveryEvent.event_hash : null
   }));
+  checks.push(regressionCheck('policy_check_output_declares_ledger_write_effect', checkAfterStaleLock.exit_code === 0 &&
+    checkAfterStaleLock.parsed &&
+    checkAfterStaleLock.parsed.effect === 'ledger_write' &&
+    checkAfterStaleLock.parsed.command_effect === 'ledger_write' &&
+    checkAfterStaleLock.parsed.read_only === false &&
+    checkAfterStaleLock.parsed.recorded === true, {
+    effect: checkAfterStaleLock.parsed ? checkAfterStaleLock.parsed.effect : 'NO_JSON',
+    read_only: checkAfterStaleLock.parsed ? checkAfterStaleLock.parsed.read_only : 'NO_JSON',
+    recorded: checkAfterStaleLock.parsed ? checkAfterStaleLock.parsed.recorded : 'NO_JSON'
+  }));
   const policyForPathCheck = loadPolicy();
+  checks.push(regressionCheck('command_effect_model_and_readonly_write_guard_present',
+    fileContains(COMMAND_EFFECTS_SCRIPT, 'EFFECT_READ_ONLY') &&
+    fileContains(COMMAND_EFFECTS_SCRIPT, 'EFFECT_LEDGER_WRITE') &&
+    fileContains(COMMAND_EFFECTS_SCRIPT, 'issueCapabilityEffect') &&
+    fileContains(COMMAND_EFFECTS_SCRIPT, 'consumeCapabilityEffect') &&
+    fileContains(COMMAND_EFFECTS_SCRIPT, 'effectAllowsTrackedWrite') &&
+    fileContains(RUN_SCRIPT, "require('./lib/command-effects')") &&
+    fileContains(RUN_SCRIPT, 'READ_ONLY_COMMAND_WRITE_DENIED') &&
+    fileContains(RUN_SCRIPT, 'ensureTrackedWriteAllowed(`append ledger event ${type}`)') &&
+    fileContains(RUN_SCRIPT, "ensureLocalWriteAllowed('reserve local capability session')"), {
+    command_effects_module: fileContains(COMMAND_EFFECTS_SCRIPT, 'EFFECT_READ_ONLY'),
+    capability_dynamic_effects: fileContains(COMMAND_EFFECTS_SCRIPT, 'issueCapabilityEffect') &&
+      fileContains(COMMAND_EFFECTS_SCRIPT, 'consumeCapabilityEffect'),
+    tracked_guard: fileContains(RUN_SCRIPT, 'ensureTrackedWriteAllowed(`append ledger event ${type}`)'),
+    local_guard: fileContains(RUN_SCRIPT, "ensureLocalWriteAllowed('reserve local capability session')")
+  }));
+  checks.push(regressionCheck('runtime_core_modules_extracted',
+    fileContains(POLICY_CHECK_SCRIPT, 'function evaluatePolicy') &&
+    fileContains(VALIDATION_RUNNER_SCRIPT, 'async function runValidationCommands') &&
+    fileContains(CAPABILITY_STORE_SCRIPT, 'function createCapabilityStore') &&
+    fileContains(PUSH_GATE_SCRIPT, 'function gateNextActionContext') &&
+    fileContains(GIT_REALITY_SCRIPT, 'function changedFilesFromPorcelainV2') &&
+    fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function localPayloadStatus') &&
+    fileContains(PAYLOAD_SUMMARY_SCRIPT, 'function capabilityFileSummary') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityPayloadHash') &&
+    fileContains(RUN_SCRIPT, "require('./lib/policy-check')") &&
+    fileContains(RUN_SCRIPT, "require('./lib/validation-runner')") &&
+    fileContains(RUN_SCRIPT, "require('./lib/capability-store')") &&
+    fileContains(RUN_SCRIPT, "require('./lib/push-gate')") &&
+    fileContains(RUN_SCRIPT, "require('./lib/git-reality')") &&
+    fileContains(RUN_SCRIPT, "require('./lib/local-payload-status')") &&
+    fileContains(RUN_SCRIPT, "require('./lib/payload-summary')") &&
+    fileContains(RUN_SCRIPT, "require('./lib/capability-verifier')"), {
+    policy_check_module: fileContains(POLICY_CHECK_SCRIPT, 'function evaluatePolicy'),
+    validation_runner_module: fileContains(VALIDATION_RUNNER_SCRIPT, 'async function runValidationCommands'),
+    capability_store_module: fileContains(CAPABILITY_STORE_SCRIPT, 'function createCapabilityStore'),
+    push_gate_module: fileContains(PUSH_GATE_SCRIPT, 'function gateNextActionContext'),
+    git_reality_module: fileContains(GIT_REALITY_SCRIPT, 'function changedFilesFromPorcelainV2'),
+    local_payload_status_module: fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function localPayloadStatus'),
+    payload_summary_module: fileContains(PAYLOAD_SUMMARY_SCRIPT, 'function capabilityFileSummary'),
+    capability_verifier_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityPayloadHash')
+  }));
+  checks.push(callerProvidedInputBoundaryCheck('policy_check_has_only_caller_provided_inputs', POLICY_CHECK_SCRIPT, {
+    allowedRequires: ['path'],
+    allowedProcess: ['process.platform']
+  }));
+  checks.push(regressionCheck('git_reality_pure_parsers_extracted',
+    fileContains(GIT_REALITY_SCRIPT, 'function parsePorcelainPath') &&
+    fileContains(GIT_REALITY_SCRIPT, 'function changedFilesFromStatus') &&
+    fileContains(GIT_REALITY_SCRIPT, 'function trackedGitRealityBindingFromHeads') &&
+    fileContains(RUN_SCRIPT, 'gitReality.changedFilesFromPorcelainV2(stdout)') &&
+    fileContains(RUN_SCRIPT, 'gitReality.changedFilesFromStatus(stdout)') &&
+    fileContains(RUN_SCRIPT, 'gitReality.trackedGitRealityBindingFromHeads'), {
+    porcelain_parser_module: fileContains(GIT_REALITY_SCRIPT, 'function changedFilesFromPorcelainV2'),
+    status_parser_module: fileContains(GIT_REALITY_SCRIPT, 'function changedFilesFromStatus'),
+    tracked_binding_module: fileContains(GIT_REALITY_SCRIPT, 'function trackedGitRealityBindingFromHeads')
+  }));
+  checks.push(callerProvidedInputBoundaryCheck('git_reality_has_only_caller_provided_inputs', GIT_REALITY_SCRIPT));
+  checks.push(regressionCheck('local_payload_status_pure_logic_extracted',
+    fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function reasonMessage') &&
+    fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function reasonDetails') &&
+    fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function recoveryGitPushNextCommands') &&
+    fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function localPayloadIssue') &&
+    fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function localPayloadStatus') &&
+    fileContains(RUN_SCRIPT, 'localPayloadStatusLib.reasonMessage(code)') &&
+    fileContains(RUN_SCRIPT, 'localPayloadStatusLib.recoveryGitPushNextCommands') &&
+    fileContains(RUN_SCRIPT, 'localPayloadStatusLib.localPayloadStatus(unsigned, signed)'), {
+    reason_message_module: fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function reasonMessage'),
+    recovery_commands_module: fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function recoveryGitPushNextCommands'),
+    local_payload_status_module: fileContains(LOCAL_PAYLOAD_STATUS_SCRIPT, 'function localPayloadStatus')
+  }));
+  checks.push(regressionCheck('payload_summary_pure_logic_extracted',
+    fileContains(PAYLOAD_SUMMARY_SCRIPT, 'function currentPayloadContext') &&
+    fileContains(PAYLOAD_SUMMARY_SCRIPT, 'function capabilityFileSummary') &&
+    fileContains(PAYLOAD_SUMMARY_SCRIPT, 'nowMs') &&
+    fileContains(RUN_SCRIPT, 'payloadSummary.currentPayloadContext') &&
+    fileContains(RUN_SCRIPT, 'payloadSummary.capabilityFileSummary(file, signed, currentContext') &&
+    fileContains(RUN_SCRIPT, 'const file = readLocalJsonFileSummary(localPath)'), {
+    current_payload_context_module: fileContains(PAYLOAD_SUMMARY_SCRIPT, 'function currentPayloadContext'),
+    capability_summary_module: fileContains(PAYLOAD_SUMMARY_SCRIPT, 'function capabilityFileSummary'),
+    file_reading_remains_in_runtime: fileContains(RUN_SCRIPT, 'const file = readLocalJsonFileSummary(localPath)')
+  }));
+  checks.push(runtimeStateOrIoBoundaryCheck('payload_summary_has_no_runtime_state_or_io_boundary', PAYLOAD_SUMMARY_SCRIPT));
+  checks.push(regressionCheck('capability_verifier_pure_logic_extracted',
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityType') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityTypePolicyFromLists') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityPayloadHash') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilitySignablePayload') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilitySignatureInput') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function signingKeyPurposeAllowedForCapability') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function signingKeyPurposeResult') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function normalizeTrustedSigningKeyItem') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function canonicalPayloadHashFormat') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function canonicalSignedCapabilityReason') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityBindingMissingReason') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityOneUseReason') &&
+    fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function gitPushCommandReason') &&
+    fileContains(RUN_SCRIPT, 'capabilityVerifier.capabilityType(payload)') &&
+    fileContains(RUN_SCRIPT, 'capabilityVerifier.capabilityPayloadHash(payload)') &&
+    fileContains(RUN_SCRIPT, 'capabilityVerifier.capabilitySignablePayload(payload)') &&
+    fileContains(RUN_SCRIPT, 'capabilityVerifier.capabilitySignatureInput(payload)') &&
+    fileContains(RUN_SCRIPT, 'capabilityVerifier.signingKeyPurposeAllowedForCapability(key, type)') &&
+    fileContains(RUN_SCRIPT, 'capabilityVerifier.signingKeyPurposeResult(key, type)') &&
+    fileContains(RUN_SCRIPT, 'capabilityVerifier.normalizeTrustedSigningKeyItem(item)') &&
+    fileContains(RUN_SCRIPT, 'function findTrustedSigningKey') &&
+    fileContains(RUN_SCRIPT, 'capabilityVerifier.canonicalPayloadHashFormat(value)') &&
+    fileContains(RUN_SCRIPT, 'capabilityVerifier.canonicalSignedCapabilityReason(payload)') &&
+    fileContains(RUN_SCRIPT, "capabilityVerifier.capabilityBindingMissingReason(payload, ['remote', 'branch', 'head'])") &&
+    fileContains(VERIFY_SCRIPT, 'capabilityVerifier.capabilitySignatureInput(payload)') &&
+    fileContains(VERIFY_SCRIPT, 'capabilityVerifier.signingKeyPurposeAllowedForCapability(key, type)') &&
+    fileContains(VERIFY_SCRIPT, 'capabilityVerifier.normalizeTrustedSigningKeyItem(item)') &&
+    fileContains(VERIFY_SCRIPT, 'function trustedSigningKey') &&
+    fileContains(VERIFY_SCRIPT, "capabilityVerifier.capabilityBindingMissingReason(requested, ['remote', 'branch', 'head', 'ledger_head_hash', 'expires_at'])"), {
+    capability_type_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityType'),
+    capability_policy_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityTypePolicyFromLists'),
+    payload_hash_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityPayloadHash'),
+    signable_payload_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilitySignablePayload'),
+    signature_input_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilitySignatureInput'),
+    key_purpose_policy_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function signingKeyPurposeAllowedForCapability'),
+    key_purpose_result_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function signingKeyPurposeResult'),
+    trusted_key_item_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function normalizeTrustedSigningKeyItem'),
+    canonical_hash_format_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function canonicalPayloadHashFormat'),
+    canonical_reason_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function canonicalSignedCapabilityReason'),
+    binding_reason_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityBindingMissingReason'),
+    one_use_reason_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityOneUseReason'),
+    command_reason_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function gitPushCommandReason')
+  }));
+  checks.push(runtimeStateOrIoBoundaryCheck('capability_verifier_has_no_runtime_state_or_io_boundary', CAPABILITY_VERIFIER_SCRIPT));
+  checks.push(regressionCheck('push_gate_pure_decisions_extracted',
+    fileContains(PUSH_GATE_SCRIPT, 'function pushRequirement') &&
+    fileContains(PUSH_GATE_SCRIPT, 'function remoteBranchPolicy') &&
+    fileContains(PUSH_GATE_SCRIPT, 'function postPushStatusSummary') &&
+    fileContains(PUSH_GATE_SCRIPT, 'function prepushEvidenceGates') &&
+    fileContains(PUSH_GATE_SCRIPT, 'function nextGateAction') &&
+    fileContains(RUN_SCRIPT, 'pushGate.pushRequirement(branch, action)') &&
+    fileContains(RUN_SCRIPT, 'pushGate.remoteBranchPolicy(branch)') &&
+    fileContains(RUN_SCRIPT, 'pushGate.postPushStatusSummary') &&
+    fileContains(RUN_SCRIPT, 'pushGate.prepushEvidenceGates') &&
+    fileContains(RUN_SCRIPT, 'pushGate.nextGateAction'), {
+    push_requirement_module: fileContains(PUSH_GATE_SCRIPT, 'function pushRequirement'),
+    remote_branch_policy_module: fileContains(PUSH_GATE_SCRIPT, 'function remoteBranchPolicy'),
+    post_push_status_module: fileContains(PUSH_GATE_SCRIPT, 'function postPushStatusSummary'),
+    prepush_evidence_module: fileContains(PUSH_GATE_SCRIPT, 'function prepushEvidenceGates'),
+    next_gate_action_module: fileContains(PUSH_GATE_SCRIPT, 'function nextGateAction')
+  }));
   checks.push(regressionCheck('allowed_file_path_does_not_allow_descendant_path',
     fileAllowedByPolicy('scripts/bha-run.js', policyForPathCheck) === true &&
     fileAllowedByPolicy('scripts/bha-run.js/nested', policyForPathCheck) === false &&
@@ -10677,12 +10272,7 @@ async function handleCapabilitySelftest(args) {
 }
 
 function changedFilesFromStatus(stdout) {
-  return String(stdout || '').split(/\r?\n/).filter((line) => line.trim() !== '').map((line) => {
-    const status = line.slice(0, 2).trim() || 'UNKNOWN';
-    const rawPath = line.slice(3).trim();
-    const filePath = rawPath.replace(/.* -> /, '').replace(/\\/g, '/');
-    return { status, path: filePath || rawPath };
-  });
+  return gitReality.changedFilesFromStatus(stdout);
 }
 
 function forbiddenLedgerEffects(ledger, policy) {
@@ -11197,6 +10787,7 @@ async function handleCloseout(args) {
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  setCurrentCommandEffect(command, args);
   try {
     if (command === 'check') {
       await handleCheck(args);

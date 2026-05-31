@@ -37,6 +37,15 @@ jobs:
           set -euo pipefail
           node --check scripts/bha-run.js
           node --check scripts/bha-verify.js
+          node --check scripts/lib/command-effects.js
+          node --check scripts/lib/policy-check.js
+          node --check scripts/lib/validation-runner.js
+          node --check scripts/lib/capability-store.js
+          node --check scripts/lib/push-gate.js
+          node --check scripts/lib/git-reality.js
+          node --check scripts/lib/local-payload-status.js
+          node --check scripts/lib/payload-summary.js
+          node --check scripts/lib/capability-verifier.js
 
       - name: Verifier
         shell: bash
