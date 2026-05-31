@@ -36,6 +36,105 @@
       }
     },
     {
+      "id": "node_check_command_effects",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/lib/command-effects.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "node_check_policy_check",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/lib/policy-check.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "node_check_validation_runner",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/lib/validation-runner.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "node_check_capability_store",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/lib/capability-store.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "node_check_push_gate",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/lib/push-gate.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "node_check_git_reality",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/lib/git-reality.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "node_check_local_payload_status",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/lib/local-payload-status.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "node_check_payload_summary",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/lib/payload-summary.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "node_check_capability_verifier",
+      "argv": [
+        "node",
+        "--check",
+        "scripts/lib/capability-verifier.js"
+      ],
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
       "id": "verifier_selftest_negative_matrix",
       "argv": [
         "node",

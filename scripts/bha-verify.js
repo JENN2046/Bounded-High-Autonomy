@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const capabilityVerifier = require('./lib/capability-verifier');
 
 const ROOT = path.resolve(__dirname, '..');
 const BHA_DIR = path.join(ROOT, '.bha');
@@ -20,6 +21,15 @@ const ROADMAP_PATH = path.join(BHA_DIR, 'roadmap.md');
 const CHECKPOINT_PATH = path.join(BHA_DIR, 'checkpoint.json');
 const RUN_SCRIPT = path.join(ROOT, 'scripts', 'bha-run.js');
 const VERIFY_SCRIPT = path.join(ROOT, 'scripts', 'bha-verify.js');
+const COMMAND_EFFECTS_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'command-effects.js');
+const POLICY_CHECK_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'policy-check.js');
+const VALIDATION_RUNNER_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'validation-runner.js');
+const CAPABILITY_STORE_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'capability-store.js');
+const PUSH_GATE_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'push-gate.js');
+const GIT_REALITY_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'git-reality.js');
+const LOCAL_PAYLOAD_STATUS_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'local-payload-status.js');
+const PAYLOAD_SUMMARY_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'payload-summary.js');
+const CAPABILITY_VERIFIER_SCRIPT = path.join(ROOT, 'scripts', 'lib', 'capability-verifier.js');
 const PRE_PUSH_PATH = path.join(ROOT, '.githooks', 'pre-push');
 const DESIGN_PATH = path.join(ROOT, 'BHA_DESIGN.md');
 const LONG_TERM_GOAL_AUDIT_PATH = path.join(ROOT, 'BHA_LONG_TERM_GOAL_AUDIT.md');
@@ -46,6 +56,15 @@ const VALIDATION_INPUTS = [
   ROADMAP_PATH,
   RUN_SCRIPT,
   VERIFY_SCRIPT,
+  COMMAND_EFFECTS_SCRIPT,
+  POLICY_CHECK_SCRIPT,
+  VALIDATION_RUNNER_SCRIPT,
+  CAPABILITY_STORE_SCRIPT,
+  PUSH_GATE_SCRIPT,
+  GIT_REALITY_SCRIPT,
+  LOCAL_PAYLOAD_STATUS_SCRIPT,
+  PAYLOAD_SUMMARY_SCRIPT,
+  CAPABILITY_VERIFIER_SCRIPT,
   PRE_PUSH_PATH,
   CI_READONLY_GATE_PATH
 ];
@@ -430,16 +449,9 @@ function capabilityHash(event) {
 }
 
 function trustedSigningKeys(policy) {
-  return (((policy || {}).trusted_public_keys) || []).map((item) => {
-    if (item && typeof item === 'object') {
-      return {
-        id: String(item.id || item.key_id || ''),
-        purpose: item.purpose ? String(item.purpose) : null,
-        public_key_pem: item.public_key_pem || item.publicKeyPem || null
-      };
-    }
-    return { id: String(item), purpose: null, public_key_pem: null };
-  }).filter((item) => item.id);
+  return (((policy || {}).trusted_public_keys) || [])
+    .map((item) => capabilityVerifier.normalizeTrustedSigningKeyItem(item))
+    .filter((item) => item.id);
 }
 
 function trustedSigningKey(policy, id) {
@@ -447,13 +459,7 @@ function trustedSigningKey(policy, id) {
 }
 
 function signingKeyPurposeAllowedForCapability(key, type) {
-  if (!key) {
-    return false;
-  }
-  if (String(type) === 'git_push') {
-    return key.purpose === 'owner';
-  }
-  return false;
+  return capabilityVerifier.signingKeyPurposeAllowedForCapability(key, type);
 }
 
 function legacyCanonicalSelftestCapabilityIssue(event, key, requested) {
@@ -470,20 +476,19 @@ function legacyCanonicalSelftestCapabilityIssue(event, key, requested) {
 }
 
 function capabilityRequestPayload(payload) {
-  const copy = Object.assign({}, payload || {});
-  delete copy.signature;
-  delete copy.payload_hash;
-  return copy;
+  return capabilityVerifier.capabilityRequestPayload(payload);
 }
 
 function capabilityPayloadHash(payload) {
-  return sha256(stable(capabilityRequestPayload(payload)));
+  return capabilityVerifier.capabilityPayloadHash(payload);
 }
 
 function capabilitySignablePayload(payload) {
-  const copy = Object.assign({}, payload || {});
-  delete copy.signature;
-  return copy;
+  return capabilityVerifier.capabilitySignablePayload(payload);
+}
+
+function capabilitySignatureInput(payload) {
+  return capabilityVerifier.capabilitySignatureInput(payload);
 }
 
 function capabilitySignatureValid(payload, key) {
@@ -493,7 +498,7 @@ function capabilitySignatureValid(payload, key) {
   try {
     return crypto.verify(
       null,
-      Buffer.from(stable(capabilitySignablePayload(payload))),
+      Buffer.from(capabilitySignatureInput(payload)),
       key.public_key_pem,
       Buffer.from(String(payload.signature), 'base64')
     );
@@ -503,8 +508,11 @@ function capabilitySignatureValid(payload, key) {
 }
 
 function isExpired(expiresAt, now) {
-  const millis = Date.parse(String(expiresAt || ''));
-  return Number.isNaN(millis) || millis <= (now || Date.now());
+  return capabilityVerifier.isExpired(expiresAt, Number.isFinite(now) ? now : Date.now());
+}
+
+function capabilityExpirationReason(expiresAt, now) {
+  return capabilityVerifier.capabilityExpirationReason(expiresAt, Number.isFinite(now) ? now : Date.now());
 }
 
 function capabilityRevoked(capabilities, id) {
@@ -1053,7 +1061,7 @@ function verifyCapabilityIssue(event, policy, state, capabilities, ledger, issue
       issues.push({ code: 'CAPABILITY_PAYLOAD_HASH_FORMAT_UNSUPPORTED', severity: 'FAIL', message: 'valid capability payload_hash_format must be sha256-hex', event_hash: event.event_hash });
     }
   }
-  if (!requested.remote || !requested.branch || !requested.head || !requested.ledger_head_hash || !requested.expires_at) {
+  if (capabilityVerifier.capabilityBindingMissingReason(requested, ['remote', 'branch', 'head', 'ledger_head_hash', 'expires_at'])) {
     issues.push({ code: 'CAPABILITY_BINDING_MISSING', severity: 'FAIL', message: 'valid capability is missing required bindings', event_hash: event.event_hash });
   }
   const ledgerEvent = (ledger || []).find((item) => item.type === 'capability_capability_issue' &&
@@ -1064,10 +1072,10 @@ function verifyCapabilityIssue(event, policy, state, capabilities, ledger, issue
   } else if (requested.ledger_head_hash !== ledgerEvent.prev_hash) {
     issues.push({ code: 'CAPABILITY_LEDGER_HEAD_MISMATCH', severity: 'FAIL', message: 'valid capability ledger_head_hash does not match issue-time ledger head', event_hash: event.event_hash });
   }
-  if (requested.one_use !== true) {
+  if (capabilityVerifier.capabilityOneUseReason(requested)) {
     issues.push({ code: 'CAPABILITY_ONE_USE_REQUIRED', severity: 'FAIL', message: 'valid capability is not one_use', event_hash: event.event_hash });
   }
-  if (isExpired(requested.expires_at) && !historical) {
+  if (capabilityExpirationReason(requested.expires_at) && !historical) {
     issues.push({ code: 'CAPABILITY_EXPIRED', severity: 'FAIL', message: 'valid capability is expired', event_hash: event.event_hash });
   }
   if (capabilityRevoked(capabilities, payload.capability_id)) {
@@ -2015,7 +2023,7 @@ function selfTestCapabilityKeyPurposeDenied() {
   payload.requested.payload_hash = capabilityPayloadHash(payload.requested);
   payload.requested.signature = crypto.sign(
     null,
-    Buffer.from(stable(capabilitySignablePayload(payload.requested))),
+    Buffer.from(capabilitySignatureInput(payload.requested)),
     keypair.privateKey
   ).toString('base64');
   const event = selfTestCapabilityEvent('capability_issue', payload, 'key-purpose');
