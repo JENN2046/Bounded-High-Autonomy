@@ -27,6 +27,10 @@ BHA must never read, print, log, store, or infer private key material. The signe
 
 Push guidance is conditional. Status and handoff commands may describe how to prepare local git_push capability files, but they must keep `required_now=false` unless the operator chooses a real git push.
 
+Ordinary topic branch publishing should be low-friction. `ship --yes` may push a non-protected topic branch and create or reuse a pull request when local verifier, validation, checkpoint, closeout, rollback, and clean-worktree gates pass. A signed git_push capability remains required for direct protected-branch push and other high-risk remote actions, but topic branch PR flow relies on the local evidence gate plus the remote BHA read-only required check.
+
+`install-git-ship-alias --yes` installs only a repository-local `git ship` alias for this convenience path. It does not write global Git config and does not bypass the protected-branch checks inside `ship`.
+
 ## Proof Sources
 
 Trusted proof comes from:

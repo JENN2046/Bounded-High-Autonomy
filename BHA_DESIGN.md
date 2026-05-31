@@ -51,6 +51,12 @@ Current runtime reality addendum:
   `master`, and required check `BHA read-only gate`. A direct `git push origin master` is
   emergency-only and requires explicit operator authorization, a fresh local `git_push` capability,
   and GitHub protection allowing the action.
+- Ordinary topic branch push is intentionally simpler: `ship --yes` may push the current
+  non-protected branch and create or reuse a pull request after local evidence gates pass. This path
+  does not require the operator to manually sign a payload; the remote PR required check remains the
+  final trust gate before `master`.
+- `install-git-ship-alias --yes` may install a repository-local `git ship` alias that forwards to
+  `node scripts/bha-run.js ship`; it never writes global Git config and does not weaken `ship` gates.
 - Remote tracking refs are local Git observations after fetch or push; they are useful evidence, but
   they are not remote proof by themselves.
 - Validation input hashes normalize text line endings to LF before hashing so trust recovery does not

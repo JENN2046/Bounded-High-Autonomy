@@ -9,6 +9,8 @@ const STATIC_COMMAND_EFFECTS = Object.freeze({
   'check': EFFECT_LEDGER_WRITE,
   'assert-deny': EFFECT_LEDGER_WRITE,
   'exec': EFFECT_LEDGER_WRITE,
+  'ship': EFFECT_EXTERNAL_GUARDED,
+  'install-git-ship-alias': EFFECT_LOCAL_ONLY_WRITE,
   'inspect': EFFECT_READ_ONLY,
   'validate': EFFECT_LEDGER_WRITE,
   'verify': EFFECT_LEDGER_WRITE,
