@@ -52,6 +52,9 @@ Forbidden:
 
 Purpose: run configured validation commands through caller-provided execution and
 policy hooks, then normalize validation results.
+Boundary drift is covered by regression-selftest check
+`validation_runner_executes_only_through_injected_run_command`; this is a
+guardrail, not a proof source above repository reality.
 
 Allowed:
 - Use caller-provided `evaluateValidationCommandPolicy`, `runCommand`,
@@ -155,6 +158,9 @@ Forbidden:
 Purpose: construct push-gate decisions, handoff commands, protected-branch
 policy summaries, post-push summaries, and pre-push evidence gate booleans from
 caller-provided evidence.
+Boundary drift is covered by regression-selftest check
+`push_gate_has_only_injected_evidence_helpers`; this is a guardrail, not a proof
+source above repository reality.
 
 Allowed:
 - Pure gate decision logic from supplied state, ledger events, verifier result,
