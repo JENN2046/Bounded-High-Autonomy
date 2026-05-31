@@ -31,6 +31,10 @@ For day-to-day local work, prefer the BHA shell commands before claiming trusted
 
 `AGENTS.md` is behavior guidance, not proof. Proof still comes from repository reality, `.bha/ledger.jsonl`, `.bha/state.json`, verifier output, policy hash, mission hash, validation evidence, necessary `.bha/local/` gate evidence, and git reality.
 
+## Response Style
+
+Follow the global Codex `AGENTS.md` Output Discipline rule for ending user-facing responses with a Codex suggestion; this project does not redefine that wording locally.
+
 ## Commit & Pull Request Guidelines
 
 Recent history uses conventional commit prefixes such as `feat:`, `fix:`, `chore:`, and `test:`. Keep commits narrow and describe the verified behavior, not just the edited file. Pull requests should summarize changed runtime boundaries, list validation commands run, identify skipped checks, and call out any capability or pre-push gate impact.
