@@ -3384,6 +3384,7 @@ function matchingConsumedCapabilityCore(remote, branch, head, reserve) {
       issues.set(event.payload.capability_id, event);
     }
   }
+  let replayedCandidate = null;
   for (const event of events) {
     if (event.type !== 'capability_consume' || !event.payload || event.payload.valid !== true) {
       continue;
@@ -3404,10 +3405,12 @@ function matchingConsumedCapabilityCore(remote, branch, head, reserve) {
     }
     const consumes = validCapabilityConsumes(events, id);
     if (consumes.length !== 1) {
-      return { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED', capability_id: id };
+      replayedCandidate = replayedCandidate || { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED', capability_id: id };
+      continue;
     }
     if (validCapabilitySessions(events, id).length > 0) {
-      return { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED', capability_id: id };
+      replayedCandidate = replayedCandidate || { ok: false, reason: 'CAPABILITY_REPLAY_DETECTED', capability_id: id };
+      continue;
     }
     if (!issue) {
       return { ok: false, reason: 'CAPABILITY_TICKET_MISSING', capability_id: id };
@@ -3447,6 +3450,9 @@ function matchingConsumedCapabilityCore(remote, branch, head, reserve) {
       }
       return { ok: true, event_hash: event.event_hash, capability_id: id };
     }
+  }
+  if (replayedCandidate) {
+    return replayedCandidate;
   }
   return { ok: false, reason: 'NO_VALID_CONSUMED_GIT_PUSH_CAPABILITY' };
 }
@@ -9981,6 +9987,55 @@ async function handleRegressionSelftest(args) {
     replay_reason: replay.parsed ? replay.parsed.reason : 'NO_JSON',
     phase: postPushGateStatus.parsed && postPushGateStatus.parsed.post_push_status ? postPushGateStatus.parsed.post_push_status.phase : 'NO_JSON',
     remote_tracking_matches_current_head: postPushGateStatus.parsed && postPushGateStatus.parsed.post_push_status ? postPushGateStatus.parsed.post_push_status.remote_tracking_matches_current_head : 'NO_JSON'
+  }));
+
+  const secondMakePayload = await runFixtureBha(fixtureRoot, [
+    'make-push-payload',
+    '--remote',
+    'origin',
+    '--branch',
+    branch,
+    '--expires-minutes',
+    '20',
+    '--key-id',
+    keyId,
+    '--out',
+    '.bha/local/push-payload.json'
+  ]);
+  const secondUnsignedPayload = secondMakePayload.exit_code === 0 ? readJsonStrict(payloadPath) : null;
+  const secondSignedPayload = secondUnsignedPayload ? signCapabilityPayload(secondUnsignedPayload, keypair.privateKey) : null;
+  if (secondSignedPayload) {
+    writeTextFile(signedPath, JSON.stringify(secondSignedPayload) + '\n');
+  }
+  const secondVerifySigned = await runFixtureBha(fixtureRoot, ['verify-signed-capability', '--file', '.bha/local/signed-push-capability.json']);
+  const secondIssue = await runFixtureBha(fixtureRoot, ['issue-capability', '--file', '.bha/local/signed-push-capability.json']);
+  const secondConsume = await runFixtureBha(fixtureRoot, [
+    'consume-capability',
+    '--id',
+    secondSignedPayload ? secondSignedPayload.capability_id : 'MISSING_SECOND_CAPABILITY',
+    '--for',
+    'git_push',
+    '--remote',
+    'origin',
+    '--branch',
+    branch
+  ]);
+  const secondPreflight = await runFixtureBha(fixtureRoot, ['prepush-check', '--preflight', '--internal-git-hook', 'origin']);
+  checks.push(regressionCheck('new_git_push_capability_after_used_session_allows_same_head_branch', secondMakePayload.exit_code === 0 &&
+    secondVerifySigned.exit_code === 0 &&
+    secondIssue.exit_code === 0 &&
+    secondConsume.exit_code === 0 &&
+    secondPreflight.exit_code === 0 &&
+    secondSignedPayload &&
+    secondSignedPayload.capability_id !== signedPayload.capability_id &&
+    secondPreflight.parsed &&
+    secondPreflight.parsed.status === 'ALLOW' &&
+    secondPreflight.parsed.capability &&
+    secondPreflight.parsed.capability.capability_id === secondSignedPayload.capability_id, {
+    first_capability_id: signedPayload.capability_id,
+    second_capability_id: secondSignedPayload ? secondSignedPayload.capability_id : null,
+    second_preflight_status: secondPreflight.parsed ? secondPreflight.parsed.status : 'NO_JSON',
+    second_preflight_reason: secondPreflight.parsed ? secondPreflight.parsed.reason : 'NO_JSON'
   }));
 
   const deniedCases = [
