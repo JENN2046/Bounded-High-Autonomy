@@ -8,6 +8,10 @@ function protectedBaseBranch(branch) {
   return String(branch || '') === 'master';
 }
 
+function capabilityRequiredForBranch(branch) {
+  return protectedBaseBranch(branch);
+}
+
 function standardProtectedBranchFlow(remote, branch) {
   const targetRemote = remote || 'origin';
   const targetBranch = branch || 'master';
@@ -16,7 +20,7 @@ function standardProtectedBranchFlow(remote, branch) {
   return [
     'git switch -c codex/<topic-branch>',
     `node scripts/bha-run.js gate-status --remote ${remoteArg} --branch 'codex/<topic-branch>' --format json`,
-    "generate, sign, issue, and consume a git_push capability for 'codex/<topic-branch>' if the operator chooses to push that topic branch",
+    "push the topic branch without a signed capability when local evidence gates pass",
     `git push ${remoteArg} HEAD`,
     `open a pull request targeting ${branchArg} and wait for required check: BHA read-only gate`
   ];
@@ -104,8 +108,8 @@ function pushRequirement(branch, action) {
     operator_controlled: true,
     reason: protectedBaseBranch(branch)
       ? 'BHA never requires an immediate push to protected master. Standard remote work uses a topic branch, pull request, and required check: BHA read-only gate; a master git_push capability is emergency-only.'
-      : 'BHA never requires an immediate git push; generate and consume a git_push capability only when the operator chooses to perform a real push.',
-    capability_required_for_real_push: true,
+      : 'BHA allows ordinary topic branch push without a signed git_push capability when local evidence gates pass; PR required checks remain the remote trust gate.',
+    capability_required_for_real_push: capabilityRequiredForBranch(branch),
     current_gate_action_if_operator_pushes: action
   };
 }
@@ -124,8 +128,8 @@ function remoteBranchPolicy(branch) {
   return {
     branch: branch || 'UNKNOWN',
     protected: false,
-    standard_flow: 'operator-authorized branch push after local BHA gate',
-    direct_push: 'operator_controlled'
+    standard_flow: 'topic branch push after local BHA evidence gate; PR required check validates remotely',
+    direct_push: 'topic_branch_allowed_without_signed_capability'
   };
 }
 
@@ -175,7 +179,7 @@ function postPushStatusSummary(options) {
           : 'No push to protected master is required now. Standard remote flow is topic branch, PR, and BHA read-only gate; generate a master capability only for an explicitly authorized emergency direct push.'))
       : (replayBlocked
         ? 'The previous one-use git_push capability has been used; if the operator chooses another real push, generate and sign a new capability first.'
-        : (prePushReady ? 'A valid consumed git_push capability is ready if the operator chooses to push once.' : 'No push is required now; if the operator chooses a real push, generate, sign, issue, and consume a git_push capability first.'))
+        : (prePushReady ? 'Topic branch evidence gates are ready for ordinary push; signed capability is not required for this branch.' : 'No push is required now; ordinary topic branch push may proceed after local evidence gates pass.'))
   };
 }
 
@@ -312,6 +316,7 @@ function nextGateAction(checks, capability) {
 module.exports = {
   powerShellSingleQuote,
   protectedBaseBranch,
+  capabilityRequiredForBranch,
   standardProtectedBranchFlow,
   nextGateCommands,
   gateNextActionContext,

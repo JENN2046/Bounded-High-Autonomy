@@ -3936,6 +3936,7 @@ async function handlePrepushCheck(args) {
   const gitRealityBinding = trackedGitRealityBinding(head, checkpoint, closeoutEvent);
   const carrier = await evidenceCarrierCommitStatus(head, gitRealityBinding);
   let capability = remote && branch && head ? await matchingConsumedCapability(remote, branch, head, { reserve: false }) : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
+  const capabilityRequired = pushGate.capabilityRequiredForBranch(branch);
   const checks = {
     verifier_pass: evidence.gates.verifier_pass,
     verifier_no_warnings: evidence.gates.verifier_no_warnings,
@@ -3944,17 +3945,20 @@ async function handlePrepushCheck(args) {
     rollback_recorded: evidence.gates.rollback_recorded,
     checkpoint_recorded: evidence.gates.checkpoint_recorded,
     closeout_current: evidence.gates.closeout_current,
-    valid_consumed_capability: capability.ok === true,
-    matching_run_id_remote_branch_head: capability.ok === true,
+    valid_consumed_capability: capabilityRequired ? capability.ok === true : true,
+    matching_run_id_remote_branch_head: capabilityRequired ? capability.ok === true : true,
     clean_git_status: gitStatusAllowedForLocalTrustRepair(status)
   };
   let ok = Object.values(checks).every(Boolean);
-  if (ok && !preflight) {
+  if (ok && !preflight && capabilityRequired) {
     capability = await matchingConsumedCapability(remote, branch, head, { reserve: true });
     checks.valid_consumed_capability = capability.ok === true;
     checks.matching_run_id_remote_branch_head = capability.ok === true;
     ok = Object.values(checks).every(Boolean);
   }
+  const failureReason = ok
+    ? 'ALLOW'
+    : ((capabilityRequired ? capability.reason : null) || firstFailedGate(checks) || 'PREPUSH_GATE_FAILED');
   if (record) {
     appendLedger('prepush_check', {
       status: ok ? 'ALLOW' : 'FAIL_CLOSED',
@@ -3964,7 +3968,7 @@ async function handlePrepushCheck(args) {
       checks,
       tracked_git_reality: gitRealityBinding,
       evidence_carrier_commit: carrier,
-      reason: ok ? 'ALLOW' : (capability.reason || firstFailedGate(checks) || 'PREPUSH_GATE_FAILED'),
+      reason: failureReason,
       capability: {
         ok: capability.ok === true,
         reason: capability.reason || null,
@@ -3976,11 +3980,12 @@ async function handlePrepushCheck(args) {
     schema: 'bha.prepush_check.v1',
     ok,
     status: ok ? 'ALLOW' : 'FAIL_CLOSED',
-    reason: ok ? 'ALLOW' : (capability.reason || firstFailedGate(checks) || 'PREPUSH_GATE_FAILED'),
+    reason: failureReason,
     read_only: !record && (preflight || !ok),
     recorded: record,
     preflight,
     no_write_guard: noWriteGuard,
+    capability_required: capabilityRequired,
     remote: remote || 'UNKNOWN',
     branch: branch || 'UNKNOWN',
     head: head || 'UNKNOWN',
@@ -4488,6 +4493,7 @@ async function gateStatus(remote, branch) {
   const capability = remote && branch && head
     ? await matchingConsumedCapability(remote, branch, head, { reserve: false })
     : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
+  const capabilityRequired = pushGate.capabilityRequiredForBranch(branch);
   const checks = {
     verifier_pass: evidence.gates.verifier_pass,
     verifier_no_warnings: evidence.gates.verifier_no_warnings,
@@ -4496,8 +4502,8 @@ async function gateStatus(remote, branch) {
     rollback_recorded: evidence.gates.rollback_recorded,
     checkpoint_recorded: evidence.gates.checkpoint_recorded,
     closeout_current: evidence.gates.closeout_current,
-    valid_consumed_capability: capability.ok === true,
-    matching_run_id_remote_branch_head: capability.ok === true,
+    valid_consumed_capability: capabilityRequired ? capability.ok === true : true,
+    matching_run_id_remote_branch_head: capabilityRequired ? capability.ok === true : true,
     clean_git_status: gitStatusAllowedForLocalTrustRepair(status)
   };
   const action = nextGateAction(checks, capability);
@@ -4518,6 +4524,7 @@ async function gateStatus(remote, branch) {
     checks,
     evidence_gates: evidence.gates,
     capability,
+    capability_required: capabilityRequired,
     post_push_status: pushStatus,
     hook: await hookPathStatus(),
     git_status: {
@@ -6991,18 +6998,29 @@ async function handleAuditV2Preview(args) {
     },
     ['.bha/policy.yaml', '.bha/validation.yaml', 'scripts/bha-run.js']
   ));
-  checks.push(auditCheck(
-    'v2_preview_does_not_affect_git_push_gate',
-    'V2 preview status does not create gate authorization; git_push gate remains fail-closed until a valid operator-chosen capability exists.',
-    gate.ok === false &&
+  const protectedGateBranch = protectedBaseBranch(branch);
+  const gitPushGateUnaffectedByPreview = protectedGateBranch
+    ? gate.ok === false &&
       gate.status === 'BLOCKED' &&
       gate.capability &&
       gate.capability.ok === false &&
       gate.checks &&
       gate.checks.valid_consumed_capability === false &&
       gate.push_requirement &&
-      gate.push_requirement.required_now === false,
+      gate.push_requirement.required_now === false
+    : gate.capability &&
+      gate.capability.ok === false &&
+      gate.checks &&
+      gate.checks.valid_consumed_capability === true &&
+      gate.push_requirement &&
+      gate.push_requirement.required_now === false &&
+      gate.push_requirement.capability_required_for_real_push === false;
+  checks.push(auditCheck(
+    'v2_preview_does_not_affect_git_push_gate',
+    'V2 preview status does not create gate authorization; protected branch push still requires capability, while topic branch push uses only the local evidence gate.',
+    gitPushGateUnaffectedByPreview,
     {
+      protected_branch: protectedGateBranch,
       gate_status: gate.status || 'UNKNOWN',
       gate_reason: gate.capability ? gate.capability.reason : 'UNKNOWN',
       valid_consumed_capability: gate.checks ? gate.checks.valid_consumed_capability : null,
@@ -9104,6 +9122,67 @@ async function handleRegressionSelftest(args) {
 
   const branchResult = await runCommand(['git', 'branch', '--show-current'], { cwd: fixtureRoot });
   const branch = branchResult.stdout.trim() || 'master';
+  const protectedShipDryRun = await runFixtureBha(fixtureRoot, ['ship', '--dry-run', '--format', 'json']);
+  checks.push(regressionCheck('ship_dry_run_blocks_protected_branch', protectedShipDryRun.exit_code === 3 &&
+    protectedShipDryRun.parsed &&
+    protectedShipDryRun.parsed.status === 'BLOCKED_PROTECTED_BRANCH' &&
+    protectedShipDryRun.parsed.read_only === true &&
+    String(protectedShipDryRun.parsed.proof_boundary || '').includes('does not direct-push protected branches'), {
+    exit_code: protectedShipDryRun.exit_code,
+    status: protectedShipDryRun.parsed ? protectedShipDryRun.parsed.status : 'NO_JSON',
+    read_only: protectedShipDryRun.parsed ? protectedShipDryRun.parsed.read_only : 'NO_JSON'
+  }));
+  const aliasBeforeInstall = await runCommand(['git', 'config', '--local', '--get', 'alias.ship'], { cwd: fixtureRoot });
+  const installAliasDryRun = await runFixtureBha(fixtureRoot, ['install-git-ship-alias', '--dry-run', '--format', 'json']);
+  const aliasAfterDryRun = await runCommand(['git', 'config', '--local', '--get', 'alias.ship'], { cwd: fixtureRoot });
+  const installAlias = await runFixtureBha(fixtureRoot, ['install-git-ship-alias', '--yes', '--format', 'json']);
+  const aliasAfterInstall = await runCommand(['git', 'config', '--local', '--get', 'alias.ship'], { cwd: fixtureRoot });
+  checks.push(regressionCheck('install_git_ship_alias_dry_run_is_readonly',
+    installAliasDryRun.exit_code === 0 &&
+    installAliasDryRun.parsed &&
+    installAliasDryRun.parsed.status === 'DRY_RUN_READY' &&
+    installAliasDryRun.parsed.read_only === true &&
+    aliasBeforeInstall.exit_code === aliasAfterDryRun.exit_code &&
+    String(aliasBeforeInstall.stdout || '').trim() === String(aliasAfterDryRun.stdout || '').trim(), {
+    exit_code: installAliasDryRun.exit_code,
+    status: installAliasDryRun.parsed ? installAliasDryRun.parsed.status : 'NO_JSON',
+    read_only: installAliasDryRun.parsed ? installAliasDryRun.parsed.read_only : 'NO_JSON',
+    alias_before_exit_code: aliasBeforeInstall.exit_code,
+    alias_after_dry_run_exit_code: aliasAfterDryRun.exit_code
+  }));
+  checks.push(regressionCheck('install_git_ship_alias_yes_writes_local_alias',
+    installAlias.exit_code === 0 &&
+    installAlias.parsed &&
+    installAlias.parsed.status === 'INSTALLED' &&
+    installAlias.parsed.read_only === false &&
+    installAlias.parsed.scope === 'local' &&
+    aliasAfterInstall.exit_code === 0 &&
+    String(aliasAfterInstall.stdout || '').trim() === gitShipAliasCommand(), {
+    exit_code: installAlias.exit_code,
+    status: installAlias.parsed ? installAlias.parsed.status : 'NO_JSON',
+    scope: installAlias.parsed ? installAlias.parsed.scope : 'NO_JSON',
+    alias_value: String(aliasAfterInstall.stdout || '').trim()
+  }));
+  const topicBranch = 'codex/regression-topic';
+  const topicCheckout = await runCommand(['git', 'checkout', '-b', topicBranch], { cwd: fixtureRoot });
+  const topicNoCapabilityPreflight = await runFixtureBha(fixtureRoot, ['prepush-check', '--preflight', '--internal-git-hook', 'origin']);
+  const returnToProtectedBranch = await runCommand(['git', 'checkout', branch], { cwd: fixtureRoot });
+  checks.push(regressionCheck('topic_branch_prepush_does_not_require_signed_capability',
+    topicCheckout.exit_code === 0 &&
+    topicNoCapabilityPreflight.exit_code === 0 &&
+    topicNoCapabilityPreflight.parsed &&
+    topicNoCapabilityPreflight.parsed.status === 'ALLOW' &&
+    topicNoCapabilityPreflight.parsed.capability_required === false &&
+    topicNoCapabilityPreflight.parsed.checks &&
+    topicNoCapabilityPreflight.parsed.checks.valid_consumed_capability === true &&
+    returnToProtectedBranch.exit_code === 0, {
+    checkout_exit_code: topicCheckout.exit_code,
+    preflight_exit_code: topicNoCapabilityPreflight.exit_code,
+    status: topicNoCapabilityPreflight.parsed ? topicNoCapabilityPreflight.parsed.status : 'NO_JSON',
+    capability_required: topicNoCapabilityPreflight.parsed ? topicNoCapabilityPreflight.parsed.capability_required : 'NO_JSON',
+    reason: topicNoCapabilityPreflight.parsed ? topicNoCapabilityPreflight.parsed.reason : 'NO_JSON',
+    return_checkout_exit_code: returnToProtectedBranch.exit_code
+  }));
   const missingPayloadGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
   const missingSignedPayloadStatus = await runFixtureBha(fixtureRoot, ['signed-payload-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
   const originalPrivateKeyPath = process.env.BHA_PRIVATE_KEY_PATH;
@@ -10958,6 +11037,477 @@ async function handleCloseout(args) {
   console.log(JSON.stringify(report));
 }
 
+function shipStep(id, result) {
+  return Object.assign({
+    id,
+    exit_code: result && Object.prototype.hasOwnProperty.call(result, 'exit_code') ? result.exit_code : null,
+    ok: Boolean(result && result.exit_code === 0 && !result.error),
+    error: result && result.error ? result.error : null
+  }, result && result.parsed ? { parsed: result.parsed } : {});
+}
+
+function shipBlocked(status, fields) {
+  return Object.assign({
+    schema: 'bha.ship.v1',
+    ok: false,
+    status,
+    read_only: true,
+    recorded: false
+  }, fields || {});
+}
+
+function gitShipAliasCommand() {
+  return '!f() { node scripts/bha-run.js ship "$@"; }; f';
+}
+
+async function localGitAliasValue(name) {
+  const result = await runCommand(['git', 'config', '--local', '--get', `alias.${name}`], {});
+  if (result.exit_code === 0 && !result.error) {
+    return {
+      ok: true,
+      exists: true,
+      value: String(result.stdout || '').trim(),
+      exit_code: result.exit_code
+    };
+  }
+  if (result.exit_code === 1 && !result.error) {
+    return {
+      ok: true,
+      exists: false,
+      value: null,
+      exit_code: result.exit_code
+    };
+  }
+  return {
+    ok: false,
+    exists: false,
+    value: null,
+    exit_code: result.exit_code,
+    error: result.error || truncate(result.stderr)
+  };
+}
+
+async function handleInstallGitShipAlias(args) {
+  const format = getOption(args, '--format') || 'json';
+  const yes = hasFlag(args, '--yes');
+  const dryRun = hasFlag(args, '--dry-run');
+  const scope = getOption(args, '--scope') || 'local';
+  const expected = gitShipAliasCommand();
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+  if (scope !== 'local') {
+    console.log(JSON.stringify({
+      schema: 'bha.install_git_ship_alias.v1',
+      ok: false,
+      status: 'BLOCKED_NON_LOCAL_SCOPE',
+      read_only: true,
+      recorded: false,
+      scope,
+      proof_boundary: 'Only repository-local git alias installation is supported; global/system git config is intentionally out of scope.'
+    }));
+    process.exitCode = 3;
+    return;
+  }
+  const before = await localGitAliasValue('ship');
+  if (before.ok !== true) {
+    console.log(JSON.stringify({
+      schema: 'bha.install_git_ship_alias.v1',
+      ok: false,
+      status: 'BLOCKED_ALIAS_STATUS_FAILED',
+      read_only: true,
+      recorded: false,
+      scope,
+      alias: 'ship',
+      expected_value: expected,
+      current_alias: before
+    }));
+    process.exitCode = 3;
+    return;
+  }
+  if (!yes && !dryRun) {
+    console.log(JSON.stringify({
+      schema: 'bha.install_git_ship_alias.v1',
+      ok: false,
+      status: 'BLOCKED_CONFIRMATION_REQUIRED',
+      read_only: true,
+      recorded: false,
+      scope,
+      alias: 'ship',
+      expected_value: expected,
+      current_alias: before,
+      next_command: 'node scripts/bha-run.js install-git-ship-alias --yes --format json',
+      proof_boundary: 'Installing the alias writes only repository-local .git/config and requires explicit --yes.'
+    }));
+    process.exitCode = 3;
+    return;
+  }
+  if (dryRun) {
+    console.log(JSON.stringify({
+      schema: 'bha.install_git_ship_alias.v1',
+      ok: true,
+      status: 'DRY_RUN_READY',
+      read_only: true,
+      recorded: false,
+      scope,
+      alias: 'ship',
+      expected_value: expected,
+      current_alias: before,
+      would_run: ['git', 'config', '--local', 'alias.ship', expected],
+      resulting_user_command: 'git ship --yes',
+      proof_boundary: 'Dry-run reads repository-local git config and does not install the alias.'
+    }));
+    return;
+  }
+
+  ensureLocalWriteAllowed('install local git ship alias');
+  const install = await runCommand(['git', 'config', '--local', 'alias.ship', expected], {});
+  const after = await localGitAliasValue('ship');
+  const ok = install.exit_code === 0 && !install.error && after.ok === true && after.value === expected;
+  console.log(JSON.stringify({
+    schema: 'bha.install_git_ship_alias.v1',
+    ok,
+    status: ok ? 'INSTALLED' : 'INSTALL_FAILED',
+    read_only: false,
+    recorded: false,
+    scope,
+    alias: 'ship',
+    expected_value: expected,
+    previous_alias: before,
+    current_alias: after,
+    resulting_user_command: 'git ship --yes',
+    install: {
+      exit_code: install.exit_code,
+      error: install.error,
+      stderr: truncate(install.stderr)
+    },
+    proof_boundary: 'The alias is repository-local only. It forwards git ship arguments to node scripts/bha-run.js ship and does not grant protected-branch push authority.'
+  }));
+  if (!ok) {
+    process.exitCode = install.exit_code || 3;
+  }
+}
+
+async function gitStatusShortText() {
+  const status = await gitStatusShort();
+  return {
+    ok: status.ok,
+    clean: status.clean,
+    short: status.stdout.trim() || 'CLEAN',
+    stdout: status.stdout,
+    stderr: truncate(status.stderr),
+    error: status.error,
+    exit_code: status.exit_code
+  };
+}
+
+async function commitEvidenceIfNeeded(message) {
+  const status = await gitStatusShort();
+  if (status.ok !== true) {
+    return { ok: false, status: 'GIT_STATUS_FAILED', git_status: status };
+  }
+  if (status.clean === true) {
+    return { ok: true, status: 'NO_EVIDENCE_COMMIT_REQUIRED', committed: false };
+  }
+  if (!authorizedRuntimeDirty(status.stdout)) {
+    return {
+      ok: false,
+      status: 'BLOCKED_UNVERIFIED_WORKTREE_CHANGES',
+      git_status: {
+        short: status.stdout.trim() || 'CLEAN'
+      }
+    };
+  }
+  const add = await runCommand(['git', 'add', '.bha/checkpoint.json', '.bha/ledger.jsonl', '.bha/state.json'], {});
+  if (add.exit_code !== 0 || add.error) {
+    return { ok: false, status: 'GIT_ADD_FAILED', add };
+  }
+  const commit = await runCommand(['git', 'commit', '-m', message || 'chore: record bha evidence for ship'], {});
+  const committed = commit.exit_code === 0 && !commit.error;
+  return {
+    ok: committed,
+    status: committed ? 'EVIDENCE_COMMITTED' : 'GIT_COMMIT_FAILED',
+    committed,
+    add,
+    commit
+  };
+}
+
+function parseJsonArrayOutput(result) {
+  try {
+    const parsed = JSON.parse(String(result.stdout || '[]'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+async function currentPrForBranch(branch, base) {
+  const result = await runCommand([
+    'gh',
+    'pr',
+    'list',
+    '--head',
+    branch,
+    '--base',
+    base,
+    '--json',
+    'number,url,state,title'
+  ], {});
+  return {
+    result,
+    prs: result.exit_code === 0 && !result.error ? parseJsonArrayOutput(result) : []
+  };
+}
+
+async function handleShip(args) {
+  const format = getOption(args, '--format') || 'json';
+  const yes = hasFlag(args, '--yes');
+  const dryRun = hasFlag(args, '--dry-run');
+  const signed = hasFlag(args, '--signed');
+  const waitChecks = !hasFlag(args, '--no-wait');
+  if (format !== 'json') {
+    console.log(JSON.stringify({ ok: false, status: 'INVALID', error: 'only --format json is supported' }));
+    process.exitCode = 2;
+    return;
+  }
+
+  const remote = getOption(args, '--remote') || 'origin';
+  const base = getOption(args, '--base') || 'master';
+  const actualBranch = await currentBranch();
+  const branch = getOption(args, '--branch') || actualBranch;
+  const headBefore = await currentHead();
+  const steps = [];
+  if (!branch) {
+    console.log(JSON.stringify(shipBlocked('BLOCKED_NO_CURRENT_BRANCH', { remote, base, branch: 'UNKNOWN' })));
+    process.exitCode = 2;
+    return;
+  }
+  if (!yes && !dryRun) {
+    console.log(JSON.stringify(shipBlocked('BLOCKED_CONFIRMATION_REQUIRED', {
+      remote,
+      base,
+      branch,
+      head: headBefore,
+      next_command: `node scripts/bha-run.js ship --yes --remote ${powerShellSingleQuote(remote)} --base ${powerShellSingleQuote(base)}`,
+      proof_boundary: 'ship performs remote push and PR operations only with --yes; protected branches still require explicit signed flow.'
+    })));
+    process.exitCode = 3;
+    return;
+  }
+  if (protectedBaseBranch(branch)) {
+    console.log(JSON.stringify(shipBlocked('BLOCKED_PROTECTED_BRANCH', {
+      remote,
+      base,
+      branch,
+      head: headBefore,
+      signed_requested: signed,
+      next_command: 'Use a topic branch and PR for normal work; direct protected branch push requires the existing signed git_push capability flow.',
+      proof_boundary: 'ship --yes intentionally does not direct-push protected branches.'
+    })));
+    process.exitCode = 3;
+    return;
+  }
+  if (actualBranch !== branch) {
+    console.log(JSON.stringify(shipBlocked('BLOCKED_BRANCH_MISMATCH', {
+      remote,
+      base,
+      branch,
+      current_branch: actualBranch || 'UNKNOWN',
+      head: headBefore,
+      next_command: 'Switch to the topic branch before running ship.'
+    })));
+    process.exitCode = 3;
+    return;
+  }
+
+  const initialStatus = await gitStatusShortText();
+  if (initialStatus.ok !== true) {
+    console.log(JSON.stringify(shipBlocked('BLOCKED_GIT_STATUS_FAILED', { remote, base, branch, git_status: initialStatus })));
+    process.exitCode = 3;
+    return;
+  }
+  if (initialStatus.clean !== true && !authorizedRuntimeDirty(initialStatus.stdout)) {
+    console.log(JSON.stringify(shipBlocked('BLOCKED_UNVERIFIED_WORKTREE_CHANGES', {
+      remote,
+      base,
+      branch,
+      git_status: { short: initialStatus.short },
+      next_commands: ['commit or stash non-evidence worktree changes before ship']
+    })));
+    process.exitCode = 3;
+    return;
+  }
+
+  const evidenceBefore = await evidenceUxStatus(remote, base);
+  if (evidenceBefore.ok !== true) {
+    console.log(JSON.stringify(shipBlocked('BLOCKED_EVIDENCE_REQUIRES_FULL_VALIDATION', {
+      remote,
+      base,
+      branch,
+      evidence_ux: {
+        status: evidenceBefore.status,
+        recommendation: evidenceBefore.recommendation
+      },
+      next_commands: evidenceBefore.recommendation ? evidenceBefore.recommendation.full_repair_commands : ['node scripts/bha-run.js validate']
+    })));
+    process.exitCode = 3;
+    return;
+  }
+  if (evidenceBefore.recommendation && evidenceBefore.recommendation.fast_repair_available === true && !dryRun) {
+    const repair = await readOnlyJsonCommand(['node', 'scripts/bha-run.js', 'repair-evidence', '--fast', '--remote', remote, '--branch', base, '--format', 'json']);
+    steps.push(shipStep('repair_evidence_fast', repair));
+    if (repair.ok !== true) {
+      console.log(JSON.stringify(shipBlocked('BLOCKED_REPAIR_EVIDENCE_FAILED', { remote, base, branch, steps })));
+      process.exitCode = repair.exit_code || 3;
+      return;
+    }
+  }
+
+  const evidenceCommit = dryRun
+    ? { ok: true, status: 'DRY_RUN_SKIPPED', committed: false }
+    : await commitEvidenceIfNeeded('chore: record bha evidence for ship');
+  steps.push({ id: 'commit_evidence_if_needed', ok: evidenceCommit.ok === true, status: evidenceCommit.status, committed: evidenceCommit.committed === true });
+  if (evidenceCommit.ok !== true) {
+    console.log(JSON.stringify(shipBlocked(evidenceCommit.status || 'BLOCKED_EVIDENCE_COMMIT_FAILED', {
+      remote,
+      base,
+      branch,
+      steps,
+      git_status: evidenceCommit.git_status || null
+    })));
+    process.exitCode = 3;
+    return;
+  }
+
+  const verify = await verifierResult();
+  steps.push({
+    id: 'verify',
+    ok: verify.ok === true,
+    status: verify.parsed ? verify.parsed.status : 'UNKNOWN',
+    exit_code: verify.exit_code
+  });
+  if (verify.ok !== true) {
+    console.log(JSON.stringify(shipBlocked('BLOCKED_VERIFIER_FAILED', { remote, base, branch, steps })));
+    process.exitCode = verify.exit_code || 3;
+    return;
+  }
+
+  const stable = await readOnlyJsonCommand(['node', 'scripts/bha-run.js', 'stable-exit-status', '--remote', remote, '--branch', base, '--format', 'json']);
+  steps.push(shipStep('stable_exit_status', stable));
+  if (stable.ok !== true) {
+    console.log(JSON.stringify(shipBlocked('BLOCKED_STABLE_EXIT_STATUS_FAILED', {
+      remote,
+      base,
+      branch,
+      steps,
+      stable_exit_status: stable.parsed || null
+    })));
+    process.exitCode = stable.exit_code || 3;
+    return;
+  }
+
+  const head = await currentHead();
+  if (dryRun) {
+    console.log(JSON.stringify({
+      schema: 'bha.ship.v1',
+      ok: true,
+      status: 'DRY_RUN_READY',
+      read_only: true,
+      recorded: false,
+      remote,
+      base,
+      branch,
+      head,
+      steps,
+      next_command: `node scripts/bha-run.js ship --yes --remote ${powerShellSingleQuote(remote)} --base ${powerShellSingleQuote(base)}`,
+      proof_boundary: 'ship --dry-run performs no push and creates no PR.'
+    }));
+    return;
+  }
+
+  const push = await runCommand(['git', 'push', '-u', remote, `HEAD:refs/heads/${branch}`], {});
+  steps.push({
+    id: 'git_push_topic_branch',
+    ok: push.exit_code === 0 && !push.error,
+    exit_code: push.exit_code,
+    stderr: truncate(push.stderr),
+    error: push.error
+  });
+  if (push.exit_code !== 0 || push.error) {
+    console.log(JSON.stringify(shipBlocked('BLOCKED_GIT_PUSH_FAILED', { remote, base, branch, head, steps })));
+    process.exitCode = push.exit_code || 3;
+    return;
+  }
+
+  const currentPr = await currentPrForBranch(branch, base);
+  steps.push({
+    id: 'find_existing_pr',
+    ok: currentPr.result.exit_code === 0 && !currentPr.result.error,
+    exit_code: currentPr.result.exit_code,
+    found: currentPr.prs.length
+  });
+  let pr = currentPr.prs[0] || null;
+  if (!pr) {
+    const created = await runCommand(['gh', 'pr', 'create', '--base', base, '--head', branch, '--fill'], {});
+    const url = String(created.stdout || '').trim();
+    steps.push({
+      id: 'create_pr',
+      ok: created.exit_code === 0 && !created.error,
+      exit_code: created.exit_code,
+      url,
+      stderr: truncate(created.stderr),
+      error: created.error
+    });
+    if (created.exit_code !== 0 || created.error) {
+      console.log(JSON.stringify(shipBlocked('BLOCKED_PR_CREATE_FAILED', { remote, base, branch, head, steps })));
+      process.exitCode = created.exit_code || 3;
+      return;
+    }
+    const refreshed = await currentPrForBranch(branch, base);
+    pr = refreshed.prs[0] || { url };
+  }
+
+  let checks = null;
+  if (waitChecks && pr && pr.number) {
+    const watched = await runCommand(['gh', 'pr', 'checks', String(pr.number), '--watch', '--interval', '10'], {});
+    steps.push({
+      id: 'wait_pr_checks',
+      ok: watched.exit_code === 0 && !watched.error,
+      exit_code: watched.exit_code,
+      stdout: truncate(watched.stdout),
+      stderr: truncate(watched.stderr),
+      error: watched.error
+    });
+    checks = {
+      ok: watched.exit_code === 0 && !watched.error,
+      output: truncate(watched.stdout || watched.stderr)
+    };
+  }
+
+  console.log(JSON.stringify({
+    schema: 'bha.ship.v1',
+    ok: !checks || checks.ok === true,
+    status: !checks || checks.ok === true ? 'SHIPPED' : 'SHIPPED_CHECKS_FAILED',
+    read_only: false,
+    recorded: false,
+    remote,
+    base,
+    branch,
+    head,
+    pushed: true,
+    pr,
+    checks,
+    steps,
+    proof_boundary: 'ship automates ordinary topic branch push and PR flow. Protected branch direct push, force push, release, deploy, tag, and package publish remain outside this command.'
+  }));
+  if (checks && checks.ok !== true) {
+    process.exitCode = 1;
+  }
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   setCurrentCommandEffect(command, args);
@@ -10968,6 +11518,10 @@ async function main() {
       await handleAssertDeny(args);
     } else if (command === 'exec') {
       await handleExec(args);
+    } else if (command === 'ship') {
+      await handleShip(args);
+    } else if (command === 'install-git-ship-alias') {
+      await handleInstallGitShipAlias(args);
     } else if (command === 'inspect') {
       await handleInspect(args);
     } else if (command === 'validate') {

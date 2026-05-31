@@ -727,6 +727,50 @@
           "origin"
         ],
         "reason": "read-only prepush fail-closed check"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "ship",
+          "--dry-run",
+          "--branch",
+          "master",
+          "--format",
+          "json"
+        ],
+        "reason": "guarded ship dry-run status"
+      },
+      {
+        "command": "node",
+        "args_prefix": [
+          "scripts/bha-run.js",
+          "ship",
+          "--yes"
+        ],
+        "reason": "guarded topic branch ship flow; protected branches remain blocked by runtime checks"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "install-git-ship-alias",
+          "--dry-run",
+          "--format",
+          "json"
+        ],
+        "reason": "read-only repository-local git ship alias installation preview"
+      },
+      {
+        "command": "node",
+        "args": [
+          "scripts/bha-run.js",
+          "install-git-ship-alias",
+          "--yes",
+          "--format",
+          "json"
+        ],
+        "reason": "explicit repository-local git ship alias installation"
       }
     ]
   },
