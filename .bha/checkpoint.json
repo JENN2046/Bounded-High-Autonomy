@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-31T17-59-02-887Z",
-  "created_at": "2026-05-31T17:59:03.035Z",
+  "checkpoint_id": "checkpoint-2026-05-31T18-08-14-497Z",
+  "created_at": "2026-05-31T18:08:14.691Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -12,9 +12,9 @@
   },
   "phase": "checkpoint",
   "workspace": ".",
-  "branch": "master",
-  "head": "2034bbab1c9a2a2fb047d62b8676f82ec8f7ce3f",
-  "ledger_head_hash": "dd70177c631e1579353e53f064cf3fd7cc8f9ed14984a9169df4e2d18790b550",
+  "branch": "codex/runtime-boundary-selftests",
+  "head": "1e47dd790be648e1fb7883f7d49f18419680f0ca",
+  "ledger_head_hash": "1075da7fbafa70325ddc2cc460f84783d877aa6fab181967bc37db68228576f4",
   "policy_hash": "908f6a9484c9ffe59950f4eda2138de8baa32a47fba6eb383724ae77deaf2662",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
@@ -85,30 +85,18 @@
     {
       "status": "M",
       "path": ".bha/state.json"
-    },
-    {
-      "status": "M",
-      "path": "BHA_MODULE_BOUNDARIES.md"
-    },
-    {
-      "status": "M",
-      "path": "scripts/bha-run.js"
     }
   ],
   "validation_run": {
     "status": "PASS",
-    "completed_at": "2026-05-31T17:47:16.448Z",
-    "ledger_event_hash": "d043f4fc16980b8086d860bc2d8da63b882c5b85c5df913b39a427306fb2db31",
+    "completed_at": "2026-05-31T17:59:21.920Z",
+    "ledger_event_hash": "987c44b6be5e4a9534af1558a96ca74969cfb28202479d2d15cfc7685f6c634e",
     "command_count": 58
   },
   "validation_not_run": [],
-  "verifier_status": "FAIL",
-  "verifier_ledger_head_hash": "dd70177c631e1579353e53f064cf3fd7cc8f9ed14984a9169df4e2d18790b550",
-  "blockers": [
-    "VALIDATION_STALE_INPUTS",
-    "UNVERIFIED_WORKTREE_CHANGE",
-    "UNVERIFIED_WORKTREE_CHANGE"
-  ],
+  "verifier_status": "PASS",
+  "verifier_ledger_head_hash": "1075da7fbafa70325ddc2cc460f84783d877aa6fab181967bc37db68228576f4",
+  "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
     "real git push remains blocked without signed consumed git_push capability",
@@ -119,8 +107,8 @@
     "next_session_commands": [
       "node scripts/bha-run.js inspect --format json",
       "node scripts/bha-verify.js",
-      "node scripts/bha-run.js recover-status --remote 'origin' --branch 'master' --format json",
-      "node scripts/bha-run.js gate-status --remote 'origin' --branch 'master' --format json"
+      "node scripts/bha-run.js recover-status --remote 'origin' --branch 'codex/runtime-boundary-selftests' --format json",
+      "node scripts/bha-run.js gate-status --remote 'origin' --branch 'codex/runtime-boundary-selftests' --format json"
     ],
     "fresh_clone_path": [
       "node scripts/bha-verify.js",
@@ -142,9 +130,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "dd70177c631e1579353e53f064cf3fd7cc8f9ed14984a9169df4e2d18790b550",
-    "checkpoint_event_hash": "f46d341df0dad26d4d5347bc428eeb37dfb97bec36209412d128b32125c36b0c",
-    "final_ledger_head_hash": "f46d341df0dad26d4d5347bc428eeb37dfb97bec36209412d128b32125c36b0c"
+    "verified_ledger_head_hash": "1075da7fbafa70325ddc2cc460f84783d877aa6fab181967bc37db68228576f4",
+    "checkpoint_event_hash": "59577c1d5ff9a33eb00f447ff618b118cefa5eb0952468d1b023ccd6c3c520f0",
+    "final_ledger_head_hash": "59577c1d5ff9a33eb00f447ff618b118cefa5eb0952468d1b023ccd6c3c520f0"
   },
-  "ledger_event_hash": "f46d341df0dad26d4d5347bc428eeb37dfb97bec36209412d128b32125c36b0c"
+  "ledger_event_hash": "59577c1d5ff9a33eb00f447ff618b118cefa5eb0952468d1b023ccd6c3c520f0"
 }
