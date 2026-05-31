@@ -8282,6 +8282,86 @@ function callerProvidedInputBoundaryCheck(id, file, options) {
   return regressionCheck(id, booleanValues.every((value) => value === true), evidence);
 }
 
+function validationRunnerBoundaryEvidence(file) {
+  const text = fs.existsSync(file) ? readText(file) : '';
+  const runCommandCalls = Array.from(text.matchAll(/\b(?:[A-Za-z_$][A-Za-z0-9_$]*\.)?runCommand\s*\(/g))
+    .map((match) => match[0]);
+  const disallowedRunCommandCalls = runCommandCalls.filter((call) => call !== 'deps.runCommand(');
+  return {
+    module_exists: fs.existsSync(file),
+    no_requires: !/\brequire\s*\(/.test(text),
+    no_process_access: !/\bprocess\./.test(text),
+    no_fs_import_or_use: !/\brequire\s*\(\s*['"]fs['"]\s*\)/.test(text) && !/\bfs\./.test(text),
+    no_file_reads: !/\breadFile(?:Sync)?\b/.test(text) && !/\bcreateReadStream\b/.test(text),
+    no_file_writes: !/\bwriteFile(?:Sync)?\b/.test(text) &&
+      !/\bappendFile(?:Sync)?\b/.test(text) &&
+      !/\bcreateWriteStream\b/.test(text),
+    no_command_execution_imports: !/\bchild_process\b/.test(text) &&
+      !/\bspawn(?:Sync)?\b/.test(text) &&
+      !/\bexec(?:File|FileSync|Sync)?\b/.test(text),
+    command_execution_only_via_injected_run_command: runCommandCalls.length > 0 &&
+      disallowedRunCommandCalls.length === 0,
+    policy_check_is_injected: /\bdeps\.evaluateValidationCommandPolicy\s*\(\s*command\.argv\s*\)/.test(text),
+    validation_step_recording_is_injected: /\bdeps\.appendValidationStep\s*\(\s*record\s*\)/.test(text),
+    no_ledger_writes: !/\bappendLedger\b/.test(text),
+    no_policy_state_load: !/\bload(?:Policy|Mission|State)\b/.test(text),
+    observed_run_command_calls: runCommandCalls,
+    disallowed_run_command_calls: disallowedRunCommandCalls
+  };
+}
+
+function validationRunnerBoundaryCheck(id, file) {
+  const evidence = validationRunnerBoundaryEvidence(file);
+  const booleanValues = Object.entries(evidence)
+    .filter((entry) => typeof entry[1] === 'boolean')
+    .map((entry) => entry[1]);
+  return regressionCheck(id, booleanValues.every((value) => value === true), evidence);
+}
+
+function pushGateBoundaryEvidence(file) {
+  const text = fs.existsSync(file) ? readText(file) : '';
+  const allowedHelpers = new Set([
+    'readCheckpointFile',
+    'ledgerEventByHash',
+    'newestLedgerEventOfType',
+    'rollbackDrillChecks',
+    'validationInputsHash',
+    'policyHash',
+    'missionHash'
+  ]);
+  const helperCalls = Array.from(text.matchAll(/\bhelpers\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g))
+    .map((match) => match[1]);
+  const disallowedHelperCalls = helperCalls.filter((name) => !allowedHelpers.has(name));
+  return {
+    module_exists: fs.existsSync(file),
+    no_requires: !/\brequire\s*\(/.test(text),
+    no_process_access: !/\bprocess\./.test(text),
+    no_fs_import_or_use: !/\brequire\s*\(\s*['"]fs['"]\s*\)/.test(text) && !/\bfs\./.test(text),
+    no_file_reads: !/\breadFile(?:Sync)?\b/.test(text) && !/\bcreateReadStream\b/.test(text),
+    no_file_writes: !/\bwriteFile(?:Sync)?\b/.test(text) &&
+      !/\bappendFile(?:Sync)?\b/.test(text) &&
+      !/\bcreateWriteStream\b/.test(text),
+    no_command_execution: !/\bchild_process\b/.test(text) &&
+      !/\bspawn(?:Sync)?\b/.test(text) &&
+      !/\bexec(?:File|FileSync|Sync)?\b/.test(text) &&
+      !/\brunCommand\b/.test(text),
+    no_ledger_writes: !/\bappendLedger\b/.test(text),
+    no_policy_state_load: !/\bload(?:Policy|Mission|State)\b/.test(text),
+    evidence_helpers_are_injected_and_allowlisted: helperCalls.length > 0 &&
+      disallowedHelperCalls.length === 0,
+    observed_helper_calls: Array.from(new Set(helperCalls)),
+    disallowed_helper_calls: Array.from(new Set(disallowedHelperCalls))
+  };
+}
+
+function pushGateBoundaryCheck(id, file) {
+  const evidence = pushGateBoundaryEvidence(file);
+  const booleanValues = Object.entries(evidence)
+    .filter((entry) => typeof entry[1] === 'boolean')
+    .map((entry) => entry[1]);
+  return regressionCheck(id, booleanValues.every((value) => value === true), evidence);
+}
+
 async function handleRegressionSelftest(args) {
   const format = getOption(args, '--format') || 'json';
   if (format !== 'json') {
@@ -8480,6 +8560,7 @@ async function handleRegressionSelftest(args) {
     payload_summary_module: fileContains(PAYLOAD_SUMMARY_SCRIPT, 'function capabilityFileSummary'),
     capability_verifier_module: fileContains(CAPABILITY_VERIFIER_SCRIPT, 'function capabilityPayloadHash')
   }));
+  checks.push(validationRunnerBoundaryCheck('validation_runner_executes_only_through_injected_run_command', VALIDATION_RUNNER_SCRIPT));
   checks.push(callerProvidedInputBoundaryCheck('policy_check_has_only_caller_provided_inputs', POLICY_CHECK_SCRIPT, {
     allowedRequires: ['path'],
     allowedProcess: ['process.platform']
@@ -8583,6 +8664,7 @@ async function handleRegressionSelftest(args) {
     prepush_evidence_module: fileContains(PUSH_GATE_SCRIPT, 'function prepushEvidenceGates'),
     next_gate_action_module: fileContains(PUSH_GATE_SCRIPT, 'function nextGateAction')
   }));
+  checks.push(pushGateBoundaryCheck('push_gate_has_only_injected_evidence_helpers', PUSH_GATE_SCRIPT));
   checks.push(regressionCheck('allowed_file_path_does_not_allow_descendant_path',
     fileAllowedByPolicy('scripts/bha-run.js', policyForPathCheck) === true &&
     fileAllowedByPolicy('scripts/bha-run.js/nested', policyForPathCheck) === false &&

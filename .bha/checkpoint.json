@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-05-31T17-08-17-571Z",
-  "created_at": "2026-05-31T17:08:17.710Z",
+  "checkpoint_id": "checkpoint-2026-05-31T17-46-56-059Z",
+  "created_at": "2026-05-31T17:46:56.335Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,8 +13,8 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "master",
-  "head": "535057a9042ec0b5aa3f4b4e8d62617f4ace069b",
-  "ledger_head_hash": "a558a21b7723634f70d568b390be7bf45d68f89101d7c02335a9aa06d17265c1",
+  "head": "188c17d7b448ca107b854afa930662f421341e67",
+  "ledger_head_hash": "5211281b1c168c2e9016e21b985984401422193c6ccbe79197a16ca12222a715",
   "policy_hash": "908f6a9484c9ffe59950f4eda2138de8baa32a47fba6eb383724ae77deaf2662",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
@@ -80,15 +80,15 @@
   "changed_files": [
     {
       "status": "M",
-      "path": ".bha/checkpoint.json"
-    },
-    {
-      "status": "M",
       "path": ".bha/ledger.jsonl"
     },
     {
       "status": "M",
       "path": ".bha/state.json"
+    },
+    {
+      "status": "M",
+      "path": "scripts/bha-run.js"
     }
   ],
   "validation_run": {
@@ -98,9 +98,12 @@
     "command_count": 58
   },
   "validation_not_run": [],
-  "verifier_status": "PASS",
-  "verifier_ledger_head_hash": "a558a21b7723634f70d568b390be7bf45d68f89101d7c02335a9aa06d17265c1",
-  "blockers": [],
+  "verifier_status": "FAIL",
+  "verifier_ledger_head_hash": "5211281b1c168c2e9016e21b985984401422193c6ccbe79197a16ca12222a715",
+  "blockers": [
+    "VALIDATION_STALE_INPUTS",
+    "UNVERIFIED_WORKTREE_CHANGE"
+  ],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
     "real git push remains blocked without signed consumed git_push capability",
@@ -134,9 +137,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "a558a21b7723634f70d568b390be7bf45d68f89101d7c02335a9aa06d17265c1",
-    "checkpoint_event_hash": "c464ab8588c759485f32f53aa6f91da7b4d9dc426c22dc295163bc5a8a5f1b29",
-    "final_ledger_head_hash": "c464ab8588c759485f32f53aa6f91da7b4d9dc426c22dc295163bc5a8a5f1b29"
+    "verified_ledger_head_hash": "5211281b1c168c2e9016e21b985984401422193c6ccbe79197a16ca12222a715",
+    "checkpoint_event_hash": "980ba409a733f5370c60e742e71dfa9036259b997eae66e53c95c41846b8b56f",
+    "final_ledger_head_hash": "980ba409a733f5370c60e742e71dfa9036259b997eae66e53c95c41846b8b56f"
   },
-  "ledger_event_hash": "c464ab8588c759485f32f53aa6f91da7b4d9dc426c22dc295163bc5a8a5f1b29"
+  "ledger_event_hash": "980ba409a733f5370c60e742e71dfa9036259b997eae66e53c95c41846b8b56f"
 }
