@@ -9508,6 +9508,39 @@ async function handleRegressionSelftest(args) {
     read_only: postPushBlocked.read_only,
     pushed: postPushBlocked.pushed
   }));
+  const createdPrUrl = 'https://github.com/example/repo/pull/123';
+  const createdPrFromUrl = prFromCreateUrl(createdPrUrl);
+  checks.push(regressionCheck('ship_created_pr_url_number_resolves_for_check_wait',
+    createdPrFromUrl &&
+    createdPrFromUrl.number === 123 &&
+    createdPrFromUrl.url === createdPrUrl &&
+    prFromCreateUrl('https://github.com/example/repo/issues/123') === null, {
+    number: createdPrFromUrl ? createdPrFromUrl.number : null,
+    url: createdPrFromUrl ? createdPrFromUrl.url : null,
+    issue_url_rejected: prFromCreateUrl('https://github.com/example/repo/issues/123') === null
+  }));
+  const unresolvedCreatedPrBlocked = shipBlocked('BLOCKED_PR_RESOLVE_FAILED', {
+    remote: 'origin',
+    base: branch,
+    branch: 'codex/example',
+    pushed: true,
+    checks: null,
+    steps: [
+      { id: 'git_push_topic_branch', ok: true },
+      { id: 'create_pr', ok: true, url: 'https://github.com/example/repo/pull/not-a-number' },
+      { id: 'refresh_created_pr', ok: false, found: 0 }
+    ]
+  });
+  checks.push(regressionCheck('ship_created_pr_unresolved_blocks_writeful',
+    unresolvedCreatedPrBlocked.status === 'BLOCKED_PR_RESOLVE_FAILED' &&
+    unresolvedCreatedPrBlocked.read_only === false &&
+    unresolvedCreatedPrBlocked.pushed === true &&
+    unresolvedCreatedPrBlocked.checks === null, {
+    status: unresolvedCreatedPrBlocked.status,
+    read_only: unresolvedCreatedPrBlocked.read_only,
+    pushed: unresolvedCreatedPrBlocked.pushed,
+    checks: unresolvedCreatedPrBlocked.checks
+  }));
   const missingPayloadGateStatus = await runFixtureBha(fixtureRoot, ['gate-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
   const missingSignedPayloadStatus = await runFixtureBha(fixtureRoot, ['signed-payload-status', '--remote', 'origin', '--branch', branch, '--format', 'json']);
   const originalPrivateKeyPath = process.env.BHA_PRIVATE_KEY_PATH;
@@ -11595,6 +11628,22 @@ async function currentPrForBranch(branch, base) {
   };
 }
 
+function prNumberFromUrl(url) {
+  const match = String(url || '').trim().match(/\/pull\/([1-9][0-9]*)(?:$|[/?#])/);
+  return match ? Number(match[1]) : null;
+}
+
+function prFromCreateUrl(url) {
+  const number = prNumberFromUrl(url);
+  if (!number) {
+    return null;
+  }
+  return {
+    number,
+    url: String(url || '').trim()
+  };
+}
+
 async function handleShip(args) {
   const format = getOption(args, '--format') || 'json';
   const yes = hasFlag(args, '--yes');
@@ -11810,7 +11859,32 @@ async function handleShip(args) {
       return;
     }
     const refreshed = await currentPrForBranch(branch, base);
-    pr = refreshed.prs[0] || { url };
+    steps.push({
+      id: 'refresh_created_pr',
+      ok: refreshed.result.exit_code === 0 && !refreshed.result.error,
+      exit_code: refreshed.result.exit_code,
+      found: refreshed.prs.length,
+      derived_number_from_url: prNumberFromUrl(url) || null,
+      stderr: truncate(refreshed.result.stderr),
+      error: refreshed.result.error
+    });
+    pr = refreshed.prs[0] || prFromCreateUrl(url);
+    if (!pr || !pr.number) {
+      console.log(JSON.stringify(shipBlocked('BLOCKED_PR_RESOLVE_FAILED', {
+        read_only: false,
+        remote,
+        base,
+        branch,
+        head,
+        pushed: true,
+        pr: pr || (url ? { url } : null),
+        checks: null,
+        steps,
+        proof_boundary: 'The topic branch push and PR creation already completed, but the created PR number could not be resolved; default check waiting must fail closed instead of being skipped.'
+      })));
+      process.exitCode = 3;
+      return;
+    }
   }
 
   let checks = null;
