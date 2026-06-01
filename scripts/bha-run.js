@@ -3555,6 +3555,11 @@ function usablePrepushLocalSha(update) {
   return /^[0-9a-f]{40}$/i.test(localSha) && !allZeroSha(localSha);
 }
 
+function usablePrepushRemoteSha(update) {
+  const remoteSha = update ? String(update.remote_sha || '') : '';
+  return /^[0-9a-f]{40}$/i.test(remoteSha) && !allZeroSha(remoteSha);
+}
+
 function fallbackPrepushUpdate(branch, head) {
   return {
     line: null,
@@ -3962,12 +3967,29 @@ async function prepushRefAuthorization(update, remote, fallbackHead, options) {
   const head = usablePrepushLocalSha(update) ? update.local_sha : fallbackHead;
   const currentHead = fallbackHead || 'UNKNOWN';
   const localShaMatchesCurrentHead = Boolean(head && currentHead && head === currentHead);
+  const remoteHead = usablePrepushRemoteSha(update) ? update.remote_sha : null;
+  const remoteBranchExists = Boolean(remoteHead);
+  let remoteShaAncestorOfHead = remoteBranchExists ? false : null;
+  let remoteShaVerification = remoteBranchExists ? 'NOT_CHECKED' : 'NEW_REMOTE_BRANCH';
   const destructiveRemoteDelete = Boolean(update && update.is_delete === true);
   const protectedBranch = Boolean(branch && pushGate.protectedBaseBranch(branch));
   const capabilityRequired = destructiveRemoteDelete || protectedBranch;
   let capability = { ok: false, reason: 'NOT_REQUIRED' };
   let ok = true;
   let reason = 'ALLOW';
+  if (!destructiveRemoteDelete && branch && remoteBranchExists && head) {
+    const mergeBase = await runCommand(['git', 'merge-base', '--is-ancestor', remoteHead, head], {});
+    if (mergeBase.exit_code === 0 && !mergeBase.error) {
+      remoteShaAncestorOfHead = true;
+      remoteShaVerification = 'FAST_FORWARD';
+    } else if (mergeBase.exit_code === 1 && !mergeBase.error) {
+      remoteShaAncestorOfHead = false;
+      remoteShaVerification = 'NON_FAST_FORWARD';
+    } else {
+      remoteShaAncestorOfHead = false;
+      remoteShaVerification = 'UNVERIFIABLE';
+    }
+  }
   if (!branch) {
     ok = false;
     reason = 'PREPUSH_REMOTE_REF_NOT_BRANCH';
@@ -3979,6 +4001,12 @@ async function prepushRefAuthorization(update, remote, fallbackHead, options) {
   } else if (!localShaMatchesCurrentHead) {
     ok = false;
     reason = 'PREPUSH_TOPIC_SHA_NOT_CURRENT_HEAD';
+    capability.reason = reason;
+  } else if (remoteBranchExists && remoteShaAncestorOfHead !== true) {
+    ok = false;
+    reason = remoteShaVerification === 'NON_FAST_FORWARD'
+      ? 'PREPUSH_NON_FAST_FORWARD_TOPIC_UPDATE'
+      : 'PREPUSH_REMOTE_SHA_NOT_VERIFIABLE';
     capability.reason = reason;
   } else if (capabilityRequired) {
     capability = remote && head
@@ -3995,6 +4023,10 @@ async function prepushRefAuthorization(update, remote, fallbackHead, options) {
     head: head || 'UNKNOWN',
     verified_current_head: currentHead,
     local_sha_matches_current_head: localShaMatchesCurrentHead,
+    remote_head: remoteHead || 'UNKNOWN',
+    remote_branch_exists: remoteBranchExists,
+    remote_sha_ancestor_of_head: remoteShaAncestorOfHead,
+    remote_sha_verification: remoteShaVerification,
     action: destructiveRemoteDelete ? 'delete' : 'update',
     destructive_remote_delete: destructiveRemoteDelete,
     protected_branch: protectedBranch,
@@ -9412,8 +9444,59 @@ async function handleRegressionSelftest(args) {
       ? topicRefspecOldSha.parsed.ref_authorizations[0].verified_current_head
       : 'NO_JSON'
   }));
+  const zeroRemoteSha = '0000000000000000000000000000000000000000';
+  const nonFastForwardRemoteBranch = 'codex/non-ff-remote';
+  const nonFastForwardCheckout = await runCommand(['git', 'checkout', '-b', nonFastForwardRemoteBranch], { cwd: fixtureRoot });
+  writeTextFile(path.join(fixtureRoot, 'non-fast-forward-remote.txt'), 'remote-only sibling commit\n');
+  const nonFastForwardAdd = await runCommand(['git', 'add', 'non-fast-forward-remote.txt'], { cwd: fixtureRoot });
+  const nonFastForwardCommit = await runCommand(['git', 'commit', '-m', 'non fast forward remote fixture'], { cwd: fixtureRoot });
+  const nonFastForwardRemoteHead = await runCommand(['git', 'rev-parse', 'HEAD'], { cwd: fixtureRoot });
+  const nonFastForwardRemoteSha = String(nonFastForwardRemoteHead.stdout || '').trim();
+  const checkoutTopicForNonFastForward = await runCommand(['git', 'checkout', topicBranch], { cwd: fixtureRoot });
+  const nonFastForwardInput = `refs/heads/${topicBranch} ${topicBranchHeadSha} refs/heads/${topicBranch} ${nonFastForwardRemoteSha}\n`;
+  const nonFastForwardRaw = await runCommand([
+    process.execPath,
+    'scripts/bha-run.js',
+    'prepush-check',
+    '--preflight',
+    '--internal-git-hook',
+    'origin'
+  ], { cwd: fixtureRoot, input: nonFastForwardInput });
+  const nonFastForward = Object.assign({}, nonFastForwardRaw, { parsed: parseJsonLine(nonFastForwardRaw.stdout) });
+  const returnAfterNonFastForward = await runCommand(['git', 'checkout', branch], { cwd: fixtureRoot });
+  checks.push(regressionCheck('topic_non_fast_forward_update_blocks',
+    nonFastForwardCheckout.exit_code === 0 &&
+    nonFastForwardAdd.exit_code === 0 &&
+    nonFastForwardCommit.exit_code === 0 &&
+    nonFastForwardRemoteHead.exit_code === 0 &&
+    checkoutTopicForNonFastForward.exit_code === 0 &&
+    returnAfterNonFastForward.exit_code === 0 &&
+    nonFastForward.exit_code === 1 &&
+    nonFastForward.parsed &&
+    nonFastForward.parsed.status === 'FAIL_CLOSED' &&
+    nonFastForward.parsed.reason === 'PREPUSH_NON_FAST_FORWARD_TOPIC_UPDATE' &&
+    Array.isArray(nonFastForward.parsed.ref_authorizations) &&
+    nonFastForward.parsed.ref_authorizations.length === 1 &&
+    nonFastForward.parsed.ref_authorizations[0].ok === false &&
+    nonFastForward.parsed.ref_authorizations[0].head === topicBranchHeadSha &&
+    nonFastForward.parsed.ref_authorizations[0].remote_head === nonFastForwardRemoteSha &&
+    nonFastForward.parsed.ref_authorizations[0].remote_branch_exists === true &&
+    nonFastForward.parsed.ref_authorizations[0].remote_sha_ancestor_of_head === false &&
+    nonFastForward.parsed.ref_authorizations[0].remote_sha_verification === 'NON_FAST_FORWARD' &&
+    nonFastForward.parsed.checks &&
+    nonFastForward.parsed.checks.all_ref_updates_authorized === false, {
+    checkout_exit_code: nonFastForwardCheckout.exit_code,
+    commit_exit_code: nonFastForwardCommit.exit_code,
+    return_checkout_exit_code: returnAfterNonFastForward.exit_code,
+    preflight_exit_code: nonFastForward.exit_code,
+    status: nonFastForward.parsed ? nonFastForward.parsed.status : 'NO_JSON',
+    reason: nonFastForward.parsed ? nonFastForward.parsed.reason : 'NO_JSON',
+    remote_sha_verification: nonFastForward.parsed && Array.isArray(nonFastForward.parsed.ref_authorizations)
+      ? nonFastForward.parsed.ref_authorizations[0].remote_sha_verification
+      : 'NO_JSON'
+  }));
   const multiRefDeleteInput = [
-    `refs/heads/${topicBranch} ${topicBranchHeadSha} refs/heads/${topicBranch} 2222222222222222222222222222222222222222`,
+    `refs/heads/${topicBranch} ${topicBranchHeadSha} refs/heads/${topicBranch} ${zeroRemoteSha}`,
     `(delete) 0000000000000000000000000000000000000000 refs/heads/codex/delete-second 3333333333333333333333333333333333333333`,
     ''
   ].join('\n');
@@ -9453,8 +9536,8 @@ async function handleRegressionSelftest(args) {
       : 'NO_JSON'
   }));
   const multiRefProtectedInput = [
-    `refs/heads/${topicBranch} ${topicBranchHeadSha} refs/heads/${topicBranch} 2222222222222222222222222222222222222222`,
-    `refs/heads/master ${topicBranchHeadSha} refs/heads/master 4444444444444444444444444444444444444444`,
+    `refs/heads/${topicBranch} ${topicBranchHeadSha} refs/heads/${topicBranch} ${zeroRemoteSha}`,
+    `refs/heads/master ${topicBranchHeadSha} refs/heads/master ${zeroRemoteSha}`,
     ''
   ].join('\n');
   const multiRefProtectedRaw = await runCommand([
