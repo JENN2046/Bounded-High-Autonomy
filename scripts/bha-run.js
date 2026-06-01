@@ -3960,6 +3960,8 @@ async function prepushRefAuthorization(update, remote, fallbackHead, options) {
   const opts = options || {};
   const branch = update && update.branch ? update.branch : null;
   const head = usablePrepushLocalSha(update) ? update.local_sha : fallbackHead;
+  const currentHead = fallbackHead || 'UNKNOWN';
+  const localShaMatchesCurrentHead = Boolean(head && currentHead && head === currentHead);
   const destructiveRemoteDelete = Boolean(update && update.is_delete === true);
   const protectedBranch = Boolean(branch && pushGate.protectedBaseBranch(branch));
   const capabilityRequired = destructiveRemoteDelete || protectedBranch;
@@ -3974,6 +3976,10 @@ async function prepushRefAuthorization(update, remote, fallbackHead, options) {
     ok = false;
     reason = 'REMOTE_BRANCH_DELETE_REQUIRES_HIGH_RISK_AUTHORIZATION';
     capability.reason = reason;
+  } else if (!localShaMatchesCurrentHead) {
+    ok = false;
+    reason = 'PREPUSH_TOPIC_SHA_NOT_CURRENT_HEAD';
+    capability.reason = reason;
   } else if (capabilityRequired) {
     capability = remote && head
       ? await matchingConsumedCapability(remote, branch, head, { reserve: opts.reserve === true })
@@ -3987,6 +3993,8 @@ async function prepushRefAuthorization(update, remote, fallbackHead, options) {
     remote: remote || 'UNKNOWN',
     branch: branch || 'UNKNOWN',
     head: head || 'UNKNOWN',
+    verified_current_head: currentHead,
+    local_sha_matches_current_head: localShaMatchesCurrentHead,
     action: destructiveRemoteDelete ? 'delete' : 'update',
     destructive_remote_delete: destructiveRemoteDelete,
     protected_branch: protectedBranch,
@@ -9314,10 +9322,13 @@ async function handleRegressionSelftest(args) {
   }));
   const topicBranch = 'codex/regression-topic';
   const topicCheckout = await runCommand(['git', 'checkout', '-b', topicBranch], { cwd: fixtureRoot });
+  const topicBranchHead = await runCommand(['git', 'rev-parse', 'HEAD'], { cwd: fixtureRoot });
+  const topicBranchHeadSha = String(topicBranchHead.stdout || '').trim();
   const topicNoCapabilityPreflight = await runFixtureBha(fixtureRoot, ['prepush-check', '--preflight', '--internal-git-hook', 'origin']);
   const returnToProtectedBranch = await runCommand(['git', 'checkout', branch], { cwd: fixtureRoot });
   checks.push(regressionCheck('topic_branch_prepush_does_not_require_signed_capability',
     topicCheckout.exit_code === 0 &&
+    topicBranchHead.exit_code === 0 &&
     topicNoCapabilityPreflight.exit_code === 0 &&
     topicNoCapabilityPreflight.parsed &&
     topicNoCapabilityPreflight.parsed.status === 'ALLOW' &&
@@ -9326,6 +9337,7 @@ async function handleRegressionSelftest(args) {
     topicNoCapabilityPreflight.parsed.checks.valid_consumed_capability === true &&
     returnToProtectedBranch.exit_code === 0, {
     checkout_exit_code: topicCheckout.exit_code,
+    head_exit_code: topicBranchHead.exit_code,
     preflight_exit_code: topicNoCapabilityPreflight.exit_code,
     status: topicNoCapabilityPreflight.parsed ? topicNoCapabilityPreflight.parsed.status : 'NO_JSON',
     capability_required: topicNoCapabilityPreflight.parsed ? topicNoCapabilityPreflight.parsed.capability_required : 'NO_JSON',
@@ -9366,8 +9378,42 @@ async function handleRegressionSelftest(args) {
       ? topicDeletePreflight.parsed.checks.remote_branch_delete_blocked
       : 'NO_JSON'
   }));
+  const oldSha = '1111111111111111111111111111111111111111';
+  const topicRefspecOldShaInput = `refs/heads/old ${oldSha} refs/heads/codex/unverified-sha 2222222222222222222222222222222222222222\n`;
+  const topicRefspecOldShaRaw = await runCommand([
+    process.execPath,
+    'scripts/bha-run.js',
+    'prepush-check',
+    '--preflight',
+    '--internal-git-hook',
+    'origin'
+  ], { cwd: fixtureRoot, input: topicRefspecOldShaInput });
+  const topicRefspecOldSha = Object.assign({}, topicRefspecOldShaRaw, { parsed: parseJsonLine(topicRefspecOldShaRaw.stdout) });
+  checks.push(regressionCheck('topic_refspec_with_non_current_sha_blocks',
+    topicRefspecOldSha.exit_code === 1 &&
+    topicRefspecOldSha.parsed &&
+    topicRefspecOldSha.parsed.status === 'FAIL_CLOSED' &&
+    topicRefspecOldSha.parsed.reason === 'PREPUSH_TOPIC_SHA_NOT_CURRENT_HEAD' &&
+    Array.isArray(topicRefspecOldSha.parsed.ref_authorizations) &&
+    topicRefspecOldSha.parsed.ref_authorizations.length === 1 &&
+    topicRefspecOldSha.parsed.ref_authorizations[0].ok === false &&
+    topicRefspecOldSha.parsed.ref_authorizations[0].head === oldSha &&
+    topicRefspecOldSha.parsed.ref_authorizations[0].verified_current_head === topicBranchHeadSha &&
+    topicRefspecOldSha.parsed.ref_authorizations[0].local_sha_matches_current_head === false &&
+    topicRefspecOldSha.parsed.checks &&
+    topicRefspecOldSha.parsed.checks.all_ref_updates_authorized === false, {
+    exit_code: topicRefspecOldSha.exit_code,
+    status: topicRefspecOldSha.parsed ? topicRefspecOldSha.parsed.status : 'NO_JSON',
+    reason: topicRefspecOldSha.parsed ? topicRefspecOldSha.parsed.reason : 'NO_JSON',
+    pushed_sha: topicRefspecOldSha.parsed && Array.isArray(topicRefspecOldSha.parsed.ref_authorizations)
+      ? topicRefspecOldSha.parsed.ref_authorizations[0].head
+      : 'NO_JSON',
+    verified_current_head: topicRefspecOldSha.parsed && Array.isArray(topicRefspecOldSha.parsed.ref_authorizations)
+      ? topicRefspecOldSha.parsed.ref_authorizations[0].verified_current_head
+      : 'NO_JSON'
+  }));
   const multiRefDeleteInput = [
-    `refs/heads/${topicBranch} 1111111111111111111111111111111111111111 refs/heads/${topicBranch} 2222222222222222222222222222222222222222`,
+    `refs/heads/${topicBranch} ${topicBranchHeadSha} refs/heads/${topicBranch} 2222222222222222222222222222222222222222`,
     `(delete) 0000000000000000000000000000000000000000 refs/heads/codex/delete-second 3333333333333333333333333333333333333333`,
     ''
   ].join('\n');
@@ -9407,8 +9453,8 @@ async function handleRegressionSelftest(args) {
       : 'NO_JSON'
   }));
   const multiRefProtectedInput = [
-    `refs/heads/${topicBranch} 1111111111111111111111111111111111111111 refs/heads/${topicBranch} 2222222222222222222222222222222222222222`,
-    'refs/heads/master 3333333333333333333333333333333333333333 refs/heads/master 4444444444444444444444444444444444444444',
+    `refs/heads/${topicBranch} ${topicBranchHeadSha} refs/heads/${topicBranch} 2222222222222222222222222222222222222222`,
+    `refs/heads/master ${topicBranchHeadSha} refs/heads/master 4444444444444444444444444444444444444444`,
     ''
   ].join('\n');
   const multiRefProtectedRaw = await runCommand([
