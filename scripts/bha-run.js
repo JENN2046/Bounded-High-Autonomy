@@ -3509,15 +3509,37 @@ function readStdin() {
   });
 }
 
-function branchFromPrepushInput(stdinText) {
+function allZeroSha(value) {
+  return /^[0]+$/.test(String(value || '')) && String(value || '').length >= 40;
+}
+
+function prepushUpdateFromInput(stdinText) {
   const line = String(stdinText || '').split(/\r?\n/).find((item) => item.trim() !== '');
   if (!line) {
     return null;
   }
   const parts = line.trim().split(/\s+/);
+  const localRef = parts[0] || '';
+  const localSha = parts[1] || '';
   const remoteRef = parts[2] || '';
+  const remoteSha = parts[3] || '';
   const match = remoteRef.match(/^refs\/heads\/(.+)$/);
-  return match ? match[1] : null;
+  const isDelete = localRef === '(delete)' || allZeroSha(localSha);
+  return {
+    line,
+    local_ref: localRef || 'UNKNOWN',
+    local_sha: localSha || 'UNKNOWN',
+    remote_ref: remoteRef || 'UNKNOWN',
+    remote_sha: remoteSha || 'UNKNOWN',
+    branch: match ? match[1] : null,
+    is_delete: isDelete,
+    action: isDelete ? 'delete' : 'update'
+  };
+}
+
+function branchFromPrepushInput(stdinText) {
+  const update = prepushUpdateFromInput(stdinText);
+  return update ? update.branch : null;
 }
 
 function validationCommandPassed(state, id) {
@@ -3924,7 +3946,9 @@ async function handlePrepushCheck(args) {
   }
   const remote = hookArgs[1] || null;
   const stdinText = await readStdin();
-  const branch = branchFromPrepushInput(stdinText) || await currentBranch();
+  const prepushUpdate = prepushUpdateFromInput(stdinText);
+  const branch = (prepushUpdate && prepushUpdate.branch) || await currentBranch();
+  const remoteBranchDelete = Boolean(prepushUpdate && prepushUpdate.is_delete === true);
   const head = await currentHead();
   const status = await gitStatusShort();
   const verify = await verifierResult();
@@ -3935,8 +3959,10 @@ async function handlePrepushCheck(args) {
   const closeoutEvent = state && state.closeout ? ledgerEventByHash(ledger, state.closeout.ledger_event_hash, 'closeout_completed') : null;
   const gitRealityBinding = trackedGitRealityBinding(head, checkpoint, closeoutEvent);
   const carrier = await evidenceCarrierCommitStatus(head, gitRealityBinding);
-  let capability = remote && branch && head ? await matchingConsumedCapability(remote, branch, head, { reserve: false }) : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
-  const capabilityRequired = pushGate.capabilityRequiredForBranch(branch);
+  let capability = remote && branch && head && !remoteBranchDelete
+    ? await matchingConsumedCapability(remote, branch, head, { reserve: false })
+    : { ok: false, reason: remoteBranchDelete ? 'REMOTE_BRANCH_DELETE_REQUIRES_HIGH_RISK_AUTHORIZATION' : 'MISSING_REMOTE_BRANCH_OR_HEAD' };
+  const capabilityRequired = remoteBranchDelete ? true : pushGate.capabilityRequiredForBranch(branch);
   const checks = {
     verifier_pass: evidence.gates.verifier_pass,
     verifier_no_warnings: evidence.gates.verifier_no_warnings,
@@ -3945,12 +3971,13 @@ async function handlePrepushCheck(args) {
     rollback_recorded: evidence.gates.rollback_recorded,
     checkpoint_recorded: evidence.gates.checkpoint_recorded,
     closeout_current: evidence.gates.closeout_current,
+    remote_branch_delete_blocked: !remoteBranchDelete,
     valid_consumed_capability: capabilityRequired ? capability.ok === true : true,
     matching_run_id_remote_branch_head: capabilityRequired ? capability.ok === true : true,
     clean_git_status: gitStatusAllowedForLocalTrustRepair(status)
   };
   let ok = Object.values(checks).every(Boolean);
-  if (ok && !preflight && capabilityRequired) {
+  if (ok && !preflight && capabilityRequired && !remoteBranchDelete) {
     capability = await matchingConsumedCapability(remote, branch, head, { reserve: true });
     checks.valid_consumed_capability = capability.ok === true;
     checks.matching_run_id_remote_branch_head = capability.ok === true;
@@ -3958,13 +3985,15 @@ async function handlePrepushCheck(args) {
   }
   const failureReason = ok
     ? 'ALLOW'
-    : ((capabilityRequired ? capability.reason : null) || firstFailedGate(checks) || 'PREPUSH_GATE_FAILED');
+    : (remoteBranchDelete ? 'REMOTE_BRANCH_DELETE_REQUIRES_HIGH_RISK_AUTHORIZATION' : ((capabilityRequired ? capability.reason : null) || firstFailedGate(checks) || 'PREPUSH_GATE_FAILED'));
   if (record) {
     appendLedger('prepush_check', {
       status: ok ? 'ALLOW' : 'FAIL_CLOSED',
       remote: remote || 'UNKNOWN',
       branch: branch || 'UNKNOWN',
       head: head || 'UNKNOWN',
+      prepush_update: prepushUpdate,
+      push_action: remoteBranchDelete ? 'delete' : 'update',
       checks,
       tracked_git_reality: gitRealityBinding,
       evidence_carrier_commit: carrier,
@@ -3989,6 +4018,10 @@ async function handlePrepushCheck(args) {
     remote: remote || 'UNKNOWN',
     branch: branch || 'UNKNOWN',
     head: head || 'UNKNOWN',
+    prepush_update: prepushUpdate,
+    push_action: remoteBranchDelete ? 'delete' : 'update',
+    destructive_remote_delete: remoteBranchDelete,
+    high_risk_authorization_required: remoteBranchDelete,
     checks,
     evidence_gates: evidence.gates,
     tracked_git_reality: gitRealityBinding,
@@ -9182,6 +9215,40 @@ async function handleRegressionSelftest(args) {
     capability_required: topicNoCapabilityPreflight.parsed ? topicNoCapabilityPreflight.parsed.capability_required : 'NO_JSON',
     reason: topicNoCapabilityPreflight.parsed ? topicNoCapabilityPreflight.parsed.reason : 'NO_JSON',
     return_checkout_exit_code: returnToProtectedBranch.exit_code
+  }));
+  const deletePrepushInput = `(delete) 0000000000000000000000000000000000000000 refs/heads/${topicBranch} 1111111111111111111111111111111111111111\n`;
+  const topicDeletePreflightRaw = await runCommand([
+    process.execPath,
+    'scripts/bha-run.js',
+    'prepush-check',
+    '--preflight',
+    '--internal-git-hook',
+    'origin'
+  ], { cwd: fixtureRoot, input: deletePrepushInput });
+  const topicDeletePreflight = Object.assign({}, topicDeletePreflightRaw, { parsed: parseJsonLine(topicDeletePreflightRaw.stdout) });
+  checks.push(regressionCheck('topic_branch_delete_prepush_requires_high_risk_authorization',
+    topicDeletePreflight.exit_code === 1 &&
+    topicDeletePreflight.parsed &&
+    topicDeletePreflight.parsed.status === 'FAIL_CLOSED' &&
+    topicDeletePreflight.parsed.reason === 'REMOTE_BRANCH_DELETE_REQUIRES_HIGH_RISK_AUTHORIZATION' &&
+    topicDeletePreflight.parsed.push_action === 'delete' &&
+    topicDeletePreflight.parsed.destructive_remote_delete === true &&
+    topicDeletePreflight.parsed.high_risk_authorization_required === true &&
+    topicDeletePreflight.parsed.capability_required === true &&
+    topicDeletePreflight.parsed.prepush_update &&
+    topicDeletePreflight.parsed.prepush_update.branch === topicBranch &&
+    topicDeletePreflight.parsed.prepush_update.is_delete === true &&
+    topicDeletePreflight.parsed.checks &&
+    topicDeletePreflight.parsed.checks.remote_branch_delete_blocked === false &&
+    topicDeletePreflight.parsed.checks.valid_consumed_capability === false, {
+    exit_code: topicDeletePreflight.exit_code,
+    status: topicDeletePreflight.parsed ? topicDeletePreflight.parsed.status : 'NO_JSON',
+    reason: topicDeletePreflight.parsed ? topicDeletePreflight.parsed.reason : 'NO_JSON',
+    push_action: topicDeletePreflight.parsed ? topicDeletePreflight.parsed.push_action : 'NO_JSON',
+    capability_required: topicDeletePreflight.parsed ? topicDeletePreflight.parsed.capability_required : 'NO_JSON',
+    remote_branch_delete_blocked: topicDeletePreflight.parsed && topicDeletePreflight.parsed.checks
+      ? topicDeletePreflight.parsed.checks.remote_branch_delete_blocked
+      : 'NO_JSON'
   }));
   const postPushBlocked = shipBlocked('BLOCKED_PR_CREATE_FAILED', {
     remote: 'origin',
