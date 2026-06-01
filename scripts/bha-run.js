@@ -3513,11 +3513,7 @@ function allZeroSha(value) {
   return /^[0]+$/.test(String(value || '')) && String(value || '').length >= 40;
 }
 
-function prepushUpdateFromInput(stdinText) {
-  const line = String(stdinText || '').split(/\r?\n/).find((item) => item.trim() !== '');
-  if (!line) {
-    return null;
-  }
+function prepushUpdateFromLine(line) {
   const parts = line.trim().split(/\s+/);
   const localRef = parts[0] || '';
   const localSha = parts[1] || '';
@@ -3537,9 +3533,40 @@ function prepushUpdateFromInput(stdinText) {
   };
 }
 
+function prepushUpdatesFromInput(stdinText) {
+  return String(stdinText || '')
+    .split(/\r?\n/)
+    .filter((item) => item.trim() !== '')
+    .map(prepushUpdateFromLine);
+}
+
+function prepushUpdateFromInput(stdinText) {
+  const updates = prepushUpdatesFromInput(stdinText);
+  return updates.length ? updates[0] : null;
+}
+
 function branchFromPrepushInput(stdinText) {
   const update = prepushUpdateFromInput(stdinText);
   return update ? update.branch : null;
+}
+
+function usablePrepushLocalSha(update) {
+  const localSha = update ? String(update.local_sha || '') : '';
+  return /^[0-9a-f]{40}$/i.test(localSha) && !allZeroSha(localSha);
+}
+
+function fallbackPrepushUpdate(branch, head) {
+  return {
+    line: null,
+    local_ref: branch ? `refs/heads/${branch}` : 'UNKNOWN',
+    local_sha: head || 'UNKNOWN',
+    remote_ref: branch ? `refs/heads/${branch}` : 'UNKNOWN',
+    remote_sha: 'UNKNOWN',
+    branch: branch || null,
+    is_delete: false,
+    action: 'update',
+    inferred_from_current_branch: true
+  };
 }
 
 function validationCommandPassed(state, id) {
@@ -3929,6 +3956,53 @@ function firstFailedGate(checks) {
   return pushGate.firstFailedGate(checks);
 }
 
+async function prepushRefAuthorization(update, remote, fallbackHead, options) {
+  const opts = options || {};
+  const branch = update && update.branch ? update.branch : null;
+  const head = usablePrepushLocalSha(update) ? update.local_sha : fallbackHead;
+  const destructiveRemoteDelete = Boolean(update && update.is_delete === true);
+  const protectedBranch = Boolean(branch && pushGate.protectedBaseBranch(branch));
+  const capabilityRequired = destructiveRemoteDelete || protectedBranch;
+  let capability = { ok: false, reason: 'NOT_REQUIRED' };
+  let ok = true;
+  let reason = 'ALLOW';
+  if (!branch) {
+    ok = false;
+    reason = 'PREPUSH_REMOTE_REF_NOT_BRANCH';
+    capability.reason = reason;
+  } else if (destructiveRemoteDelete) {
+    ok = false;
+    reason = 'REMOTE_BRANCH_DELETE_REQUIRES_HIGH_RISK_AUTHORIZATION';
+    capability.reason = reason;
+  } else if (capabilityRequired) {
+    capability = remote && head
+      ? await matchingConsumedCapability(remote, branch, head, { reserve: opts.reserve === true })
+      : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
+    ok = capability.ok === true;
+    reason = ok ? 'ALLOW' : (capability.reason || 'NO_VALID_CONSUMED_GIT_PUSH_CAPABILITY');
+  }
+  return {
+    ok,
+    reason,
+    remote: remote || 'UNKNOWN',
+    branch: branch || 'UNKNOWN',
+    head: head || 'UNKNOWN',
+    action: destructiveRemoteDelete ? 'delete' : 'update',
+    destructive_remote_delete: destructiveRemoteDelete,
+    protected_branch: protectedBranch,
+    capability_required: capabilityRequired,
+    update,
+    capability
+  };
+}
+
+function primaryPrepushAuthorization(authorizations) {
+  return (authorizations || []).find((item) => item.ok !== true) ||
+    (authorizations || []).find((item) => item.capability_required === true) ||
+    (authorizations || [])[0] ||
+    null;
+}
+
 async function handlePrepushCheck(args) {
   const record = args.includes('--record');
   const preflight = args.includes('--preflight');
@@ -3946,10 +4020,10 @@ async function handlePrepushCheck(args) {
   }
   const remote = hookArgs[1] || null;
   const stdinText = await readStdin();
-  const prepushUpdate = prepushUpdateFromInput(stdinText);
-  const branch = (prepushUpdate && prepushUpdate.branch) || await currentBranch();
-  const remoteBranchDelete = Boolean(prepushUpdate && prepushUpdate.is_delete === true);
   const head = await currentHead();
+  const currentBranchName = await currentBranch();
+  const parsedPrepushUpdates = prepushUpdatesFromInput(stdinText);
+  const prepushUpdates = parsedPrepushUpdates.length ? parsedPrepushUpdates : [fallbackPrepushUpdate(currentBranchName, head)];
   const status = await gitStatusShort();
   const verify = await verifierResult();
   const state = loadState();
@@ -3959,10 +4033,17 @@ async function handlePrepushCheck(args) {
   const closeoutEvent = state && state.closeout ? ledgerEventByHash(ledger, state.closeout.ledger_event_hash, 'closeout_completed') : null;
   const gitRealityBinding = trackedGitRealityBinding(head, checkpoint, closeoutEvent);
   const carrier = await evidenceCarrierCommitStatus(head, gitRealityBinding);
-  let capability = remote && branch && head && !remoteBranchDelete
-    ? await matchingConsumedCapability(remote, branch, head, { reserve: false })
-    : { ok: false, reason: remoteBranchDelete ? 'REMOTE_BRANCH_DELETE_REQUIRES_HIGH_RISK_AUTHORIZATION' : 'MISSING_REMOTE_BRANCH_OR_HEAD' };
-  const capabilityRequired = remoteBranchDelete ? true : pushGate.capabilityRequiredForBranch(branch);
+  let refAuthorizations = [];
+  for (const update of prepushUpdates) {
+    refAuthorizations.push(await prepushRefAuthorization(update, remote, head, { reserve: false }));
+  }
+  let primaryAuthorization = primaryPrepushAuthorization(refAuthorizations);
+  let prepushUpdate = primaryAuthorization ? primaryAuthorization.update : null;
+  let branch = primaryAuthorization ? primaryAuthorization.branch : (currentBranchName || 'UNKNOWN');
+  let remoteBranchDelete = refAuthorizations.some((item) => item.destructive_remote_delete === true);
+  let protectedBranchUpdate = refAuthorizations.some((item) => item.protected_branch === true);
+  let capabilityRequired = refAuthorizations.some((item) => item.capability_required === true);
+  let capability = primaryAuthorization ? primaryAuthorization.capability : { ok: false, reason: 'MISSING_REMOTE_BRANCH_OR_HEAD' };
   const checks = {
     verifier_pass: evidence.gates.verifier_pass,
     verifier_no_warnings: evidence.gates.verifier_no_warnings,
@@ -3972,20 +4053,51 @@ async function handlePrepushCheck(args) {
     checkpoint_recorded: evidence.gates.checkpoint_recorded,
     closeout_current: evidence.gates.closeout_current,
     remote_branch_delete_blocked: !remoteBranchDelete,
-    valid_consumed_capability: capabilityRequired ? capability.ok === true : true,
-    matching_run_id_remote_branch_head: capabilityRequired ? capability.ok === true : true,
+    protected_branch_authorized: !protectedBranchUpdate || refAuthorizations
+      .filter((item) => item.protected_branch === true)
+      .every((item) => item.ok === true),
+    all_ref_updates_authorized: refAuthorizations.every((item) => item.ok === true),
+    valid_consumed_capability: !capabilityRequired || refAuthorizations
+      .filter((item) => item.capability_required === true)
+      .every((item) => item.capability && item.capability.ok === true),
+    matching_run_id_remote_branch_head: !capabilityRequired || refAuthorizations
+      .filter((item) => item.capability_required === true)
+      .every((item) => item.capability && item.capability.ok === true),
     clean_git_status: gitStatusAllowedForLocalTrustRepair(status)
   };
   let ok = Object.values(checks).every(Boolean);
-  if (ok && !preflight && capabilityRequired && !remoteBranchDelete) {
-    capability = await matchingConsumedCapability(remote, branch, head, { reserve: true });
-    checks.valid_consumed_capability = capability.ok === true;
-    checks.matching_run_id_remote_branch_head = capability.ok === true;
+  if (ok && !preflight && capabilityRequired) {
+    const reservedAuthorizations = [];
+    for (const authorization of refAuthorizations) {
+      reservedAuthorizations.push(authorization.capability_required === true
+        ? await prepushRefAuthorization(authorization.update, remote, head, { reserve: true })
+        : authorization);
+    }
+    refAuthorizations = reservedAuthorizations;
+    primaryAuthorization = primaryPrepushAuthorization(refAuthorizations);
+    prepushUpdate = primaryAuthorization ? primaryAuthorization.update : prepushUpdate;
+    branch = primaryAuthorization ? primaryAuthorization.branch : branch;
+    remoteBranchDelete = refAuthorizations.some((item) => item.destructive_remote_delete === true);
+    protectedBranchUpdate = refAuthorizations.some((item) => item.protected_branch === true);
+    capabilityRequired = refAuthorizations.some((item) => item.capability_required === true);
+    capability = primaryAuthorization ? primaryAuthorization.capability : capability;
+    checks.remote_branch_delete_blocked = !remoteBranchDelete;
+    checks.protected_branch_authorized = !protectedBranchUpdate || refAuthorizations
+      .filter((item) => item.protected_branch === true)
+      .every((item) => item.ok === true);
+    checks.all_ref_updates_authorized = refAuthorizations.every((item) => item.ok === true);
+    checks.valid_consumed_capability = !capabilityRequired || refAuthorizations
+      .filter((item) => item.capability_required === true)
+      .every((item) => item.capability && item.capability.ok === true);
+    checks.matching_run_id_remote_branch_head = checks.valid_consumed_capability;
     ok = Object.values(checks).every(Boolean);
   }
   const failureReason = ok
     ? 'ALLOW'
-    : (remoteBranchDelete ? 'REMOTE_BRANCH_DELETE_REQUIRES_HIGH_RISK_AUTHORIZATION' : ((capabilityRequired ? capability.reason : null) || firstFailedGate(checks) || 'PREPUSH_GATE_FAILED'));
+    : ((primaryAuthorization && primaryAuthorization.ok !== true ? primaryAuthorization.reason : null) ||
+      (capabilityRequired ? capability.reason : null) ||
+      firstFailedGate(checks) ||
+      'PREPUSH_GATE_FAILED');
   if (record) {
     appendLedger('prepush_check', {
       status: ok ? 'ALLOW' : 'FAIL_CLOSED',
@@ -3993,6 +4105,8 @@ async function handlePrepushCheck(args) {
       branch: branch || 'UNKNOWN',
       head: head || 'UNKNOWN',
       prepush_update: prepushUpdate,
+      prepush_updates: prepushUpdates,
+      ref_authorizations: refAuthorizations,
       push_action: remoteBranchDelete ? 'delete' : 'update',
       checks,
       tracked_git_reality: gitRealityBinding,
@@ -4019,6 +4133,8 @@ async function handlePrepushCheck(args) {
     branch: branch || 'UNKNOWN',
     head: head || 'UNKNOWN',
     prepush_update: prepushUpdate,
+    prepush_updates: prepushUpdates,
+    ref_authorizations: refAuthorizations,
     push_action: remoteBranchDelete ? 'delete' : 'update',
     destructive_remote_delete: remoteBranchDelete,
     high_risk_authorization_required: remoteBranchDelete,
@@ -9248,6 +9364,87 @@ async function handleRegressionSelftest(args) {
     capability_required: topicDeletePreflight.parsed ? topicDeletePreflight.parsed.capability_required : 'NO_JSON',
     remote_branch_delete_blocked: topicDeletePreflight.parsed && topicDeletePreflight.parsed.checks
       ? topicDeletePreflight.parsed.checks.remote_branch_delete_blocked
+      : 'NO_JSON'
+  }));
+  const multiRefDeleteInput = [
+    `refs/heads/${topicBranch} 1111111111111111111111111111111111111111 refs/heads/${topicBranch} 2222222222222222222222222222222222222222`,
+    `(delete) 0000000000000000000000000000000000000000 refs/heads/codex/delete-second 3333333333333333333333333333333333333333`,
+    ''
+  ].join('\n');
+  const multiRefDeleteRaw = await runCommand([
+    process.execPath,
+    'scripts/bha-run.js',
+    'prepush-check',
+    '--preflight',
+    '--internal-git-hook',
+    'origin'
+  ], { cwd: fixtureRoot, input: multiRefDeleteInput });
+  const multiRefDelete = Object.assign({}, multiRefDeleteRaw, { parsed: parseJsonLine(multiRefDeleteRaw.stdout) });
+  checks.push(regressionCheck('multi_ref_topic_then_delete_prepush_blocks_delete',
+    multiRefDelete.exit_code === 1 &&
+    multiRefDelete.parsed &&
+    multiRefDelete.parsed.status === 'FAIL_CLOSED' &&
+    multiRefDelete.parsed.reason === 'REMOTE_BRANCH_DELETE_REQUIRES_HIGH_RISK_AUTHORIZATION' &&
+    Array.isArray(multiRefDelete.parsed.prepush_updates) &&
+    multiRefDelete.parsed.prepush_updates.length === 2 &&
+    Array.isArray(multiRefDelete.parsed.ref_authorizations) &&
+    multiRefDelete.parsed.ref_authorizations.length === 2 &&
+    multiRefDelete.parsed.ref_authorizations[0].ok === true &&
+    multiRefDelete.parsed.ref_authorizations[1].ok === false &&
+    multiRefDelete.parsed.ref_authorizations[1].destructive_remote_delete === true &&
+    multiRefDelete.parsed.destructive_remote_delete === true &&
+    multiRefDelete.parsed.checks &&
+    multiRefDelete.parsed.checks.remote_branch_delete_blocked === false &&
+    multiRefDelete.parsed.checks.all_ref_updates_authorized === false, {
+    exit_code: multiRefDelete.exit_code,
+    status: multiRefDelete.parsed ? multiRefDelete.parsed.status : 'NO_JSON',
+    reason: multiRefDelete.parsed ? multiRefDelete.parsed.reason : 'NO_JSON',
+    update_count: multiRefDelete.parsed && Array.isArray(multiRefDelete.parsed.prepush_updates)
+      ? multiRefDelete.parsed.prepush_updates.length
+      : 'NO_JSON',
+    second_ref_delete: multiRefDelete.parsed && Array.isArray(multiRefDelete.parsed.ref_authorizations)
+      ? multiRefDelete.parsed.ref_authorizations[1].destructive_remote_delete
+      : 'NO_JSON'
+  }));
+  const multiRefProtectedInput = [
+    `refs/heads/${topicBranch} 1111111111111111111111111111111111111111 refs/heads/${topicBranch} 2222222222222222222222222222222222222222`,
+    'refs/heads/master 3333333333333333333333333333333333333333 refs/heads/master 4444444444444444444444444444444444444444',
+    ''
+  ].join('\n');
+  const multiRefProtectedRaw = await runCommand([
+    process.execPath,
+    'scripts/bha-run.js',
+    'prepush-check',
+    '--preflight',
+    '--internal-git-hook',
+    'origin'
+  ], { cwd: fixtureRoot, input: multiRefProtectedInput });
+  const multiRefProtected = Object.assign({}, multiRefProtectedRaw, { parsed: parseJsonLine(multiRefProtectedRaw.stdout) });
+  checks.push(regressionCheck('multi_ref_topic_then_protected_prepush_blocks_protected_update',
+    multiRefProtected.exit_code === 1 &&
+    multiRefProtected.parsed &&
+    multiRefProtected.parsed.status === 'FAIL_CLOSED' &&
+    Array.isArray(multiRefProtected.parsed.prepush_updates) &&
+    multiRefProtected.parsed.prepush_updates.length === 2 &&
+    Array.isArray(multiRefProtected.parsed.ref_authorizations) &&
+    multiRefProtected.parsed.ref_authorizations.length === 2 &&
+    multiRefProtected.parsed.ref_authorizations[0].ok === true &&
+    multiRefProtected.parsed.ref_authorizations[1].ok === false &&
+    multiRefProtected.parsed.ref_authorizations[1].protected_branch === true &&
+    multiRefProtected.parsed.ref_authorizations[1].capability_required === true &&
+    multiRefProtected.parsed.capability_required === true &&
+    multiRefProtected.parsed.checks &&
+    multiRefProtected.parsed.checks.protected_branch_authorized === false &&
+    multiRefProtected.parsed.checks.valid_consumed_capability === false &&
+    multiRefProtected.parsed.checks.all_ref_updates_authorized === false, {
+    exit_code: multiRefProtected.exit_code,
+    status: multiRefProtected.parsed ? multiRefProtected.parsed.status : 'NO_JSON',
+    reason: multiRefProtected.parsed ? multiRefProtected.parsed.reason : 'NO_JSON',
+    update_count: multiRefProtected.parsed && Array.isArray(multiRefProtected.parsed.prepush_updates)
+      ? multiRefProtected.parsed.prepush_updates.length
+      : 'NO_JSON',
+    second_ref_protected: multiRefProtected.parsed && Array.isArray(multiRefProtected.parsed.ref_authorizations)
+      ? multiRefProtected.parsed.ref_authorizations[1].protected_branch
       : 'NO_JSON'
   }));
   const postPushBlocked = shipBlocked('BLOCKED_PR_CREATE_FAILED', {
