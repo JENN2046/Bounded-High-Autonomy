@@ -1,7 +1,7 @@
 {
   "schema": "bha.checkpoint.v1",
-  "checkpoint_id": "checkpoint-2026-06-01T03-20-06-394Z",
-  "created_at": "2026-06-01T03:20:06.552Z",
+  "checkpoint_id": "checkpoint-2026-06-01T03-52-07-042Z",
+  "created_at": "2026-06-01T03:52:07.190Z",
   "run_id": "bha-dry-run-v1",
   "actor_id": "bha-run",
   "goal": {
@@ -13,8 +13,8 @@
   "phase": "checkpoint",
   "workspace": ".",
   "branch": "codex/git-ship-alias-e2e",
-  "head": "72ffc6a2b9ef7b6eca5481c821739eb028c8de9a",
-  "ledger_head_hash": "6e3de53cd7e011671ea46d65abfb98ba066efe64b579617d7c5e26e6618b1aa2",
+  "head": "618d6a655a3179e9349f5945a8de82fcca81d466",
+  "ledger_head_hash": "e82bd767b9613c14b32fa3e5d90fcbc8810d192e3cd62f5e36e0804dd5000689",
   "policy_hash": "f726eeeffeed22383560b3f3e34743b798e3a48ccef2e10cb574b690a08b29cd",
   "mission_hash": "517d1cdc1343e6aa098c249c05e450a41bf81543e3a04831e402073f3c8391ea",
   "completed": [
@@ -79,16 +79,33 @@
     "prepush_check_fail_closed_readonly",
     "prepush_check_preflight_fail_closed_readonly"
   ],
-  "changed_files": [],
+  "changed_files": [
+    {
+      "status": "M",
+      "path": ".bha/checkpoint.json"
+    },
+    {
+      "status": "M",
+      "path": ".bha/ledger.jsonl"
+    },
+    {
+      "status": "M",
+      "path": ".bha/state.json"
+    },
+    {
+      "status": "M",
+      "path": "scripts/bha-run.js"
+    }
+  ],
   "validation_run": {
     "status": "PASS",
-    "completed_at": "2026-06-01T03:18:56.526Z",
-    "ledger_event_hash": "1b8c093ec8bfa6f80584633b589d3aa5a66f2a6fbdcfbfc6b46eeaea72cc9833",
+    "completed_at": "2026-06-01T03:51:53.969Z",
+    "ledger_event_hash": "e82bd767b9613c14b32fa3e5d90fcbc8810d192e3cd62f5e36e0804dd5000689",
     "command_count": 60
   },
   "validation_not_run": [],
   "verifier_status": "PASS",
-  "verifier_ledger_head_hash": "6e3de53cd7e011671ea46d65abfb98ba066efe64b579617d7c5e26e6618b1aa2",
+  "verifier_ledger_head_hash": "e82bd767b9613c14b32fa3e5d90fcbc8810d192e3cd62f5e36e0804dd5000689",
   "blockers": [],
   "risks": [
     "worktree may be dirty by design during local v1 kernel development",
@@ -123,9 +140,9 @@
     "unverified_worktree_change"
   ],
   "checkpoint_binding": {
-    "verified_ledger_head_hash": "6e3de53cd7e011671ea46d65abfb98ba066efe64b579617d7c5e26e6618b1aa2",
-    "checkpoint_event_hash": "ebfe13f6f23924b8f400cb998e9ad0bcaafa6e391368b9ef4e04f6c895951ce6",
-    "final_ledger_head_hash": "ebfe13f6f23924b8f400cb998e9ad0bcaafa6e391368b9ef4e04f6c895951ce6"
+    "verified_ledger_head_hash": "e82bd767b9613c14b32fa3e5d90fcbc8810d192e3cd62f5e36e0804dd5000689",
+    "checkpoint_event_hash": "fe812e27faba1710b8e1f9d87aac4e1eea9992f6d51aeb62cf74f7e170521561",
+    "final_ledger_head_hash": "fe812e27faba1710b8e1f9d87aac4e1eea9992f6d51aeb62cf74f7e170521561"
   },
-  "ledger_event_hash": "ebfe13f6f23924b8f400cb998e9ad0bcaafa6e391368b9ef4e04f6c895951ce6"
+  "ledger_event_hash": "fe812e27faba1710b8e1f9d87aac4e1eea9992f6d51aeb62cf74f7e170521561"
 }
